@@ -13,6 +13,7 @@
 use crate::error::ExecutorError;
 use crate::executor::PipelineExecutor;
 use crate::provider::ProviderRegistry;
+use crate::run::ExecutionEvent;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use flux_engine::node::NodeKind;
@@ -22,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 /// Options for a preview execution.
@@ -30,6 +32,8 @@ pub struct PreviewOptions {
     pub sample: SampleConfig,
     /// Set to `true` from another thread/task to cancel the preview.
     pub cancel: Arc<AtomicBool>,
+    /// Optional channel for real-time preview progress events.
+    pub progress: Option<mpsc::UnboundedSender<ExecutionEvent>>,
 }
 
 impl Default for PreviewOptions {
@@ -37,6 +41,7 @@ impl Default for PreviewOptions {
         Self {
             sample: SampleConfig::default(),
             cancel: Arc::new(AtomicBool::new(false)),
+            progress: None,
         }
     }
 }

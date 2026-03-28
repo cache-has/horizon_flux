@@ -370,6 +370,7 @@ async fn preview_cancellation() {
     let opts = PreviewOptions {
         sample: SampleConfig::default(),
         cancel,
+        progress: None,
     };
 
     let err = PipelineExecutor::preview(&pipeline, &registry, &opts)

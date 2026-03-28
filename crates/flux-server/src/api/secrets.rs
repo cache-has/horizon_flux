@@ -92,9 +92,13 @@ async fn list_secrets(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SecretMetadataResponse>>, (StatusCode, Json<ApiError>)> {
     let store = require_store(&state.secret_store)?;
-    let guard = store.lock().map_err(|e| ApiError::internal(e.to_string()))?;
+    let guard = store
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    let secrets = guard.list().map_err(|e| ApiError::internal(e.to_string()))?;
+    let secrets = guard
+        .list()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(
         secrets
@@ -122,7 +126,9 @@ async fn create_or_update_secret(
     }
 
     let store = require_store(&state.secret_store)?;
-    let guard = store.lock().map_err(|e| ApiError::internal(e.to_string()))?;
+    let guard = store
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     guard
         .set(&req.name, req.value.as_bytes(), req.environment.as_deref())
@@ -141,7 +147,9 @@ async fn delete_secret(
     axum::extract::Query(params): axum::extract::Query<DeleteSecretQuery>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let store = require_store(&state.secret_store)?;
-    let guard = store.lock().map_err(|e| ApiError::internal(e.to_string()))?;
+    let guard = store
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     guard
         .delete(&name, params.environment.as_deref())
@@ -162,9 +170,13 @@ async fn list_secret_environments(
     Path(name): Path<String>,
 ) -> Result<Json<SecretEnvironmentsResponse>, (StatusCode, Json<ApiError>)> {
     let store = require_store(&state.secret_store)?;
-    let guard = store.lock().map_err(|e| ApiError::internal(e.to_string()))?;
+    let guard = store
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    let all = guard.list().map_err(|e| ApiError::internal(e.to_string()))?;
+    let all = guard
+        .list()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
     let entries: Vec<SecretEnvironmentEntry> = all
         .into_iter()
         .filter(|s| s.name == name)

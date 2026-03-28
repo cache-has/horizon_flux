@@ -25,7 +25,7 @@ pub use provider::{
 };
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
-pub use run::{NodeRunStats, PipelineRun, RunId, RunStatus};
+pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};
 pub use run_store::RunStore;
 pub use stats::NodeStats;
 

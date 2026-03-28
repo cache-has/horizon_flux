@@ -11,7 +11,7 @@ use crate::error::{ExecutorError, NodeErrorKind};
 use crate::provider::{ProviderRegistry, WriteOptions};
 use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
-use crate::run::{NodeRunStats, PipelineRun, RunStatus};
+use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus};
 use crate::run_store::RunStore;
 use crate::stats::NodeStats;
 use arrow::record_batch::RecordBatch;
@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime};
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 /// Options controlling a pipeline execution.
@@ -38,6 +39,11 @@ pub struct ExecutionOptions {
     /// When set, the `SessionContext` for SQL transforms is configured with
     /// this resolver's catalog hierarchy.
     pub environment_resolver: Option<Arc<EnvironmentResolver>>,
+    /// Optional channel for real-time execution progress events.
+    /// When set, the executor sends [`ExecutionEvent`]s as nodes start,
+    /// complete, or fail. The receiver is typically the server layer that
+    /// broadcasts to WebSocket clients.
+    pub progress: Option<mpsc::UnboundedSender<ExecutionEvent>>,
 }
 
 impl Default for ExecutionOptions {
@@ -47,6 +53,7 @@ impl Default for ExecutionOptions {
             run_store: None,
             cancel: Arc::new(AtomicBool::new(false)),
             environment_resolver: None,
+            progress: None,
         }
     }
 }
@@ -93,6 +100,14 @@ impl PipelineExecutor {
             let _ = store.set_running(&run.id, run_start_wall);
         }
 
+        emit(
+            &options.progress,
+            ExecutionEvent::RunStarted {
+                run_id: run.id.clone(),
+                pipeline_name: pipeline.name.clone(),
+            },
+        );
+
         let mut outputs: HashMap<NodeId, Vec<RecordBatch>> = HashMap::new();
         let mut stats: Vec<NodeStats> = Vec::new();
 
@@ -106,6 +121,14 @@ impl PipelineExecutor {
                 if let Some(store) = &options.run_store {
                     let _ = store.finish_run(&run.id, RunStatus::Cancelled, end_wall, None);
                 }
+                emit(
+                    &options.progress,
+                    ExecutionEvent::RunCompleted {
+                        run_id: run.id.clone(),
+                        status: RunStatus::Cancelled,
+                        duration_ms: Instant::now().duration_since(run_start).as_millis() as u64,
+                    },
+                );
                 return Err(ExecutorError::Cancelled);
             }
 
@@ -114,6 +137,14 @@ impl PipelineExecutor {
                 .expect("topological_sort returned an ID not in the pipeline");
 
             debug!(node = %node_id, kind = ?std::mem::discriminant(&node.kind), "executing node");
+
+            emit(
+                &options.progress,
+                ExecutionEvent::NodeStarted {
+                    run_id: run.id.clone(),
+                    node_id: node_id.clone(),
+                },
+            );
 
             let node_start = Instant::now();
             let node_start_wall = SystemTime::now();
@@ -207,6 +238,16 @@ impl PipelineExecutor {
                     }
                     run.node_stats.push(node_run_stats);
 
+                    emit(
+                        &options.progress,
+                        ExecutionEvent::NodeCompleted {
+                            run_id: run.id.clone(),
+                            node_id: node_id.clone(),
+                            rows_out,
+                            duration_ms: node_end.duration_since(node_start).as_millis() as u64,
+                        },
+                    );
+
                     outputs.insert(node_id.clone(), batches);
                 }
                 Err(kind) => {
@@ -234,6 +275,15 @@ impl PipelineExecutor {
                     }
                     run.node_stats.push(node_run_stats);
 
+                    emit(
+                        &options.progress,
+                        ExecutionEvent::NodeFailed {
+                            run_id: run.id.clone(),
+                            node_id: node_id.clone(),
+                            error: error_msg.clone(),
+                        },
+                    );
+
                     // Finalize as failed.
                     let end_wall = SystemTime::now();
                     run.status = RunStatus::Failed;
@@ -247,6 +297,16 @@ impl PipelineExecutor {
                             run.error.as_deref(),
                         );
                     }
+
+                    emit(
+                        &options.progress,
+                        ExecutionEvent::RunCompleted {
+                            run_id: run.id.clone(),
+                            status: RunStatus::Failed,
+                            duration_ms: Instant::now().duration_since(run_start).as_millis()
+                                as u64,
+                        },
+                    );
 
                     return Err(ExecutorError::Node {
                         node_id: node_id.clone(),
@@ -271,6 +331,15 @@ impl PipelineExecutor {
         if let Some(store) = &options.run_store {
             let _ = store.finish_run(&run.id, RunStatus::Success, run_end_wall, None);
         }
+
+        emit(
+            &options.progress,
+            ExecutionEvent::RunCompleted {
+                run_id: run.id.clone(),
+                status: RunStatus::Success,
+                duration_ms: run_end.duration_since(run_start).as_millis() as u64,
+            },
+        );
 
         let pipeline_result = PipelineResult {
             pipeline_name: pipeline.name.clone(),
@@ -375,5 +444,12 @@ impl PipelineExecutor {
             .await
             .map_err(NodeErrorKind::Sink)?;
         Ok((batches, write_stats))
+    }
+}
+
+/// Send a progress event if a sender is available. Silently ignores closed channels.
+fn emit(sender: &Option<mpsc::UnboundedSender<ExecutionEvent>>, event: ExecutionEvent) {
+    if let Some(tx) = sender {
+        let _ = tx.send(event);
     }
 }

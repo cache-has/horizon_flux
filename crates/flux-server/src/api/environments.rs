@@ -126,11 +126,14 @@ async fn delete_environment(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    state.environment_store.delete(&name).map_err(|e| match &e {
-        EnvironmentError::NotFound(_) => ApiError::not_found("environment", &name),
-        EnvironmentError::CannotDeleteProd => ApiError::bad_request(e.to_string()),
-        _ => ApiError::internal(e.to_string()),
-    })?;
+    state
+        .environment_store
+        .delete(&name)
+        .map_err(|e| match &e {
+            EnvironmentError::NotFound(_) => ApiError::not_found("environment", &name),
+            EnvironmentError::CannotDeleteProd => ApiError::bad_request(e.to_string()),
+            _ => ApiError::internal(e.to_string()),
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -22,6 +22,7 @@ fn test_state() -> AppState {
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: None,
+        event_tx: AppState::new_event_channel(),
     }
 }
 

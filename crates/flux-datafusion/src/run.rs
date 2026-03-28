@@ -11,6 +11,39 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use uuid::Uuid;
 
+/// Real-time execution event emitted by the executor as nodes progress.
+///
+/// These events are sent over an optional progress channel so that the
+/// server layer can broadcast them to WebSocket clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ExecutionEvent {
+    RunStarted {
+        run_id: RunId,
+        pipeline_name: String,
+    },
+    NodeStarted {
+        run_id: RunId,
+        node_id: NodeId,
+    },
+    NodeCompleted {
+        run_id: RunId,
+        node_id: NodeId,
+        rows_out: u64,
+        duration_ms: u64,
+    },
+    NodeFailed {
+        run_id: RunId,
+        node_id: NodeId,
+        error: String,
+    },
+    RunCompleted {
+        run_id: RunId,
+        status: RunStatus,
+        duration_ms: u64,
+    },
+}
+
 /// Unique identifier for a pipeline run.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

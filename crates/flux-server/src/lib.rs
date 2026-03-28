@@ -15,6 +15,7 @@ pub mod port;
 pub mod shutdown;
 pub mod state;
 pub mod static_files;
+pub mod ws;
 
 pub use error::ServerError;
 pub use state::AppState;
@@ -22,7 +23,9 @@ pub use state::AppState;
 use std::process;
 
 use axum::Router;
+use axum::http::HeaderValue;
 use axum::routing::get;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 
 /// Configuration for the web server.
@@ -59,7 +62,22 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
         .nest("/environments", api::environments::router())
         .nest("/secrets", api::secrets::router());
 
-    let app = Router::new().nest("/api", api_routes).with_state(app_state);
+    // CORS: allow localhost origins for single-user mode.
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _| {
+            origin
+                .to_str()
+                .map(|s| s.starts_with("http://localhost") || s.starts_with("http://127.0.0.1"))
+                .unwrap_or(false)
+        }))
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
+
+    let app = Router::new()
+        .nest("/api", api_routes)
+        .route("/ws", get(ws::ws_handler))
+        .with_state(app_state)
+        .layer(cors);
 
     if config.dev_mode {
         info!(

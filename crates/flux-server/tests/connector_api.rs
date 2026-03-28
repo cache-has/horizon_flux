@@ -22,6 +22,7 @@ fn test_state() -> AppState {
         connector_registry: Arc::new(flux_connectors::default_registry()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: None,
+        event_tx: AppState::new_event_channel(),
     }
 }
 
@@ -77,6 +78,7 @@ async fn list_connectors_empty_registry() {
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: None,
+        event_tx: AppState::new_event_channel(),
     };
     let app = test_router(state);
     let resp = app

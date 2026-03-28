@@ -28,6 +28,7 @@ fn test_state_with_secrets() -> AppState {
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: Some(Arc::new(Mutex::new(store))),
+        event_tx: AppState::new_event_channel(),
     }
 }
 
@@ -38,6 +39,7 @@ fn test_state_without_secrets() -> AppState {
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: None,
+        event_tx: AppState::new_event_channel(),
     }
 }
 
@@ -267,9 +269,7 @@ async fn create_secret_empty_name_returns_400() {
                 .method("POST")
                 .uri("/api/secrets")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"name": "", "value": "val"}).to_string(),
-                ))
+                .body(Body::from(json!({"name": "", "value": "val"}).to_string()))
                 .unwrap(),
         )
         .await

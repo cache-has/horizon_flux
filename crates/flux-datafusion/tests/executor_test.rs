@@ -655,6 +655,7 @@ async fn execute_with_run_store_persists_history() {
         run_store: Some(Arc::clone(&store)),
         cancel: Arc::new(AtomicBool::new(false)),
         environment_resolver: None,
+        progress: None,
     };
 
     let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -699,6 +700,7 @@ async fn failed_run_persists_error() {
         run_store: Some(Arc::clone(&store)),
         cancel: Arc::new(AtomicBool::new(false)),
         environment_resolver: None,
+        progress: None,
     };
 
     let err = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -764,6 +766,7 @@ async fn cancellation_stops_execution() {
         run_store: None,
         cancel: cancel_clone,
         environment_resolver: None,
+        progress: None,
     };
 
     // Set cancel before execution so it triggers after the first node.

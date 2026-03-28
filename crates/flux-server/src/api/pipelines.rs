@@ -16,6 +16,7 @@ use flux_engine::{Pipeline, SampleConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use tokio::sync::mpsc;
 use tracing::error;
 
 /// Build the `/pipelines` sub-router.
@@ -222,11 +223,23 @@ async fn run_pipeline(
         .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
 
     let provider_registry = state.connector_registry.to_provider_registry();
+
+    // Set up a progress channel that forwards execution events to the
+    // broadcast channel for WebSocket clients.
+    let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+    let event_tx = state.event_tx.clone();
+    tokio::spawn(async move {
+        while let Some(event) = progress_rx.recv().await {
+            let _ = event_tx.send(event);
+        }
+    });
+
     let options = ExecutionOptions {
         environment: req.environment,
         run_store: Some(Arc::clone(&state.run_store)),
         cancel: Arc::new(AtomicBool::new(false)),
         environment_resolver: None,
+        progress: Some(progress_tx),
     };
 
     let (_result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
@@ -259,6 +272,7 @@ async fn preview_pipeline(
     let options = PreviewOptions {
         sample: req.sample.unwrap_or_default(),
         cancel: Arc::new(AtomicBool::new(false)),
+        progress: None,
     };
 
     let preview = PipelineExecutor::preview(&record.pipeline, &provider_registry, &options)
