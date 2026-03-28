@@ -4,6 +4,7 @@
 import { useCallback } from 'react';
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   BackgroundVariant,
   Controls,
@@ -20,6 +21,7 @@ import '@xyflow/react/dist/style.css';
 
 import type { PipelineNode, PipelineEdge } from '../../types/pipeline';
 import { PipelineNodeComponent } from './PipelineNode';
+import { useForceLayout } from '../../hooks/useForceLayout';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
@@ -77,14 +79,13 @@ const initialEdges: PipelineEdge[] = [
   { id: 'e-transform-1-sink-1', source: 'transform-1', target: 'sink-1' },
 ];
 
-export function PipelineCanvas() {
+function PipelineCanvasInner() {
   const [nodes, setNodes, onNodesChange] =
     useNodesState<PipelineNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] =
     useEdgesState<PipelineEdge>(initialEdges);
 
-  // setNodes will be used by the D3-force layout hook (next task group)
-  void setNodes;
+  useForceLayout(nodes, edges, setNodes);
 
   const onConnect: OnConnect = useCallback(
     (connection) => {
@@ -134,5 +135,14 @@ export function PipelineCanvas() {
         />
       </ReactFlow>
     </div>
+  );
+}
+
+/** PipelineCanvas wraps the inner component with ReactFlowProvider. */
+export function PipelineCanvas() {
+  return (
+    <ReactFlowProvider>
+      <PipelineCanvasInner />
+    </ReactFlowProvider>
   );
 }
