@@ -49,9 +49,8 @@ pub async fn execute_python_transform(
     variables: &HashMap<String, serde_json::Value>,
 ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
     // Create a temp directory for this transform's IPC exchange.
-    let tmp_dir = tempfile::tempdir().map_err(|e| {
-        NodeErrorKind::Python(format!("failed to create temp directory: {e}"))
-    })?;
+    let tmp_dir = tempfile::tempdir()
+        .map_err(|e| NodeErrorKind::Python(format!("failed to create temp directory: {e}")))?;
     let tmp_path = tmp_dir.path();
 
     // Write each upstream input as an Arrow IPC file.
@@ -62,10 +61,7 @@ pub async fn execute_python_transform(
         }
         let ipc_path = tmp_path.join(format!("{}.arrow", node_id));
         write_ipc(&ipc_path, batches)?;
-        input_paths.insert(
-            node_id.to_string(),
-            ipc_path.to_string_lossy().into_owned(),
-        );
+        input_paths.insert(node_id.to_string(), ipc_path.to_string_lossy().into_owned());
     }
 
     // Write the manifest.
@@ -75,18 +71,15 @@ pub async fn execute_python_transform(
         code: code.to_string(),
     };
     let manifest_path = tmp_path.join("manifest.json");
-    let manifest_json = serde_json::to_string(&manifest).map_err(|e| {
-        NodeErrorKind::Python(format!("failed to serialize manifest: {e}"))
-    })?;
-    std::fs::write(&manifest_path, &manifest_json).map_err(|e| {
-        NodeErrorKind::Python(format!("failed to write manifest: {e}"))
-    })?;
+    let manifest_json = serde_json::to_string(&manifest)
+        .map_err(|e| NodeErrorKind::Python(format!("failed to serialize manifest: {e}")))?;
+    std::fs::write(&manifest_path, &manifest_json)
+        .map_err(|e| NodeErrorKind::Python(format!("failed to write manifest: {e}")))?;
 
     // Write the runner script to the temp directory.
     let runner_path = tmp_path.join("_runner.py");
-    std::fs::write(&runner_path, RUNNER_SCRIPT).map_err(|e| {
-        NodeErrorKind::Python(format!("failed to write runner script: {e}"))
-    })?;
+    std::fs::write(&runner_path, RUNNER_SCRIPT)
+        .map_err(|e| NodeErrorKind::Python(format!("failed to write runner script: {e}")))?;
 
     // Output path for the result.
     let output_path = tmp_path.join("output.arrow");
@@ -125,9 +118,10 @@ pub async fn execute_python_transform(
             }
         })?;
 
-    let output = child.wait_with_output().await.map_err(|e| {
-        NodeErrorKind::Python(format!("Python process failed: {e}"))
-    })?;
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| NodeErrorKind::Python(format!("Python process failed: {e}")))?;
 
     // Capture stderr for diagnostics.
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -153,16 +147,12 @@ pub async fn execute_python_transform(
             let message = parse_runner_error(&stderr);
             Err(NodeErrorKind::Python(message))
         }
-        Some(code) => {
-            Err(NodeErrorKind::Python(format!(
-                "Python process exited with unexpected code {code}: {stderr}"
-            )))
-        }
-        None => {
-            Err(NodeErrorKind::Python(
-                "Python process was killed by a signal".to_string(),
-            ))
-        }
+        Some(code) => Err(NodeErrorKind::Python(format!(
+            "Python process exited with unexpected code {code}: {stderr}"
+        ))),
+        None => Err(NodeErrorKind::Python(
+            "Python process was killed by a signal".to_string(),
+        )),
     }
 }
 
@@ -177,19 +167,18 @@ fn write_ipc(path: &Path, batches: &[RecordBatch]) -> Result<(), NodeErrorKind> 
         NodeErrorKind::Python(format!("failed to create IPC file {}: {e}", path.display()))
     })?;
 
-    let mut writer = FileWriter::try_new(file, &schema).map_err(|e| {
-        NodeErrorKind::Python(format!("failed to create IPC writer: {e}"))
-    })?;
+    let mut writer = FileWriter::try_new(file, &schema)
+        .map_err(|e| NodeErrorKind::Python(format!("failed to create IPC writer: {e}")))?;
 
     for batch in batches {
-        writer.write(batch).map_err(|e| {
-            NodeErrorKind::Python(format!("failed to write IPC batch: {e}"))
-        })?;
+        writer
+            .write(batch)
+            .map_err(|e| NodeErrorKind::Python(format!("failed to write IPC batch: {e}")))?;
     }
 
-    writer.finish().map_err(|e| {
-        NodeErrorKind::Python(format!("failed to finalize IPC file: {e}"))
-    })?;
+    writer
+        .finish()
+        .map_err(|e| NodeErrorKind::Python(format!("failed to finalize IPC file: {e}")))?;
 
     Ok(())
 }
@@ -197,18 +186,19 @@ fn write_ipc(path: &Path, batches: &[RecordBatch]) -> Result<(), NodeErrorKind> 
 /// Read `RecordBatch`es from an Arrow IPC file.
 fn read_ipc(path: &Path) -> Result<Vec<RecordBatch>, NodeErrorKind> {
     let file = std::fs::File::open(path).map_err(|e| {
-        NodeErrorKind::Python(format!("failed to open output IPC file {}: {e}", path.display()))
+        NodeErrorKind::Python(format!(
+            "failed to open output IPC file {}: {e}",
+            path.display()
+        ))
     })?;
 
-    let reader = FileReader::try_new(file, None).map_err(|e| {
-        NodeErrorKind::Python(format!("failed to read output IPC: {e}"))
-    })?;
+    let reader = FileReader::try_new(file, None)
+        .map_err(|e| NodeErrorKind::Python(format!("failed to read output IPC: {e}")))?;
 
     let mut batches = Vec::new();
     for batch_result in reader {
-        let batch = batch_result.map_err(|e| {
-            NodeErrorKind::Python(format!("failed to read IPC batch: {e}"))
-        })?;
+        let batch = batch_result
+            .map_err(|e| NodeErrorKind::Python(format!("failed to read IPC batch: {e}")))?;
         batches.push(batch);
     }
 

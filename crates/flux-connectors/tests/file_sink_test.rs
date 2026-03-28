@@ -28,15 +28,17 @@ fn test_batches() -> Vec<RecordBatch> {
         Field::new("score", DataType::Float64, false),
     ]));
 
-    vec![RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(Int64Array::from(vec![1, 2, 3])),
-            Arc::new(StringArray::from(vec!["Alice", "Bob", "Carol"])),
-            Arc::new(Float64Array::from(vec![95.5, 87.3, 92.1])),
-        ],
-    )
-    .unwrap()]
+    vec![
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3])),
+                Arc::new(StringArray::from(vec!["Alice", "Bob", "Carol"])),
+                Arc::new(Float64Array::from(vec![95.5, 87.3, 92.1])),
+            ],
+        )
+        .unwrap(),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +384,12 @@ fn default_registry_has_file_sink() {
     let registry = flux_connectors::default_registry();
     let names = registry.sink_names();
     assert!(names.contains(&"csv"), "registry should contain 'csv' sink");
-    assert!(names.contains(&"parquet"), "registry should contain 'parquet' sink");
-    assert!(names.contains(&"file"), "registry should contain 'file' sink");
+    assert!(
+        names.contains(&"parquet"),
+        "registry should contain 'parquet' sink"
+    );
+    assert!(
+        names.contains(&"file"),
+        "registry should contain 'file' sink"
+    );
 }

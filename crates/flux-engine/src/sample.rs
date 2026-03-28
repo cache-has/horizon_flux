@@ -29,14 +29,20 @@ mod tests {
 
     #[test]
     fn default_is_first_100() {
-        assert!(matches!(SampleConfig::default(), SampleConfig::FirstN { count: 100 }));
+        assert!(matches!(
+            SampleConfig::default(),
+            SampleConfig::FirstN { count: 100 }
+        ));
     }
 
     #[test]
     fn serde_roundtrip() {
         let configs = vec![
             SampleConfig::FirstN { count: 50 },
-            SampleConfig::Random { count: 200, seed: 42 },
+            SampleConfig::Random {
+                count: 200,
+                seed: 42,
+            },
             SampleConfig::Full,
         ];
         for cfg in configs {

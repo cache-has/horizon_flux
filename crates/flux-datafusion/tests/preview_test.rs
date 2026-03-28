@@ -19,8 +19,8 @@ use flux_engine::node::*;
 use flux_engine::pipeline::Pipeline;
 use flux_engine::sample::SampleConfig;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -164,9 +164,19 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
 #[tokio::test]
 async fn preview_returns_per_node_outputs() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
     let sink_called = Arc::new(AtomicBool::new(false));
-    registry.register_sink("mock", Arc::new(SpySink { called: Arc::clone(&sink_called) }));
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::clone(&sink_called),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "preview_basic",
@@ -198,14 +208,27 @@ async fn preview_returns_per_node_outputs() {
     // Sink: shows what would be written (3 rows), but sink was NOT called.
     let out = result.node_output(&"out".into()).unwrap();
     assert_eq!(out.row_count, 3);
-    assert!(!sink_called.load(Ordering::Relaxed), "sink should not be invoked during preview");
+    assert!(
+        !sink_called.load(Ordering::Relaxed),
+        "sink should not be invoked during preview"
+    );
 }
 
 #[tokio::test]
 async fn preview_samples_source_with_first_n() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![large_batch()] }));
-    registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![large_batch()],
+        }),
+    );
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::new(AtomicBool::new(false)),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "preview_sample",
@@ -238,8 +261,18 @@ async fn preview_samples_source_with_first_n() {
 #[tokio::test]
 async fn preview_full_sample_passes_all_rows() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![large_batch()] }));
-    registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![large_batch()],
+        }),
+    );
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::new(AtomicBool::new(false)),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "preview_full",
@@ -267,8 +300,18 @@ async fn preview_full_sample_passes_all_rows() {
 #[tokio::test]
 async fn preview_random_sample_is_deterministic() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![large_batch()] }));
-    registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![large_batch()],
+        }),
+    );
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::new(AtomicBool::new(false)),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "preview_random",
@@ -277,12 +320,19 @@ async fn preview_random_sample_is_deterministic() {
     );
 
     let opts = PreviewOptions {
-        sample: SampleConfig::Random { count: 15, seed: 42 },
+        sample: SampleConfig::Random {
+            count: 15,
+            seed: 42,
+        },
         ..PreviewOptions::default()
     };
 
-    let r1 = PipelineExecutor::preview(&pipeline, &registry, &opts).await.unwrap();
-    let r2 = PipelineExecutor::preview(&pipeline, &registry, &opts).await.unwrap();
+    let r1 = PipelineExecutor::preview(&pipeline, &registry, &opts)
+        .await
+        .unwrap();
+    let r2 = PipelineExecutor::preview(&pipeline, &registry, &opts)
+        .await
+        .unwrap();
 
     let src1 = r1.node_output(&"src".into()).unwrap();
     let src2 = r2.node_output(&"src".into()).unwrap();
@@ -293,8 +343,18 @@ async fn preview_random_sample_is_deterministic() {
 #[tokio::test]
 async fn preview_cancellation() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
-    registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::new(AtomicBool::new(false)),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "preview_cancel",
@@ -322,8 +382,18 @@ async fn preview_cancellation() {
 #[tokio::test]
 async fn preview_invalid_sql_reports_error() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
-    registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::new(AtomicBool::new(false)),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "preview_bad_sql",
@@ -357,8 +427,18 @@ async fn preview_empty_pipeline_returns_validation_error() {
 #[tokio::test]
 async fn preview_schema_includes_column_info() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
-    registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::new(AtomicBool::new(false)),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "preview_schema",

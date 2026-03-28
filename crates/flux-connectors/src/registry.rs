@@ -44,11 +44,7 @@ impl ConnectorRegistry {
     }
 
     /// Register a sink connector factory.
-    pub fn register_sink(
-        &mut self,
-        connector: impl Into<String>,
-        sink: Arc<dyn PipelineSink>,
-    ) {
+    pub fn register_sink(&mut self, connector: impl Into<String>, sink: Arc<dyn PipelineSink>) {
         self.sinks.insert(connector.into(), sink);
     }
 
@@ -90,10 +86,7 @@ impl ConnectorRegistry {
     }
 
     /// Validate all connector configurations in a pipeline before execution.
-    pub fn validate_pipeline(
-        &self,
-        pipeline: &flux_engine::Pipeline,
-    ) -> Result<(), Vec<String>> {
+    pub fn validate_pipeline(&self, pipeline: &flux_engine::Pipeline) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
         for node in &pipeline.nodes {
@@ -115,10 +108,7 @@ impl ConnectorRegistry {
                     }
                     if let Some(sink) = self.sinks.get(&cfg.connector) {
                         if let Err(e) = sink.validate_config(cfg) {
-                            errors.push(format!(
-                                "node `{}`: sink config invalid: {}",
-                                node.id, e,
-                            ));
+                            errors.push(format!("node `{}`: sink config invalid: {}", node.id, e,));
                         }
                     }
                 }
@@ -168,8 +158,5 @@ pub enum ConnectorError {
     InvalidConfig(#[source] ProviderError),
 
     #[error("connector `{connector}` validation failed: {message}")]
-    ValidationFailed {
-        connector: String,
-        message: String,
-    },
+    ValidationFailed { connector: String, message: String },
 }

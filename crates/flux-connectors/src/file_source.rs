@@ -9,10 +9,12 @@
 
 use std::sync::Arc;
 
-use datafusion::datasource::listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl};
+use datafusion::datasource::TableProvider;
 use datafusion::datasource::file_format::csv::CsvFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
-use datafusion::datasource::TableProvider;
+use datafusion::datasource::listing::{
+    ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
+};
 use datafusion::prelude::SessionContext;
 use flux_datafusion::provider::{ProviderError, SourceConnector};
 use flux_engine::node::SourceConfig;
@@ -59,7 +61,8 @@ impl SourceConnector for FileSource {
             file_config.path.clone()
         };
 
-        let path_str = path.to_str()
+        let path_str = path
+            .to_str()
             .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))?;
 
         // Validate the path exists (or glob matches at least one file) before
@@ -74,7 +77,11 @@ impl SourceConnector for FileSource {
             if matches.is_empty() {
                 return Err(format!("no files found matching pattern '{}'", path_str).into());
             }
-            debug!(pattern = path_str, count = matches.len(), "glob matched files");
+            debug!(
+                pattern = path_str,
+                count = matches.len(),
+                "glob matched files"
+            );
         } else if !path.exists() {
             return Err(format!("file not found: '{}'", path.display()).into());
         }
@@ -87,9 +94,7 @@ impl SourceConnector for FileSource {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| "file source requires a tokio runtime")?;
 
-        tokio::task::block_in_place(|| {
-            rt.block_on(create_listing_table(path_str, &file_config))
-        })
+        tokio::task::block_in_place(|| rt.block_on(create_listing_table(path_str, &file_config)))
     }
 }
 
@@ -117,13 +122,11 @@ async fn create_listing_table(
                 csv_format = csv_format.with_quote(quote as u8);
             }
 
-            ListingOptions::new(Arc::new(csv_format))
-                .with_file_extension("")
+            ListingOptions::new(Arc::new(csv_format)).with_file_extension("")
         }
         FileFormat::Parquet => {
             let parquet_format = ParquetFormat::default();
-            ListingOptions::new(Arc::new(parquet_format))
-                .with_file_extension("")
+            ListingOptions::new(Arc::new(parquet_format)).with_file_extension("")
         }
     };
 

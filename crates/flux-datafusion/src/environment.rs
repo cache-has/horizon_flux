@@ -8,7 +8,7 @@
 //! `prod` (no fallback) and `dev` (falls back to `prod`).
 
 use crate::error::EnvironmentError;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
@@ -138,16 +138,18 @@ impl EnvironmentStore {
         let conn = self.conn.lock().unwrap();
 
         // Re-point any environments that fall back to this one to this one's fallback.
-        let fallback_of_deleted: Option<String> = conn.query_row(
-            "SELECT fallback FROM environments WHERE name = ?1",
-            params![name],
-            |row| row.get(0),
-        ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => {
-                EnvironmentError::NotFound(name.to_string())
-            }
-            other => EnvironmentError::Sqlite(other),
-        })?;
+        let fallback_of_deleted: Option<String> = conn
+            .query_row(
+                "SELECT fallback FROM environments WHERE name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    EnvironmentError::NotFound(name.to_string())
+                }
+                other => EnvironmentError::Sqlite(other),
+            })?;
 
         conn.execute(
             "UPDATE environments SET fallback = ?1 WHERE fallback = ?2",
@@ -167,8 +169,7 @@ impl EnvironmentStore {
     /// Get a single environment by name.
     pub fn get(&self, name: &str) -> Result<Option<Environment>, EnvironmentError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt =
-            conn.prepare("SELECT name, fallback FROM environments WHERE name = ?1")?;
+        let mut stmt = conn.prepare("SELECT name, fallback FROM environments WHERE name = ?1")?;
         let mut rows = stmt.query(params![name])?;
         match rows.next()? {
             Some(row) => Ok(Some(Environment {

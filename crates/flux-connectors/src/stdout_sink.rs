@@ -176,14 +176,14 @@ fn format_table(batch: &RecordBatch) -> Result<String, ProviderError> {
 fn format_csv(batch: &RecordBatch, include_header: bool) -> Result<String, ProviderError> {
     let mut buf = Vec::new();
     {
-        let builder =
-            arrow::csv::WriterBuilder::new().with_header(include_header);
+        let builder = arrow::csv::WriterBuilder::new().with_header(include_header);
         let mut writer = builder.build(&mut buf);
         writer
             .write(batch)
             .map_err(|e| -> ProviderError { format!("failed to write CSV: {e}").into() })?;
     }
-    String::from_utf8(buf).map_err(|e| -> ProviderError { format!("invalid UTF-8 in CSV: {e}").into() })
+    String::from_utf8(buf)
+        .map_err(|e| -> ProviderError { format!("invalid UTF-8 in CSV: {e}").into() })
 }
 
 /// Format a record batch as a JSON array.
@@ -198,7 +198,8 @@ fn format_json(batch: &RecordBatch) -> Result<String, ProviderError> {
             .finish()
             .map_err(|e| -> ProviderError { format!("failed to finish JSON: {e}").into() })?;
     }
-    String::from_utf8(buf).map_err(|e| -> ProviderError { format!("invalid UTF-8 in JSON: {e}").into() })
+    String::from_utf8(buf)
+        .map_err(|e| -> ProviderError { format!("invalid UTF-8 in JSON: {e}").into() })
 }
 
 /// Format a record batch as newline-delimited JSON.

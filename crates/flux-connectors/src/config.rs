@@ -24,7 +24,7 @@ pub enum ConnectorConfig {
     #[serde(rename = "postgresql")]
     PostgreSql(PostgreSqlConfig),
     /// REST API source.
-    RestApi(RestApiConfig),
+    RestApi(Box<RestApiConfig>),
     /// Stdout sink (debugging/CLI).
     Stdout(StdoutConfig),
 }
@@ -254,7 +254,10 @@ pub enum StdoutFormat {
 impl ConnectorConfig {
     /// Try to deserialize a `ConnectorConfig` from a connector type name and
     /// opaque JSON value (as stored in pipeline definitions).
-    pub fn from_json(connector: &str, value: &serde_json::Value) -> Result<Self, serde_json::Error> {
+    pub fn from_json(
+        connector: &str,
+        value: &serde_json::Value,
+    ) -> Result<Self, serde_json::Error> {
         match connector {
             "file" | "csv" | "parquet" => {
                 let cfg: FileConfig = serde_json::from_value(value.clone())?;
@@ -266,7 +269,7 @@ impl ConnectorConfig {
             }
             "rest_api" | "rest" | "http" => {
                 let cfg: RestApiConfig = serde_json::from_value(value.clone())?;
-                Ok(ConnectorConfig::RestApi(cfg))
+                Ok(ConnectorConfig::RestApi(Box::new(cfg)))
             }
             "stdout" => {
                 let cfg: StdoutConfig = serde_json::from_value(value.clone())?;

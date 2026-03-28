@@ -185,10 +185,7 @@ pub fn topological_sort(pipeline: &Pipeline) -> Vec<NodeId> {
 /// Build in-degree map and adjacency list from the pipeline edges.
 fn build_adjacency(
     pipeline: &Pipeline,
-) -> (
-    HashMap<&NodeId, usize>,
-    HashMap<&NodeId, Vec<&NodeId>>,
-) {
+) -> (HashMap<&NodeId, usize>, HashMap<&NodeId, Vec<&NodeId>>) {
     let mut in_degree: HashMap<&NodeId, usize> = HashMap::new();
     let mut children: HashMap<&NodeId, Vec<&NodeId>> = HashMap::new();
 
@@ -263,10 +260,7 @@ mod tests {
                 transform_node("xform"),
                 sink_node("sink"),
             ],
-            edges: vec![
-                Edge::new("src", "xform"),
-                Edge::new("xform", "sink"),
-            ],
+            edges: vec![Edge::new("src", "xform"), Edge::new("xform", "sink")],
         }
     }
 
@@ -352,10 +346,7 @@ mod tests {
                 sink_node("sink"),
                 source_node("orphan"), // not connected
             ],
-            edges: vec![
-                Edge::new("src", "xform"),
-                Edge::new("xform", "sink"),
-            ],
+            edges: vec![Edge::new("src", "xform"), Edge::new("xform", "sink")],
         };
         let errs = validate(&p).unwrap_err();
         assert!(errs.iter().any(|e| matches!(e, DagError::OrphanNode(_))));
@@ -369,20 +360,17 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
-            nodes: vec![
-                source_node("a"),
-                source_node("b"),
-                sink_node("out"),
-            ],
+            nodes: vec![source_node("a"), source_node("b"), sink_node("out")],
             edges: vec![
                 Edge::new("a", "b"), // b is a source but has upstream
                 Edge::new("b", "out"),
             ],
         };
         let errs = validate(&p).unwrap_err();
-        assert!(errs
-            .iter()
-            .any(|e| matches!(e, DagError::SourceHasUpstream(_))));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, DagError::SourceHasUpstream(_)))
+        );
     }
 
     #[test]
@@ -397,9 +385,7 @@ mod tests {
             edges: vec![],
         };
         let errs = validate(&p).unwrap_err();
-        assert!(errs
-            .iter()
-            .any(|e| matches!(e, DagError::EmptyPipeline)));
+        assert!(errs.iter().any(|e| matches!(e, DagError::EmptyPipeline)));
     }
 
     #[test]
@@ -414,9 +400,10 @@ mod tests {
             edges: vec![Edge::new("a", "out")],
         };
         let errs = validate(&p).unwrap_err();
-        assert!(errs
-            .iter()
-            .any(|e| matches!(e, DagError::DuplicateNodeId(_))));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, DagError::DuplicateNodeId(_)))
+        );
     }
 
     #[test]
@@ -434,9 +421,7 @@ mod tests {
             ],
         };
         let errs = validate(&p).unwrap_err();
-        assert!(errs
-            .iter()
-            .any(|e| matches!(e, DagError::UnknownNode(_))));
+        assert!(errs.iter().any(|e| matches!(e, DagError::UnknownNode(_))));
     }
 
     #[test]

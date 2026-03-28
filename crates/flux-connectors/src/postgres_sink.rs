@@ -10,16 +10,16 @@
 use std::time::Instant;
 
 use arrow::array::{
-    Array, AsArray, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array,
-    Int16Array, Int32Array, Int64Array, TimestampMicrosecondArray,
+    Array, AsArray, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array, Int16Array,
+    Int32Array, Int64Array, TimestampMicrosecondArray,
 };
 use arrow::datatypes::{DataType, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use flux_datafusion::provider::{PipelineSink, ProviderError, WriteOptions, WriteStats};
 use flux_engine::node::SinkConfig;
-use tokio_postgres::types::ToSql;
 use tokio_postgres::NoTls;
+use tokio_postgres::types::ToSql;
 use tracing::debug;
 
 use crate::config::{PostgreSqlConfig, PostgresWriteMode};
@@ -73,7 +73,10 @@ impl PipelineSink for PostgresSink {
             .as_deref()
             .ok_or("postgresql sink requires a 'table' name")?;
 
-        let write_mode = pg_config.write_mode.clone().unwrap_or(PostgresWriteMode::Insert);
+        let write_mode = pg_config
+            .write_mode
+            .clone()
+            .unwrap_or(PostgresWriteMode::Insert);
         let batch_size = pg_config.batch_size.unwrap_or(DEFAULT_BATCH_SIZE);
         let schema = data[0].schema();
 
@@ -171,12 +174,10 @@ impl PipelineSink for PostgresSink {
         }
 
         // Upsert mode requires conflict keys.
-        if matches!(pg_config.write_mode, Some(PostgresWriteMode::Upsert)) {
-            if pg_config.conflict_keys.is_empty() {
-                return Err(
-                    "postgresql upsert mode requires 'conflict_keys' to be specified".into(),
-                );
-            }
+        if matches!(pg_config.write_mode, Some(PostgresWriteMode::Upsert))
+            && pg_config.conflict_keys.is_empty()
+        {
+            return Err("postgresql upsert mode requires 'conflict_keys' to be specified".into());
         }
 
         Ok(())
@@ -278,10 +279,7 @@ fn arrow_type_to_pg(data_type: &DataType) -> Result<&'static str, ProviderError>
         DataType::Date32 | DataType::Date64 => Ok("DATE"),
         DataType::Timestamp(_, Some(_)) => Ok("TIMESTAMPTZ"),
         DataType::Timestamp(_, None) => Ok("TIMESTAMP"),
-        _ => Err(format!(
-            "unsupported Arrow type for postgresql sink: {data_type}"
-        )
-        .into()),
+        _ => Err(format!("unsupported Arrow type for postgresql sink: {data_type}").into()),
     }
 }
 
@@ -334,10 +332,7 @@ impl SqlParam {
 }
 
 /// Extract a single row from a RecordBatch as a vector of SQL parameters.
-fn extract_row_params(
-    batch: &RecordBatch,
-    row_idx: usize,
-) -> Result<Vec<SqlParam>, ProviderError> {
+fn extract_row_params(batch: &RecordBatch, row_idx: usize) -> Result<Vec<SqlParam>, ProviderError> {
     let mut params = Vec::with_capacity(batch.num_columns());
 
     for col_idx in 0..batch.num_columns() {
@@ -471,8 +466,11 @@ mod tests {
             "TIMESTAMP"
         );
         assert_eq!(
-            arrow_type_to_pg(&DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())))
-                .unwrap(),
+            arrow_type_to_pg(&DataType::Timestamp(
+                TimeUnit::Microsecond,
+                Some("UTC".into())
+            ))
+            .unwrap(),
             "TIMESTAMPTZ"
         );
     }
@@ -504,8 +502,7 @@ mod tests {
             Field::new("name", DataType::Utf8, true),
         ]);
 
-        let sql =
-            build_insert_sql("users", &schema, &PostgresWriteMode::Insert, &[]).unwrap();
+        let sql = build_insert_sql("users", &schema, &PostgresWriteMode::Insert, &[]).unwrap();
         assert_eq!(
             sql,
             "INSERT INTO \"users\" (\"id\", \"name\") VALUES ($1, $2)"
@@ -553,8 +550,7 @@ mod tests {
     #[test]
     fn upsert_without_conflict_keys_fails() {
         let schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
-        let result =
-            build_insert_sql("t", &schema, &PostgresWriteMode::Upsert, &[]);
+        let result = build_insert_sql("t", &schema, &PostgresWriteMode::Upsert, &[]);
         assert!(result.is_err());
     }
 
@@ -627,9 +623,7 @@ mod tests {
 
     #[test]
     fn schema_compatibility_rejects_unsupported_types() {
-        let schema = Schema::new(vec![
-            Field::new("val", DataType::Decimal128(10, 2), true),
-        ]);
+        let schema = Schema::new(vec![Field::new("val", DataType::Decimal128(10, 2), true)]);
         assert!(validate_schema_compatibility(&schema).is_err());
     }
 

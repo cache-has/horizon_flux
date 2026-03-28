@@ -145,11 +145,7 @@ impl ProviderRegistry {
 
     // -- sinks --
 
-    pub fn register_sink(
-        &mut self,
-        connector: impl Into<String>,
-        sink: Arc<dyn PipelineSink>,
-    ) {
+    pub fn register_sink(&mut self, connector: impl Into<String>, sink: Arc<dyn PipelineSink>) {
         self.sinks.insert(connector.into(), sink);
     }
 

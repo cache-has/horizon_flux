@@ -131,9 +131,7 @@ fn transform_select(
             }
             SelectItem::QualifiedWildcard(kind, opts) if has_exclude(opts) => {
                 let qualifier = match kind {
-                    SelectItemQualifiedWildcardKind::ObjectName(name) => {
-                        Some(name.to_string())
-                    }
+                    SelectItemQualifiedWildcardKind::ObjectName(name) => Some(name.to_string()),
                     SelectItemQualifiedWildcardKind::Expr(expr) => Some(expr.to_string()),
                 };
                 let expanded = expand_exclude_item(opts, &tables_in_scope, qualifier.as_deref())?;
@@ -250,13 +248,14 @@ fn collect_table_columns(
                 });
             }
         }
-        TableFactor::Derived { alias, .. } => {
+        TableFactor::Derived {
+            alias: Some(_alias),
+            ..
+        } => {
             // For derived tables we don't have schema info at this stage.
             // They'll need to be handled separately if needed.
-            if let Some(alias) = alias {
-                let _ = alias.name.value.clone();
-            }
         }
+        TableFactor::Derived { alias: None, .. } => {}
         _ => {}
     }
 }
@@ -281,7 +280,11 @@ fn expand_exclude_item(
         Some(ExcludeSelectItem::Multiple(idents)) => {
             idents.iter().map(|i| i.value.clone()).collect()
         }
-        None => return Ok(vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())]),
+        None => {
+            return Ok(vec![SelectItem::Wildcard(
+                WildcardAdditionalOptions::default(),
+            )]);
+        }
     };
 
     // Determine which tables to expand.
@@ -316,10 +319,7 @@ fn expand_exclude_item(
                 continue;
             }
             let expr = if use_qualifier {
-                Expr::CompoundIdentifier(vec![
-                    Ident::new(&table.alias),
-                    Ident::new(col),
-                ])
+                Expr::CompoundIdentifier(vec![Ident::new(&table.alias), Ident::new(col)])
             } else {
                 Expr::Identifier(Ident::new(col))
             };
@@ -363,10 +363,7 @@ fn expand_columns_call(
         for col in &table.columns {
             if re.is_match(col) {
                 let expr = if use_qualifier {
-                    Expr::CompoundIdentifier(vec![
-                        Ident::new(&table.alias),
-                        Ident::new(col),
-                    ])
+                    Expr::CompoundIdentifier(vec![Ident::new(&table.alias), Ident::new(col)])
                 } else {
                     Expr::Identifier(Ident::new(col))
                 };
@@ -496,7 +493,10 @@ fn contains_aggregate(expr: &Expr) -> bool {
             if let FunctionArguments::List(args) = &func.args {
                 for arg in &args.args {
                     if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e))
-                    | FunctionArg::Named { arg: FunctionArgExpr::Expr(e), .. } = arg
+                    | FunctionArg::Named {
+                        arg: FunctionArgExpr::Expr(e),
+                        ..
+                    } = arg
                     {
                         if contains_aggregate(e) {
                             return true;
@@ -506,9 +506,7 @@ fn contains_aggregate(expr: &Expr) -> bool {
             }
             false
         }
-        Expr::BinaryOp { left, right, .. } => {
-            contains_aggregate(left) || contains_aggregate(right)
-        }
+        Expr::BinaryOp { left, right, .. } => contains_aggregate(left) || contains_aggregate(right),
         Expr::UnaryOp { expr, .. } => contains_aggregate(expr),
         Expr::Nested(inner) => contains_aggregate(inner),
         Expr::Cast { expr, .. } => contains_aggregate(expr),
@@ -519,15 +517,15 @@ fn contains_aggregate(expr: &Expr) -> bool {
             ..
         } => {
             operand.as_ref().is_some_and(|e| contains_aggregate(e))
-                || conditions.iter().any(|cw| {
-                    contains_aggregate(&cw.condition) || contains_aggregate(&cw.result)
-                })
+                || conditions
+                    .iter()
+                    .any(|cw| contains_aggregate(&cw.condition) || contains_aggregate(&cw.result))
                 || else_result.as_ref().is_some_and(|e| contains_aggregate(e))
         }
         Expr::InSubquery { expr, .. } => contains_aggregate(expr),
-        Expr::Between { expr, low, high, .. } => {
-            contains_aggregate(expr) || contains_aggregate(low) || contains_aggregate(high)
-        }
+        Expr::Between {
+            expr, low, high, ..
+        } => contains_aggregate(expr) || contains_aggregate(low) || contains_aggregate(high),
         Expr::IsNull(e) | Expr::IsNotNull(e) => contains_aggregate(e),
         _ => false,
     }
@@ -543,7 +541,10 @@ fn contains_window(expr: &Expr) -> bool {
             if let FunctionArguments::List(args) = &func.args {
                 for arg in &args.args {
                     if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e))
-                    | FunctionArg::Named { arg: FunctionArgExpr::Expr(e), .. } = arg
+                    | FunctionArg::Named {
+                        arg: FunctionArgExpr::Expr(e),
+                        ..
+                    } = arg
                     {
                         if contains_window(e) {
                             return true;
@@ -553,9 +554,7 @@ fn contains_window(expr: &Expr) -> bool {
             }
             false
         }
-        Expr::BinaryOp { left, right, .. } => {
-            contains_window(left) || contains_window(right)
-        }
+        Expr::BinaryOp { left, right, .. } => contains_window(left) || contains_window(right),
         Expr::UnaryOp { expr, .. } => contains_window(expr),
         Expr::Nested(inner) => contains_window(inner),
         Expr::Cast { expr, .. } => contains_window(expr),

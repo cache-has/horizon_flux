@@ -16,8 +16,8 @@ pub mod run_store;
 pub mod stats;
 
 pub use environment::{Environment, EnvironmentStore, TableOverride};
-pub use friendly_sql::{preprocess_sql, PreprocessError};
 pub use executor::{ExecutionOptions, PipelineExecutor};
+pub use friendly_sql::{PreprocessError, preprocess_sql};
 pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult};
 pub use provider::{
     OnConflict, PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions,

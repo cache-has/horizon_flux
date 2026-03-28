@@ -6,7 +6,7 @@
 use crate::error::RunStoreError;
 use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus};
 use flux_engine::NodeId;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -90,11 +90,7 @@ impl RunStore {
     }
 
     /// Transition a run to `Running` and record the start time.
-    pub fn set_running(
-        &self,
-        run_id: &RunId,
-        start_time: SystemTime,
-    ) -> Result<(), RunStoreError> {
+    pub fn set_running(&self, run_id: &RunId, start_time: SystemTime) -> Result<(), RunStoreError> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute(
             "UPDATE pipeline_runs SET status = ?1, start_time_ms = ?2 WHERE id = ?3",
@@ -263,7 +259,7 @@ fn row_to_pipeline_run(row: &rusqlite::Row<'_>) -> Result<PipelineRun, RunStoreE
         ),
         pipeline_name: row.get(1)?,
         environment: row.get(2)?,
-        status: RunStatus::from_str(&status_str)
+        status: RunStatus::parse(&status_str)
             .ok_or_else(|| RunStoreError::InvalidStatus(status_str))?,
         start_time: start_ms.map(ms_to_system_time),
         end_time: end_ms.map(ms_to_system_time),
@@ -273,9 +269,7 @@ fn row_to_pipeline_run(row: &rusqlite::Row<'_>) -> Result<PipelineRun, RunStoreE
 }
 
 fn system_time_to_ms(t: SystemTime) -> i64 {
-    t.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
+    t.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
 }
 
 fn ms_to_system_time(ms: i64) -> SystemTime {

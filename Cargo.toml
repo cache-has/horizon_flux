@@ -64,5 +64,17 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Regex
 regex = "1"
 
+# Cryptography
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.9"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+rpassword = "7"
+
+# Filesystem
+dirs = "6"
+
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }

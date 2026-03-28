@@ -64,7 +64,11 @@ fn write_test_parquet(dir: &TempDir, filename: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn csv_source_reads_basic_file() {
     let dir = TempDir::new().unwrap();
-    let path = write_test_csv(&dir, "data.csv", "id,name,score\n1,Alice,95.5\n2,Bob,87.3\n3,Carol,92.1\n");
+    let path = write_test_csv(
+        &dir,
+        "data.csv",
+        "id,name,score\n1,Alice,95.5\n2,Bob,87.3\n3,Carol,92.1\n",
+    );
 
     let source = FileSource::new();
     let config = source_config(
@@ -80,7 +84,13 @@ async fn csv_source_reads_basic_file() {
     // Use a session to query the table provider
     let ctx = SessionContext::new();
     ctx.register_table("test", provider).unwrap();
-    let batches = ctx.sql("SELECT * FROM test").await.unwrap().collect().await.unwrap();
+    let batches = ctx
+        .sql("SELECT * FROM test")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
 
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 3);
@@ -111,7 +121,13 @@ async fn csv_source_with_custom_delimiter() {
     let provider = source.create_table_provider(&config).unwrap();
     let ctx = SessionContext::new();
     ctx.register_table("test", provider).unwrap();
-    let batches = ctx.sql("SELECT * FROM test").await.unwrap().collect().await.unwrap();
+    let batches = ctx
+        .sql("SELECT * FROM test")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
 
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 2);
@@ -120,7 +136,11 @@ async fn csv_source_with_custom_delimiter() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn csv_source_projection_pushdown() {
     let dir = TempDir::new().unwrap();
-    let path = write_test_csv(&dir, "data.csv", "id,name,score\n1,Alice,95.5\n2,Bob,87.3\n");
+    let path = write_test_csv(
+        &dir,
+        "data.csv",
+        "id,name,score\n1,Alice,95.5\n2,Bob,87.3\n",
+    );
 
     let source = FileSource::new();
     let config = source_config(
@@ -136,7 +156,13 @@ async fn csv_source_projection_pushdown() {
     ctx.register_table("test", provider).unwrap();
 
     // Only select one column — projection pushdown should limit reading
-    let batches = ctx.sql("SELECT name FROM test").await.unwrap().collect().await.unwrap();
+    let batches = ctx
+        .sql("SELECT name FROM test")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
     assert_eq!(batches[0].schema().fields().len(), 1);
     assert_eq!(batches[0].schema().field(0).name(), "name");
 }
@@ -162,7 +188,13 @@ async fn parquet_source_reads_basic_file() {
     let provider = source.create_table_provider(&config).unwrap();
     let ctx = SessionContext::new();
     ctx.register_table("test", provider).unwrap();
-    let batches = ctx.sql("SELECT * FROM test").await.unwrap().collect().await.unwrap();
+    let batches = ctx
+        .sql("SELECT * FROM test")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
 
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 3);
@@ -229,7 +261,13 @@ async fn csv_source_glob_pattern_reads_multiple_files() {
     let provider = source.create_table_provider(&config).unwrap();
     let ctx = SessionContext::new();
     ctx.register_table("test", provider).unwrap();
-    let batches = ctx.sql("SELECT * FROM test").await.unwrap().collect().await.unwrap();
+    let batches = ctx
+        .sql("SELECT * FROM test")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
 
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 4);
@@ -282,7 +320,16 @@ async fn invalid_config_returns_error() {
 fn default_registry_has_file_connectors() {
     let registry = flux_connectors::default_registry();
     let names = registry.source_names();
-    assert!(names.contains(&"csv"), "registry should contain 'csv' source");
-    assert!(names.contains(&"parquet"), "registry should contain 'parquet' source");
-    assert!(names.contains(&"file"), "registry should contain 'file' source");
+    assert!(
+        names.contains(&"csv"),
+        "registry should contain 'csv' source"
+    );
+    assert!(
+        names.contains(&"parquet"),
+        "registry should contain 'parquet' source"
+    );
+    assert!(
+        names.contains(&"file"),
+        "registry should contain 'file' source"
+    );
 }

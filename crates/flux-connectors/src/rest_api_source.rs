@@ -242,8 +242,10 @@ async fn fetch_all_data(
 
                 let url = append_query_params(
                     &config.url,
-                    &[(offset_param.as_str(), &offset.to_string()),
-                      (limit_param.as_str(), &limit.to_string())],
+                    &[
+                        (offset_param.as_str(), &offset.to_string()),
+                        (limit_param.as_str(), &limit.to_string()),
+                    ],
                 );
 
                 let resp = execute_with_retry(&client, config, &url).await?;
@@ -408,9 +410,8 @@ fn extract_data_rows(
     config: &RestApiConfig,
 ) -> Result<Vec<serde_json::Value>, ProviderError> {
     let data = match &config.data_path {
-        Some(path) => extract_json_value(json, path).ok_or_else(|| {
-            format!("data_path '{}' not found in response", path)
-        })?,
+        Some(path) => extract_json_value(json, path)
+            .ok_or_else(|| format!("data_path '{}' not found in response", path))?,
         None => json,
     };
 
@@ -427,7 +428,10 @@ fn extract_data_rows(
 
 /// Extract a value from JSON using dot-notation (`data.items`) or JSON
 /// Pointer (`/data/items`).
-fn extract_json_value<'a>(json: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+fn extract_json_value<'a>(
+    json: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
     // Try JSON Pointer first (starts with /).
     if path.starts_with('/') {
         return json.pointer(path);
@@ -458,7 +462,10 @@ fn csv_text_to_json_rows(text: &str) -> Result<Vec<serde_json::Value>, ProviderE
         let record = result.map_err(|e| format!("failed to read CSV record: {e}"))?;
         let mut obj = serde_json::Map::new();
         for (i, field) in record.iter().enumerate() {
-            let key = headers.get(i).cloned().unwrap_or_else(|| format!("col_{i}"));
+            let key = headers
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("col_{i}"));
             // Try to parse as number or bool, fall back to string.
             let value = if let Ok(n) = field.parse::<i64>() {
                 serde_json::Value::Number(n.into())
@@ -490,10 +497,7 @@ fn csv_text_to_json_rows(text: &str) -> Result<Vec<serde_json::Value>, ProviderE
 /// Append query parameters to a URL.
 fn append_query_params(url: &str, params: &[(&str, &str)]) -> String {
     let separator = if url.contains('?') { '&' } else { '?' };
-    let query: Vec<String> = params
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let query: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
     format!("{url}{separator}{}", query.join("&"))
 }
 
@@ -542,7 +546,11 @@ fn infer_schema_from_json(rows: &[serde_json::Value]) -> SchemaRef {
         .map(|name| {
             let dt = field_types.get(name).cloned().unwrap_or(DataType::Utf8);
             // Default Null fields to Utf8.
-            let dt = if dt == DataType::Null { DataType::Utf8 } else { dt };
+            let dt = if dt == DataType::Null {
+                DataType::Utf8
+            } else {
+                dt
+            };
             Field::new(name, dt, true)
         })
         .collect();
@@ -914,9 +922,7 @@ mod tests {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             "link",
-            HeaderValue::from_static(
-                r#"<https://api.example.com/items?page=5>; rel="last""#,
-            ),
+            HeaderValue::from_static(r#"<https://api.example.com/items?page=5>; rel="last""#),
         );
         assert!(parse_link_header_next(&headers).is_none());
     }

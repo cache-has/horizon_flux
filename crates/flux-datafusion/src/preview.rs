@@ -17,10 +17,10 @@ use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use flux_engine::node::NodeKind;
 use flux_engine::sample::SampleConfig;
-use flux_engine::{dag, NodeId, Pipeline};
+use flux_engine::{NodeId, Pipeline, dag};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -113,12 +113,12 @@ impl PipelineExecutor {
 
             match &node.kind {
                 NodeKind::Source(src_cfg) => {
-                    let batches = Self::execute_source(node_id, src_cfg, registry).await.map_err(
-                        |kind| ExecutorError::Node {
+                    let batches = Self::execute_source(node_id, src_cfg, registry)
+                        .await
+                        .map_err(|kind| ExecutorError::Node {
                             node_id: node_id.clone(),
                             kind,
-                        },
-                    )?;
+                        })?;
 
                     // Apply sampling to source output.
                     let sampled = sample_batches(batches, &options.sample);

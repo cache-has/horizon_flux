@@ -18,10 +18,10 @@ use arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
 use flux_engine::node::{NodeKind, SourceConfig, TransformMode};
-use flux_engine::{dag, NodeId, Pipeline};
+use flux_engine::{NodeId, Pipeline, dag};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime};
 use tracing::{debug, info, warn};
 
@@ -120,9 +120,7 @@ impl PipelineExecutor {
             let mut rows_in: u64 = 0;
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
-                NodeKind::Source(src_cfg) => {
-                    Self::execute_source(node_id, src_cfg, registry).await
-                }
+                NodeKind::Source(src_cfg) => Self::execute_source(node_id, src_cfg, registry).await,
 
                 NodeKind::Transform(xform_cfg) => match xform_cfg.mode {
                     TransformMode::Sql => {

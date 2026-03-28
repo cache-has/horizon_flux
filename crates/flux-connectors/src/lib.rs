@@ -50,19 +50,16 @@ pub fn default_registry() -> ConnectorRegistry {
     registry.register_source("rest", Arc::clone(&rest_source));
     registry.register_source("http", rest_source);
 
-    let file_sink: Arc<dyn flux_datafusion::provider::PipelineSink> =
-        Arc::new(FileSink::new());
+    let file_sink: Arc<dyn flux_datafusion::provider::PipelineSink> = Arc::new(FileSink::new());
     registry.register_sink("file", Arc::clone(&file_sink));
     registry.register_sink("csv", Arc::clone(&file_sink));
     registry.register_sink("parquet", file_sink);
 
-    let pg_sink: Arc<dyn flux_datafusion::provider::PipelineSink> =
-        Arc::new(PostgresSink::new());
+    let pg_sink: Arc<dyn flux_datafusion::provider::PipelineSink> = Arc::new(PostgresSink::new());
     registry.register_sink("postgresql", Arc::clone(&pg_sink));
     registry.register_sink("postgres", pg_sink);
 
-    let stdout_sink: Arc<dyn flux_datafusion::provider::PipelineSink> =
-        Arc::new(StdoutSink::new());
+    let stdout_sink: Arc<dyn flux_datafusion::provider::PipelineSink> = Arc::new(StdoutSink::new());
     registry.register_sink("stdout", stdout_sink);
 
     registry

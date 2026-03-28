@@ -133,8 +133,7 @@ fn write_csv(
             .open(path)
             .map_err(|e| format!("failed to open '{}' for append: {e}", path.display()))?
     } else {
-        fs::File::create(path)
-            .map_err(|e| format!("failed to create '{}': {e}", path.display()))?
+        fs::File::create(path).map_err(|e| format!("failed to create '{}': {e}", path.display()))?
     };
     let mut buf = BufWriter::new(file);
 
@@ -166,9 +165,7 @@ fn write_csv(
     buf.flush()
         .map_err(|e| format!("failed to flush CSV output: {e}"))?;
 
-    let bytes_written = fs::metadata(path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let bytes_written = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
     Ok((rows_written, bytes_written))
 }
@@ -219,9 +216,7 @@ fn write_parquet(
         .map_err(|e| format!("failed to close Parquet writer: {e}"))?;
 
     // Use the Parquet footer's serialized size as bytes estimate.
-    let bytes_written = fs::metadata(path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let bytes_written = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
     Ok((rows_written, bytes_written))
 }

@@ -19,9 +19,9 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use datafusion::datasource::MemTable;
 use datafusion::datasource::TableProvider;
 use datafusion::logical_expr::{BinaryExpr, Operator, TableProviderFilterPushDown, TableType};
-use datafusion::datasource::MemTable;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::Expr;
 use datafusion::scalar::ScalarValue;
@@ -125,12 +125,10 @@ impl TableProvider for PostgresTableProvider {
     ) -> datafusion::error::Result<Vec<TableProviderFilterPushDown>> {
         // Only push filters when reading from a table (not a raw query).
         if self.config.table.is_none() {
-            return Ok(
-                filters
-                    .iter()
-                    .map(|_| TableProviderFilterPushDown::Unsupported)
-                    .collect(),
-            );
+            return Ok(filters
+                .iter()
+                .map(|_| TableProviderFilterPushDown::Unsupported)
+                .collect());
         }
 
         Ok(filters
@@ -153,8 +151,14 @@ impl TableProvider for PostgresTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        let query =
-            build_query(&self.config, &self.schema, &self.pg_types, projection, filters, limit);
+        let query = build_query(
+            &self.config,
+            &self.schema,
+            &self.pg_types,
+            projection,
+            filters,
+            limit,
+        );
 
         debug!(query = %query, "executing postgresql query");
 
@@ -234,9 +238,7 @@ fn pg_type_to_arrow(pg_type: &Type) -> DataType {
         Type::BYTEA => DataType::Binary,
         Type::DATE => DataType::Date32,
         Type::TIMESTAMP => DataType::Timestamp(TimeUnit::Microsecond, None),
-        Type::TIMESTAMPTZ => {
-            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
-        }
+        Type::TIMESTAMPTZ => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
         // Types that are cast to text in the SQL query.
         Type::JSON | Type::JSONB | Type::UUID => DataType::Utf8,
         _ => DataType::Utf8, // fallback: cast to text
@@ -400,7 +402,9 @@ fn expr_to_sql(expr: &Expr) -> Option<String> {
             let low_sql = expr_to_sql(&between.low)?;
             let high_sql = expr_to_sql(&between.high)?;
             let not = if between.negated { "NOT " } else { "" };
-            Some(format!("({expr_sql} {not}BETWEEN {low_sql} AND {high_sql})"))
+            Some(format!(
+                "({expr_sql} {not}BETWEEN {low_sql} AND {high_sql})"
+            ))
         }
         _ => None,
     }
@@ -462,10 +466,7 @@ async fn fetch_batches(
 ///
 /// Processes all rows into a single batch. The schema's field data types
 /// determine how values are extracted from each row.
-fn rows_to_batches(
-    rows: &[Row],
-    schema: &SchemaRef,
-) -> Result<Vec<RecordBatch>, ProviderError> {
+fn rows_to_batches(rows: &[Row], schema: &SchemaRef) -> Result<Vec<RecordBatch>, ProviderError> {
     let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
 
     for (col_idx, field) in schema.fields().iter().enumerate() {
@@ -565,8 +566,7 @@ fn build_column(
         DataType::Timestamp(TimeUnit::Microsecond, None) => {
             let mut builder = TimestampMicrosecondBuilder::with_capacity(rows.len());
             for row in rows {
-                let val: Option<NaiveDateTime> =
-                    row.try_get(col_idx).map_err(col_err(col_idx))?;
+                let val: Option<NaiveDateTime> = row.try_get(col_idx).map_err(col_err(col_idx))?;
                 builder.append_option(val.map(|dt| dt.and_utc().timestamp_micros()));
             }
             Ok(Arc::new(builder.finish()))
@@ -575,8 +575,7 @@ fn build_column(
             let mut builder =
                 TimestampMicrosecondBuilder::with_capacity(rows.len()).with_timezone("UTC");
             for row in rows {
-                let val: Option<DateTime<Utc>> =
-                    row.try_get(col_idx).map_err(col_err(col_idx))?;
+                let val: Option<DateTime<Utc>> = row.try_get(col_idx).map_err(col_err(col_idx))?;
                 builder.append_option(val.map(|dt| dt.timestamp_micros()));
             }
             Ok(Arc::new(builder.finish()))
@@ -696,7 +695,9 @@ mod tests {
     #[test]
     fn translate_simple_equality() {
         let expr = Expr::BinaryExpr(BinaryExpr {
-            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified("id"))),
+            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified(
+                "id",
+            ))),
             op: Operator::Eq,
             right: Box::new(Expr::Literal(ScalarValue::Int64(Some(42)), None)),
         });
@@ -707,11 +708,14 @@ mod tests {
     #[test]
     fn translate_string_literal_escapes_quotes() {
         let expr = Expr::BinaryExpr(BinaryExpr {
-            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified("name"))),
+            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified(
+                "name",
+            ))),
             op: Operator::Eq,
-            right: Box::new(Expr::Literal(ScalarValue::Utf8(Some(
-                "O'Brien".to_string(),
-            )), None)),
+            right: Box::new(Expr::Literal(
+                ScalarValue::Utf8(Some("O'Brien".to_string())),
+                None,
+            )),
         });
         let sql = expr_to_sql(&expr).unwrap();
         assert_eq!(sql, "(\"name\" = 'O''Brien')");
@@ -729,12 +733,16 @@ mod tests {
     #[test]
     fn translate_compound_and() {
         let left = Expr::BinaryExpr(BinaryExpr {
-            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified("age"))),
+            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified(
+                "age",
+            ))),
             op: Operator::GtEq,
             right: Box::new(Expr::Literal(ScalarValue::Int64(Some(18)), None)),
         });
         let right = Expr::BinaryExpr(BinaryExpr {
-            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified("active"))),
+            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified(
+                "active",
+            ))),
             op: Operator::Eq,
             right: Box::new(Expr::Literal(ScalarValue::Boolean(Some(true)), None)),
         });
@@ -808,7 +816,9 @@ mod tests {
         };
 
         let filters = vec![Expr::BinaryExpr(BinaryExpr {
-            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified("id"))),
+            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified(
+                "id",
+            ))),
             op: Operator::Gt,
             right: Box::new(Expr::Literal(ScalarValue::Int64(Some(10)), None)),
         })];
@@ -842,9 +852,7 @@ mod tests {
 
     #[test]
     fn build_query_raw_query_no_filters() {
-        let schema = Schema::new(vec![
-            Field::new("total", DataType::Int64, true),
-        ]);
+        let schema = Schema::new(vec![Field::new("total", DataType::Int64, true)]);
         let pg_types = vec![Type::INT8];
         let config = PostgreSqlConfig {
             connection_string: String::new(),
@@ -856,7 +864,9 @@ mod tests {
         };
 
         let filters = vec![Expr::BinaryExpr(BinaryExpr {
-            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified("total"))),
+            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified(
+                "total",
+            ))),
             op: Operator::Gt,
             right: Box::new(Expr::Literal(ScalarValue::Int64(Some(0)), None)),
         })];
@@ -898,6 +908,11 @@ mod tests {
         };
         let result = source.create_table_provider(&config);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot specify both"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot specify both")
+        );
     }
 }

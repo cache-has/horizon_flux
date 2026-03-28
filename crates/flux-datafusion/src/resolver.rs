@@ -237,7 +237,10 @@ impl fmt::Debug for EnvironmentSchema {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EnvironmentSchema")
             .field("name", &self.name)
-            .field("tables", &self.tables.read().unwrap().keys().collect::<Vec<_>>())
+            .field(
+                "tables",
+                &self.tables.read().unwrap().keys().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -271,10 +274,7 @@ impl SchemaProvider for EnvironmentSchema {
         self.tables.read().unwrap().keys().cloned().collect()
     }
 
-    async fn table(
-        &self,
-        name: &str,
-    ) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
+    async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
         Ok(self.get_table(name))
     }
 
@@ -340,13 +340,7 @@ impl CatalogProvider for MergedCatalog {
         let schemas: Vec<Arc<EnvironmentSchema>> = self
             .chain
             .iter()
-            .filter_map(|cat| {
-                cat.schemas
-                    .read()
-                    .unwrap()
-                    .get(name)
-                    .cloned()
-            })
+            .filter_map(|cat| cat.schemas.read().unwrap().get(name).cloned())
             .collect();
 
         if schemas.is_empty() {
@@ -397,10 +391,7 @@ impl SchemaProvider for FallbackSchemaProvider {
         names
     }
 
-    async fn table(
-        &self,
-        name: &str,
-    ) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
+    async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
         // Walk the chain; return the first hit.
         for schema in &self.chain {
             if let Some(table) = schema.get_table(name) {

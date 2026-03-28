@@ -20,13 +20,7 @@ use tracing::{debug, info};
 const PYTHON_VERSION: &str = "3.12";
 
 /// Required Python packages for the transform runtime.
-const REQUIRED_PACKAGES: &[&str] = &[
-    "polars>=1.39.3",
-    "numpy",
-    "scipy",
-    "requests",
-    "httpx",
-];
+const REQUIRED_PACKAGES: &[&str] = &["polars>=1.39.3", "numpy", "scipy", "requests", "httpx"];
 
 /// Marker file name written after successful environment setup.
 const MARKER_FILE: &str = ".horizon-flux-ready";
@@ -54,9 +48,8 @@ pub fn managed_python_path() -> Option<PathBuf> {
 /// is present, this returns immediately. If `uv` is not available, returns an
 /// error but callers may fall back to system Python.
 pub fn ensure_python_env() -> Result<PathBuf, NodeErrorKind> {
-    let env_dir = managed_env_dir().ok_or_else(|| {
-        NodeErrorKind::Python("could not determine home directory".to_string())
-    })?;
+    let env_dir = managed_env_dir()
+        .ok_or_else(|| NodeErrorKind::Python("could not determine home directory".to_string()))?;
 
     let python_path = python_bin_in(&env_dir);
     let marker = env_dir.join(MARKER_FILE);
@@ -109,9 +102,7 @@ pub fn ensure_python_env() -> Result<PathBuf, NodeErrorKind> {
         .arg(&python_path)
         .args(REQUIRED_PACKAGES)
         .output()
-        .map_err(|e| {
-            NodeErrorKind::Python(format!("failed to run `uv pip install`: {e}"))
-        })?;
+        .map_err(|e| NodeErrorKind::Python(format!("failed to run `uv pip install`: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -123,9 +114,8 @@ pub fn ensure_python_env() -> Result<PathBuf, NodeErrorKind> {
     }
 
     // Write marker file so subsequent calls are a fast no-op.
-    std::fs::write(&marker, PYTHON_VERSION).map_err(|e| {
-        NodeErrorKind::Python(format!("failed to write marker file: {e}"))
-    })?;
+    std::fs::write(&marker, PYTHON_VERSION)
+        .map_err(|e| NodeErrorKind::Python(format!("failed to write marker file: {e}")))?;
 
     info!(path = %env_dir.display(), "managed Python environment ready");
     Ok(python_path)

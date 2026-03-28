@@ -201,10 +201,18 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
     }
 }
 
-fn mock_registry(batches: Vec<RecordBatch>, sink_capture: Arc<Mutex<Vec<RecordBatch>>>) -> ProviderRegistry {
+fn mock_registry(
+    batches: Vec<RecordBatch>,
+    sink_capture: Arc<Mutex<Vec<RecordBatch>>>,
+) -> ProviderRegistry {
     let mut reg = ProviderRegistry::new();
     reg.register_source("mock", Arc::new(MockSourceConnector { batches }));
-    reg.register_sink("mock", Arc::new(MockSink { captured: sink_capture }));
+    reg.register_sink(
+        "mock",
+        Arc::new(MockSink {
+            captured: sink_capture,
+        }),
+    );
     reg
 }
 
@@ -287,7 +295,12 @@ async fn sql_transform_filters_rows() {
 #[tokio::test]
 async fn multi_input_join_transform() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
 
     let pipeline = make_pipeline(
         "join",
@@ -317,10 +330,17 @@ async fn multi_input_join_transform() {
     // src_b has ids [4,5] - no overlap with src_a [1,2,3], so inner join yields 0 rows
     registry.register_source(
         "mock_b",
-        Arc::new(MockSourceConnector { batches: vec![second_batch()] }),
+        Arc::new(MockSourceConnector {
+            batches: vec![second_batch()],
+        }),
     );
     let captured = Arc::new(Mutex::new(Vec::new()));
-    registry.register_sink("mock", Arc::new(MockSink { captured: Arc::clone(&captured) }));
+    registry.register_sink(
+        "mock",
+        Arc::new(MockSink {
+            captured: Arc::clone(&captured),
+        }),
+    );
 
     let (result, _run) = PipelineExecutor::execute(&pipeline, &registry, &default_opts())
         .await
@@ -413,10 +433,16 @@ async fn python_transform_syntax_error() {
         .unwrap_err();
 
     match err {
-        ExecutorError::Node { ref node_id, ref kind } => {
+        ExecutorError::Node {
+            ref node_id,
+            ref kind,
+        } => {
             assert_eq!(node_id.0, "py");
             let msg = kind.to_string();
-            assert!(msg.contains("SyntaxError"), "expected SyntaxError, got: {msg}");
+            assert!(
+                msg.contains("SyntaxError"),
+                "expected SyntaxError, got: {msg}"
+            );
         }
         other => panic!("expected Node error, got: {other}"),
     }
@@ -443,10 +469,16 @@ async fn python_transform_missing_function() {
         .unwrap_err();
 
     match err {
-        ExecutorError::Node { ref node_id, ref kind } => {
+        ExecutorError::Node {
+            ref node_id,
+            ref kind,
+        } => {
             assert_eq!(node_id.0, "py");
             let msg = kind.to_string();
-            assert!(msg.contains("transform"), "expected missing-function message, got: {msg}");
+            assert!(
+                msg.contains("transform"),
+                "expected missing-function message, got: {msg}"
+            );
         }
         other => panic!("expected Node error, got: {other}"),
     }
@@ -476,10 +508,16 @@ def transform(inputs, params):
         .unwrap_err();
 
     match err {
-        ExecutorError::Node { ref node_id, ref kind } => {
+        ExecutorError::Node {
+            ref node_id,
+            ref kind,
+        } => {
             assert_eq!(node_id.0, "py");
             let msg = kind.to_string();
-            assert!(msg.contains("DataFrame"), "expected wrong-type message, got: {msg}");
+            assert!(
+                msg.contains("DataFrame"),
+                "expected wrong-type message, got: {msg}"
+            );
         }
         other => panic!("expected Node error, got: {other}"),
     }
@@ -539,7 +577,10 @@ async fn invalid_sql_returns_datafusion_error() {
     match err {
         ExecutorError::Node { ref kind, .. } => {
             assert!(
-                matches!(kind, NodeErrorKind::DataFusion(_) | NodeErrorKind::Preprocess(_)),
+                matches!(
+                    kind,
+                    NodeErrorKind::DataFusion(_) | NodeErrorKind::Preprocess(_)
+                ),
                 "expected DataFusion or Preprocess error, got: {kind}"
             );
         }
@@ -681,10 +722,25 @@ async fn cancellation_stops_execution() {
     // Build a pipeline with two source nodes: first one is slow,
     // and we cancel before the second node runs.
     let mut registry = ProviderRegistry::new();
-    registry.register_source("slow", Arc::new(SlowSourceConnector { batches: vec![test_batch()] }));
-    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
+    registry.register_source(
+        "slow",
+        Arc::new(SlowSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
     let captured = Arc::new(Mutex::new(Vec::new()));
-    registry.register_sink("mock", Arc::new(MockSink { captured: Arc::clone(&captured) }));
+    registry.register_sink(
+        "mock",
+        Arc::new(MockSink {
+            captured: Arc::clone(&captured),
+        }),
+    );
 
     let pipeline = make_pipeline(
         "cancel_test",
@@ -699,10 +755,7 @@ async fn cancellation_stops_execution() {
             sql_transform_node("xform", "SELECT id, value FROM slow_src"),
             sink_node("out"),
         ],
-        vec![
-            Edge::new("slow_src", "xform"),
-            Edge::new("xform", "out"),
-        ],
+        vec![Edge::new("slow_src", "xform"), Edge::new("xform", "out")],
     );
 
     let cancel_clone = Arc::clone(&cancel);
