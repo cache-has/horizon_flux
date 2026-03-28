@@ -54,7 +54,7 @@ def main() -> int:
     except ImportError:
         print(
             "RUNNER_ERROR: polars is not installed. "
-            "Install it with: pip install polars",
+            "Install it with: uv pip install polars",
             file=sys.stderr,
         )
         return 2

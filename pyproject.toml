@@ -5,4 +5,8 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "polars>=1.39.3",
+    "numpy",
+    "scipy",
+    "requests",
+    "httpx",
 ]

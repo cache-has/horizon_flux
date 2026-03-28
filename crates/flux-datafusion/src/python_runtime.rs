@@ -17,6 +17,7 @@
 //! - Flexibility: uses whatever Python the user has installed
 
 use crate::error::NodeErrorKind;
+use crate::python_env;
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
@@ -25,7 +26,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// The Python runner script, embedded at compile time.
 const RUNNER_SCRIPT: &str = include_str!("python_runner.py");
@@ -89,6 +90,20 @@ pub async fn execute_python_transform(
 
     // Output path for the result.
     let output_path = tmp_path.join("output.arrow");
+
+    // Ensure the managed Python environment exists (best-effort — if uv is not
+    // available we still fall through to system Python via find_python).
+    match tokio::task::spawn_blocking(python_env::ensure_python_env).await {
+        Ok(Ok(path)) => {
+            debug!(path = %path.display(), "managed Python environment ready");
+        }
+        Ok(Err(e)) => {
+            warn!("managed Python environment not available: {e}");
+        }
+        Err(e) => {
+            warn!("failed to check managed Python environment: {e}");
+        }
+    }
 
     // Spawn the Python process.
     let python = find_python();
@@ -205,8 +220,9 @@ fn read_ipc(path: &Path) -> Result<Vec<RecordBatch>, NodeErrorKind> {
 /// Search order:
 /// 1. `HORIZON_FLUX_PYTHON` env var (explicit override)
 /// 2. `VIRTUAL_ENV/bin/python3` (active venv)
-/// 3. `.venv/bin/python3` relative to the workspace root (uv-managed venv)
-/// 4. `python3` / `python` on PATH
+/// 3. `.venv/bin/python3` relative to the workspace root (project-local venv)
+/// 4. `~/.horizon-flux/python/bin/python3` (managed env created by `ensure_python_env`)
+/// 5. `python3` on PATH
 fn find_python() -> String {
     // 1. Explicit override.
     if let Ok(p) = std::env::var("HORIZON_FLUX_PYTHON") {
@@ -255,7 +271,14 @@ fn find_python() -> String {
         }
     }
 
-    // 4. System PATH fallback.
+    // 4. Managed environment (~/.horizon-flux/python/).
+    if let Some(managed) = python_env::managed_python_path() {
+        if managed.exists() {
+            return managed.to_string_lossy().into_owned();
+        }
+    }
+
+    // 5. System PATH fallback.
     "python3".to_string()
 }
 
