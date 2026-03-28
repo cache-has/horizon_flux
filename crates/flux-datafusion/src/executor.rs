@@ -284,7 +284,7 @@ impl PipelineExecutor {
     }
 
     /// Create a `TableProvider` from the source connector and read all rows.
-    pub(crate) async fn execute_source(
+    pub async fn execute_source(
         node_id: &NodeId,
         config: &SourceConfig,
         registry: &ProviderRegistry,
@@ -326,7 +326,7 @@ impl PipelineExecutor {
         Ok(upstream_data)
     }
 
-    pub(crate) async fn execute_sql_transform(
+    pub async fn execute_sql_transform(
         sql: &str,
         upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
         resolver: Option<&Arc<EnvironmentResolver>>,

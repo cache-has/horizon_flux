@@ -3,7 +3,9 @@
 
 //! API route modules and shared types.
 
+pub mod connectors;
 pub mod pipelines;
+pub mod preview;
 
 use axum::Json;
 use axum::http::StatusCode;

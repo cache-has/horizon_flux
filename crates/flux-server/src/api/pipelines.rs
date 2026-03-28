@@ -78,18 +78,18 @@ struct PreviewRequest {
 
 /// Serializable preview node result (Arrow schemas/batches → JSON).
 #[derive(Debug, Serialize)]
-struct PreviewNodeResponse {
-    node_id: String,
-    columns: Vec<ColumnInfo>,
-    row_count: u64,
-    duration_ms: u64,
-    rows: Vec<serde_json::Value>,
+pub struct PreviewNodeResponse {
+    pub node_id: String,
+    pub columns: Vec<ColumnInfo>,
+    pub row_count: u64,
+    pub duration_ms: u64,
+    pub rows: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
-struct ColumnInfo {
-    name: String,
-    data_type: String,
+pub struct ColumnInfo {
+    pub name: String,
+    pub data_type: String,
 }
 
 /// Full preview response.
@@ -371,7 +371,9 @@ fn system_time_to_ms(t: std::time::SystemTime) -> u64 {
 }
 
 /// Convert Arrow RecordBatches to JSON row objects.
-fn batches_to_json_rows(batches: &[arrow::record_batch::RecordBatch]) -> Vec<serde_json::Value> {
+pub fn batches_to_json_rows(
+    batches: &[arrow::record_batch::RecordBatch],
+) -> Vec<serde_json::Value> {
     let mut buf = Vec::new();
     {
         let mut writer = arrow::json::LineDelimitedWriter::new(&mut buf);
