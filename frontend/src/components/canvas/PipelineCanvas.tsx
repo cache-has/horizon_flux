@@ -23,6 +23,7 @@ import type { PipelineNode } from '../../types/pipeline';
 import { PipelineNodeComponent } from './PipelineNode';
 import { PipelineEdgeComponent, EdgeMarkerDefs } from './PipelineEdge';
 import { useForceLayout } from '../../hooks/useForceLayout';
+import { useConnectionValidation } from '../../hooks/useConnectionValidation';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import './PipelineCanvas.css';
 
@@ -53,6 +54,7 @@ function PipelineCanvasInner() {
   const simulationHasRun = usePipelineStore((s) => s.simulationHasRun);
   const markSimulationRun = usePipelineStore((s) => s.markSimulationRun);
 
+  const isValidConnection = useConnectionValidation(edges);
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
 
   /** Called when simulation settles — save positions. */
@@ -108,6 +110,7 @@ function PipelineCanvasInner() {
         onEdgesChange={onEdgesChange as OnEdgesChange}
         onConnect={handleConnect}
         onNodeDragStop={handleNodeDragStop}
+        isValidConnection={isValidConnection}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={defaultEdgeOptions}

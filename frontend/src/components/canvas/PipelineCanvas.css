@@ -21,6 +21,13 @@
   background: var(--accent-bg, rgba(170, 59, 255, 0.1));
 }
 
+/* Connection line drawn while dragging from a handle */
+.pipeline-canvas .react-flow__connection-path {
+  stroke: var(--accent, #a855f7);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+}
+
 /* Edge styling is handled by PipelineEdge.css */
 
 .pipeline-canvas .react-flow__selection {
