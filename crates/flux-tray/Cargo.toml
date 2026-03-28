@@ -13,6 +13,12 @@ crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
 open = { workspace = true }
 tokio = { workspace = true }
+dirs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

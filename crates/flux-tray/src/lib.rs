@@ -10,6 +10,7 @@
 mod icon;
 mod menu;
 mod notification;
+pub mod prefs;
 
 use std::thread;
 
@@ -110,7 +111,8 @@ fn run_tray_loop(
     mut event_rx: tokio::sync::broadcast::Receiver<ExecutionEvent>,
     cmd_rx: Receiver<TrayCommand>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tray_menu = menu::build_menu(&config.version);
+    let mut prefs = prefs::TrayPrefs::load();
+    let tray_menu = menu::build_menu(&config.version, prefs.notifications_enabled);
     let icon_data = icon::idle_icon();
 
     let _tray = match tray_icon::TrayIconBuilder::new()
@@ -139,6 +141,14 @@ fn run_tray_loop(
                 if !url.is_empty() {
                     let _ = open::that(&url);
                 }
+            } else if event.id() == tray_menu.notifications_item.id() {
+                // CheckMenuItem toggles its own checked state on click.
+                prefs.notifications_enabled = tray_menu.notifications_item.is_checked();
+                prefs.save();
+                info!(
+                    "Notifications {}",
+                    if prefs.notifications_enabled { "enabled" } else { "disabled" }
+                );
             } else if event.id() == tray_menu.stop_item.id() {
                 info!("Stop Server requested from tray menu");
                 // Send SIGINT to ourselves for graceful shutdown.
@@ -173,7 +183,13 @@ fn run_tray_loop(
         // 2. Check for pipeline execution events.
         match event_rx.try_recv() {
             Ok(event) => {
-                handle_execution_event(&event, &mut recent_runs, &tray_menu, &_tray);
+                handle_execution_event(
+                    &event,
+                    &mut recent_runs,
+                    &tray_menu,
+                    &_tray,
+                    prefs.notifications_enabled,
+                );
             }
             Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                 warn!("Tray missed {n} execution events");
@@ -217,6 +233,7 @@ fn handle_execution_event(
     recent_runs: &mut Vec<RecentRun>,
     tray_menu: &menu::TrayMenu,
     tray: &tray_icon::TrayIcon,
+    notifications_enabled: bool,
 ) {
     match event {
         ExecutionEvent::RunStarted { pipeline_name, .. } => {
@@ -233,12 +250,16 @@ fn handle_execution_event(
                 RunStatus::Success => {
                     let _ = tray.set_icon(Some(icon::idle_icon()));
                     let _ = tray.set_tooltip(Some("Horizon Flux"));
-                    notification::send_success(run_id, *duration_ms);
+                    if notifications_enabled {
+                        notification::send_success(run_id, *duration_ms);
+                    }
                 }
                 RunStatus::Failed => {
                     let _ = tray.set_icon(Some(icon::error_icon()));
                     let _ = tray.set_tooltip(Some("Horizon Flux — last run failed"));
-                    notification::send_failure(run_id, None);
+                    if notifications_enabled {
+                        notification::send_failure(run_id, None);
+                    }
                 }
                 _ => {
                     let _ = tray.set_icon(Some(icon::idle_icon()));
@@ -271,7 +292,9 @@ fn handle_execution_event(
             let _ = tray.set_icon(Some(icon::error_icon()));
             let tooltip = format!("Horizon Flux — node {node_id} failed");
             let _ = tray.set_tooltip(Some(&tooltip));
-            notification::send_node_failure(run_id, node_id, error);
+            if notifications_enabled {
+                notification::send_node_failure(run_id, node_id, error);
+            }
         }
         _ => {}
     }
