@@ -36,6 +36,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { NodePalette, PALETTE_DRAG_TYPE } from './NodePalette';
 import type { PaletteItem } from './NodePalette';
 import { SidePanel } from './SidePanel';
+import { NodeEditorModal } from './NodeEditorModal';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
@@ -556,6 +557,7 @@ function PipelineCanvasInner() {
       />
 
       <SidePanel />
+      <NodeEditorModal />
     </div>
   );
 }

@@ -156,6 +156,11 @@ export interface PipelineStoreActions {
   deleteEdges: (edgeIds: string[]) => void;
   /** Duplicate a node, placing it offset from the original. */
   duplicateNode: (nodeId: string) => void;
+  /** Update a node's backend config (code, mode, connector, config) and save. */
+  updateNodeConfig: (
+    nodeId: string,
+    patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config'>>,
+  ) => Promise<void>;
 }
 
 export type PipelineStore = PipelineStoreState & PipelineStoreActions;
@@ -368,5 +373,36 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
       dirty: true,
     }));
     debouncedSave(get().savePositions);
+  },
+
+  updateNodeConfig: async (nodeId, patch) => {
+    const { pipelineId, apiPipeline, edges } = get();
+    if (!pipelineId || !apiPipeline) return;
+
+    // Update the apiPipeline node in place
+    const updatedApiNodes = apiPipeline.nodes.map((n) =>
+      n.id === nodeId ? { ...n, ...patch } : n,
+    );
+    const updatedApiPipeline: ApiPipeline = { ...apiPipeline, nodes: updatedApiNodes };
+
+    // Also update the React Flow node label if name changed
+    if (patch.name) {
+      set((state) => ({
+        nodes: state.nodes.map((n) =>
+          n.id === nodeId ? { ...n, data: { ...n.data, label: patch.name! } } : n,
+        ),
+      }));
+    }
+
+    set({ apiPipeline: updatedApiPipeline });
+
+    try {
+      const fullPipeline = buildApiPipeline(updatedApiPipeline, get().nodes, edges);
+      const response = await updatePipeline(pipelineId, fullPipeline);
+      set({ apiPipeline: response.pipeline, dirty: false });
+    } catch (err) {
+      console.error('Failed to save node config:', err);
+      set({ error: (err as Error).message });
+    }
   },
 }));

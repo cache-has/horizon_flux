@@ -1,0 +1,204 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+/* Shared styles for source and sink editor forms */
+.connector-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px 20px;
+  gap: 16px;
+}
+
+.connector-editor__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connector-editor__section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text, #6b6375);
+}
+
+.connector-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.connector-editor__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-h, #08060d);
+}
+
+.connector-editor__input {
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--text-h, #08060d);
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.connector-editor__input:focus {
+  border-color: var(--accent, #a855f7);
+}
+
+.connector-editor__select {
+  font-size: 13px;
+  font-family: var(--sans);
+  color: var(--text-h, #08060d);
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.connector-editor__select:focus {
+  border-color: var(--accent, #a855f7);
+}
+
+.connector-editor__query-wrap {
+  flex: 1;
+  min-height: 200px;
+}
+
+.connector-editor__row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.connector-editor__row > .connector-editor__field {
+  flex: 1;
+}
+
+.connector-editor__test-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-family: var(--sans);
+  border: 1px solid var(--accent, #a855f7);
+  border-radius: 4px;
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+  color: var(--accent, #a855f7);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.connector-editor__test-btn:hover {
+  background: var(--accent, #a855f7);
+  color: #fff;
+}
+
+.connector-editor__test-result {
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.connector-editor__test-result--ok {
+  color: #22c55e;
+}
+
+.connector-editor__test-result--err {
+  color: #ef4444;
+}
+
+/* Preview section at bottom */
+.connector-editor__preview {
+  border-top: 1px solid var(--border, #e5e4e7);
+  padding-top: 12px;
+}
+
+.connector-editor__preview-table-wrap {
+  overflow-x: auto;
+  max-height: 200px;
+}
+
+.connector-editor__preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.connector-editor__preview-table th {
+  text-align: left;
+  padding: 4px 8px;
+  font-weight: 600;
+  color: var(--text, #6b6375);
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg, #fff);
+}
+
+.connector-editor__preview-table td {
+  padding: 3px 8px;
+  color: var(--text-h, #08060d);
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Schema display */
+.connector-editor__schema-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.connector-editor__schema-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+}
+
+.connector-editor__schema-item:last-child {
+  border-bottom: none;
+}
+
+.connector-editor__schema-name {
+  font-family: var(--mono);
+  color: var(--text-h, #08060d);
+}
+
+.connector-editor__schema-type {
+  font-family: var(--mono);
+  color: var(--text, #6b6375);
+  font-size: 11px;
+}
+
+/* Environment overrides section */
+.connector-editor__env-section {
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.connector-editor__env-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-h, #08060d);
+  margin-bottom: 8px;
+}
+
+.connector-editor__empty {
+  font-size: 12px;
+  color: var(--text, #6b6375);
+  font-style: italic;
+}
