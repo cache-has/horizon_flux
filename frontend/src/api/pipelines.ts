@@ -106,3 +106,108 @@ export async function updatePipeline(
   }
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Preview & run history
+// ---------------------------------------------------------------------------
+
+/** Column info returned by the preview endpoint. */
+export interface ApiColumnInfo {
+  name: string;
+  data_type: string;
+}
+
+/** Single node result from a preview run. */
+export interface ApiPreviewNodeResponse {
+  node_id: string;
+  columns: ApiColumnInfo[];
+  row_count: number;
+  duration_ms: number;
+  rows: Record<string, unknown>[];
+}
+
+/** Full pipeline preview response. */
+export interface ApiPreviewResponse {
+  pipeline_name: string;
+  execution_order: string[];
+  nodes: ApiPreviewNodeResponse[];
+  duration_ms: number;
+}
+
+/** Node-level run statistics. */
+export interface ApiNodeRunStats {
+  node_id: string;
+  rows_in: number;
+  rows_out: number;
+  duration_ms: number;
+  error?: string;
+}
+
+/** A pipeline run record. */
+export interface ApiPipelineRun {
+  id: string;
+  pipeline_name: string;
+  environment: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+  start_time?: number;
+  end_time?: number;
+  node_stats: ApiNodeRunStats[];
+  error?: string;
+}
+
+/** Request body for single-node preview. */
+export interface ApiNodePreviewRequest {
+  node: {
+    type: 'source' | 'transform';
+    connector?: string;
+    config?: unknown;
+    mode?: 'sql' | 'python';
+    code?: string;
+  };
+  upstream?: Record<string, Record<string, unknown>[]>;
+  sample?: { max_rows?: number };
+}
+
+/** Run a full pipeline preview (sample data through all nodes). */
+export async function previewPipeline(
+  id: string,
+  sample?: { max_rows?: number },
+): Promise<ApiPreviewResponse> {
+  const res = await fetch(`${BASE}/${id}/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sample }),
+  });
+  if (!res.ok) {
+    throw new Error(`Preview failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Preview a single node's output. */
+export async function previewNode(
+  request: ApiNodePreviewRequest,
+): Promise<ApiPreviewNodeResponse> {
+  const res = await fetch('/api/preview/node', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) {
+    throw new Error(`Node preview failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Fetch run history for a pipeline. */
+export async function fetchPipelineRuns(
+  id: string,
+  limit = 10,
+  offset = 0,
+): Promise<ApiPaginatedResponse<ApiPipelineRun>> {
+  const res = await fetch(`${BASE}/${id}/runs?limit=${limit}&offset=${offset}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch runs: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}

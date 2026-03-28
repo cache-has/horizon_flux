@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -35,6 +35,7 @@ import {
 import { ConfirmDialog } from './ConfirmDialog';
 import { NodePalette, PALETTE_DRAG_TYPE } from './NodePalette';
 import type { PaletteItem } from './NodePalette';
+import { SidePanel } from './SidePanel';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
@@ -70,10 +71,23 @@ function PipelineCanvasInner() {
   const deleteEdges = usePipelineStore((s) => s.deleteEdges);
   const duplicateNode = usePipelineStore((s) => s.duplicateNode);
 
+  const selectedNodeId = usePipelineStore((s) => s.selectedNodeId);
+
   const { screenToFlowPosition } = useReactFlow();
 
   const isValidConnection = useConnectionValidation(edges);
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
+
+  // Close side panel on Escape key
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && selectedNodeId) {
+        setSelectedNodeId(null);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedNodeId, setSelectedNodeId]);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
@@ -540,6 +554,8 @@ function PipelineCanvasInner() {
         onConfirm={confirmDelete}
         onCancel={cancelDelete}
       />
+
+      <SidePanel />
     </div>
   );
 }
