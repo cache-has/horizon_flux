@@ -1,0 +1,105 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.pipeline-node {
+  background: var(--bg, #fff);
+  border: 2px solid var(--border, #e5e4e7);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 140px;
+  font-family: var(--sans, system-ui, sans-serif);
+  font-size: 13px;
+  position: relative;
+  transition: box-shadow 0.15s ease;
+}
+
+.pipeline-node:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* Role-specific border colors */
+.pipeline-node--source {
+  border-color: #3b82f6;
+}
+.pipeline-node--transform {
+  border-color: #a855f7;
+}
+.pipeline-node--sink {
+  border-color: #22c55e;
+}
+
+.pipeline-node__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pipeline-node__icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.pipeline-node__label {
+  font-weight: 500;
+  color: var(--text-h, #08060d);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status indicator dot */
+.pipeline-node__status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.status-idle {
+  background: #9ca3af;
+}
+.status-running {
+  background: #3b82f6;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.status-success {
+  background: #22c55e;
+}
+.status-error {
+  background: #ef4444;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* Environment override badge */
+.pipeline-node__env-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  border: 2px solid var(--bg, #fff);
+}
+
+/* React Flow handle styling */
+.pipeline-node .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  background: var(--border, #e5e4e7);
+  border: 2px solid var(--bg, #fff);
+}
+
+.pipeline-node .react-flow__handle:hover {
+  background: var(--accent, #a855f7);
+}
