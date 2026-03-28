@@ -4,10 +4,11 @@
 //! Pipeline execution engine.
 //!
 //! Walks the validated DAG in topological order, dispatching each node to the
-//! appropriate handler (source provider, DataFusion SQL, or sink writer).
+//! appropriate handler (source connector → DataFusion TableProvider, SQL
+//! transform, or pipeline sink).
 
 use crate::error::{ExecutorError, NodeErrorKind};
-use crate::provider::ProviderRegistry;
+use crate::provider::{ProviderRegistry, WriteOptions};
 use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
 use crate::run::{NodeRunStats, PipelineRun, RunStatus};
@@ -119,7 +120,9 @@ impl PipelineExecutor {
             let mut rows_in: u64 = 0;
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
-                NodeKind::Source(src_cfg) => Self::execute_source(src_cfg, registry).await,
+                NodeKind::Source(src_cfg) => {
+                    Self::execute_source(node_id, src_cfg, registry).await
+                }
 
                 NodeKind::Transform(xform_cfg) => match xform_cfg.mode {
                     TransformMode::Sql => {
@@ -147,9 +150,9 @@ impl PipelineExecutor {
                                 .into_values()
                                 .flat_map(|batches| batches.iter().cloned())
                                 .collect();
-                            Self::execute_sink(sink_cfg, &all_batches, registry)
+                            Self::execute_sink(sink_cfg, all_batches, registry)
                                 .await
-                                .map(|_rows_written| all_batches)
+                                .map(|(batches, _write_stats)| batches)
                         }
                         Err(e) => Err(e),
                     }
@@ -262,14 +265,31 @@ impl PipelineExecutor {
         Ok((pipeline_result, run))
     }
 
+    /// Create a `TableProvider` from the source connector and read all rows.
     pub(crate) async fn execute_source(
+        node_id: &NodeId,
         config: &SourceConfig,
         registry: &ProviderRegistry,
     ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
-        let provider = registry
+        let connector = registry
             .get_source(&config.connector)
             .ok_or_else(|| NodeErrorKind::SourceProviderNotFound(config.connector.clone()))?;
-        provider.read(config).await.map_err(NodeErrorKind::Source)
+
+        let table_provider = connector
+            .create_table_provider(config)
+            .map_err(NodeErrorKind::Source)?;
+
+        // Use a DataFusion session to read all data from the TableProvider.
+        // This path supports filter/projection pushdown for providers that
+        // implement it (e.g. Parquet row-group pruning, PostgreSQL WHERE pushdown).
+        let ctx = SessionContext::new();
+        let table_name = node_id.to_string();
+        ctx.register_table(table_name.as_str(), table_provider)?;
+        let df = ctx
+            .sql(&format!("SELECT * FROM \"{}\"", table_name))
+            .await?;
+        let batches = df.collect().await?;
+        Ok(batches)
     }
 
     pub(crate) fn gather_upstream<'a>(
@@ -316,17 +336,19 @@ impl PipelineExecutor {
         Ok(batches)
     }
 
+    /// Write data through the sink connector, returning the batches and write stats.
     async fn execute_sink(
         config: &flux_engine::node::SinkConfig,
-        batches: &[RecordBatch],
+        batches: Vec<RecordBatch>,
         registry: &ProviderRegistry,
-    ) -> Result<u64, NodeErrorKind> {
-        let writer = registry
+    ) -> Result<(Vec<RecordBatch>, crate::provider::WriteStats), NodeErrorKind> {
+        let sink = registry
             .get_sink(&config.connector)
-            .ok_or_else(|| NodeErrorKind::SinkWriterNotFound(config.connector.clone()))?;
-        writer
-            .write(config, batches.to_vec())
+            .ok_or_else(|| NodeErrorKind::SinkNotFound(config.connector.clone()))?;
+        let write_stats = sink
+            .write(config, batches.clone(), &WriteOptions::default())
             .await
-            .map_err(NodeErrorKind::Sink)
+            .map_err(NodeErrorKind::Sink)?;
+        Ok((batches, write_stats))
     }
 }

@@ -15,7 +15,10 @@ pub mod stats;
 pub use environment::{Environment, EnvironmentStore, TableOverride};
 pub use executor::{ExecutionOptions, PipelineExecutor};
 pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult};
-pub use provider::{ProviderRegistry, SinkWriter, SourceProvider};
+pub use provider::{
+    OnConflict, PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions,
+    WriteStats,
+};
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
 pub use run::{NodeRunStats, PipelineRun, RunId, RunStatus};

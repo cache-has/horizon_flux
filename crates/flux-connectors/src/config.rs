@@ -1,0 +1,263 @@
+// Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Typed, serializable connector configurations.
+//!
+//! [`ConnectorConfig`] is the typed counterpart to the opaque
+//! `serde_json::Value` stored in pipeline JSON. Each variant holds the
+//! validated, strongly-typed options for one connector type.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// Typed connector configuration, used for validation and documentation.
+///
+/// Pipeline JSON stores connector config as opaque `serde_json::Value`.
+/// This enum provides the typed representation used at execution time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "connector", rename_all = "snake_case")]
+pub enum ConnectorConfig {
+    /// Local CSV or Parquet file source/sink.
+    File(FileConfig),
+    /// PostgreSQL database source/sink.
+    #[serde(rename = "postgresql")]
+    PostgreSql(PostgreSqlConfig),
+    /// REST API source.
+    RestApi(RestApiConfig),
+    /// Stdout sink (debugging/CLI).
+    Stdout(StdoutConfig),
+}
+
+// ---------------------------------------------------------------------------
+// File connector (CSV / Parquet)
+// ---------------------------------------------------------------------------
+
+/// Configuration for file-based connectors (CSV, Parquet).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileConfig {
+    /// File path or glob pattern (e.g. `data/*.csv`).
+    pub path: PathBuf,
+    /// File format.
+    pub format: FileFormat,
+    /// Format-specific options.
+    #[serde(default)]
+    pub options: FileOptions,
+}
+
+/// Supported file formats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileFormat {
+    Csv,
+    Parquet,
+}
+
+/// Format-specific options for file connectors.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FileOptions {
+    // -- CSV options --
+    /// CSV field delimiter (default: `,`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delimiter: Option<char>,
+    /// Whether the CSV has a header row (default: `true`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_header: Option<bool>,
+    /// CSV quote character (default: `"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quote_char: Option<char>,
+    /// Values to treat as null.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub null_values: Vec<String>,
+
+    // -- Parquet options --
+    /// Parquet compression codec (snappy, zstd, gzip, none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compression: Option<String>,
+    /// Parquet row group size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row_group_size: Option<usize>,
+
+    // -- Write options --
+    /// Write mode: overwrite or append.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_mode: Option<WriteMode>,
+}
+
+/// File write mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteMode {
+    Overwrite,
+    Append,
+}
+
+// ---------------------------------------------------------------------------
+// PostgreSQL connector
+// ---------------------------------------------------------------------------
+
+/// Configuration for PostgreSQL source/sink.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostgreSqlConfig {
+    /// Connection string (may contain `{{ secret:... }}` references).
+    pub connection_string: String,
+    /// Table name or SQL query (source only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<String>,
+    /// Raw SQL query to execute (source only; mutually exclusive with `table`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    /// Write mode for sink operations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_mode: Option<PostgresWriteMode>,
+    /// Batch size for insert operations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<usize>,
+}
+
+/// PostgreSQL sink write modes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PostgresWriteMode {
+    /// Simple INSERT statements.
+    Insert,
+    /// INSERT ... ON CONFLICT DO UPDATE (upsert).
+    Upsert,
+    /// TRUNCATE then INSERT.
+    TruncateInsert,
+    /// INSERT without truncating (append).
+    Append,
+}
+
+// ---------------------------------------------------------------------------
+// REST API connector
+// ---------------------------------------------------------------------------
+
+/// Configuration for REST API source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestApiConfig {
+    /// Request URL.
+    pub url: String,
+    /// HTTP method (default: GET).
+    #[serde(default = "default_http_method")]
+    pub method: String,
+    /// Request headers.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
+    /// Authentication configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RestApiAuth>,
+    /// Response format.
+    #[serde(default)]
+    pub response_format: ResponseFormat,
+    /// JSONPath or field name for extracting the data array from JSON responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_path: Option<String>,
+    /// Pagination configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<PaginationConfig>,
+}
+
+fn default_http_method() -> String {
+    "GET".to_string()
+}
+
+/// Authentication for REST API requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RestApiAuth {
+    /// HTTP Basic authentication.
+    Basic { username: String, password: String },
+    /// Bearer token authentication.
+    Bearer { token: String },
+    /// API key in a header.
+    ApiKey { header: String, value: String },
+}
+
+/// REST API response format.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    #[default]
+    Json,
+    Ndjson,
+    Csv,
+}
+
+/// Pagination configuration for REST API sources.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PaginationConfig {
+    /// Offset-based pagination.
+    Offset {
+        offset_param: String,
+        limit_param: String,
+        limit: usize,
+    },
+    /// Cursor-based pagination.
+    Cursor {
+        cursor_param: String,
+        cursor_path: String,
+    },
+    /// Link-header pagination (RFC 8288).
+    LinkHeader,
+}
+
+// ---------------------------------------------------------------------------
+// Stdout connector
+// ---------------------------------------------------------------------------
+
+/// Configuration for the stdout sink (debugging/CLI output).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StdoutConfig {
+    /// Output format.
+    #[serde(default)]
+    pub format: StdoutFormat,
+    /// Maximum number of rows to display.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_rows: Option<usize>,
+}
+
+/// Stdout output format.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StdoutFormat {
+    /// Pretty-printed table (default, similar to psql output).
+    #[default]
+    Table,
+    Csv,
+    Json,
+    Ndjson,
+}
+
+// ---------------------------------------------------------------------------
+// Deserialization from opaque JSON
+// ---------------------------------------------------------------------------
+
+impl ConnectorConfig {
+    /// Try to deserialize a `ConnectorConfig` from a connector type name and
+    /// opaque JSON value (as stored in pipeline definitions).
+    pub fn from_json(connector: &str, value: &serde_json::Value) -> Result<Self, serde_json::Error> {
+        match connector {
+            "file" | "csv" | "parquet" => {
+                let cfg: FileConfig = serde_json::from_value(value.clone())?;
+                Ok(ConnectorConfig::File(cfg))
+            }
+            "postgresql" | "postgres" => {
+                let cfg: PostgreSqlConfig = serde_json::from_value(value.clone())?;
+                Ok(ConnectorConfig::PostgreSql(cfg))
+            }
+            "rest_api" | "rest" | "http" => {
+                let cfg: RestApiConfig = serde_json::from_value(value.clone())?;
+                Ok(ConnectorConfig::RestApi(cfg))
+            }
+            "stdout" => {
+                let cfg: StdoutConfig = serde_json::from_value(value.clone())?;
+                Ok(ConnectorConfig::Stdout(cfg))
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unknown connector type: {other}"
+            ))),
+        }
+    }
+}

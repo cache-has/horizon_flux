@@ -6,18 +6,22 @@
 use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+use datafusion::datasource::MemTable;
+use datafusion::datasource::TableProvider;
 use flux_datafusion::error::ExecutorError;
-use flux_datafusion::provider::{ProviderError, ProviderRegistry, SinkWriter, SourceProvider};
+use flux_datafusion::provider::{
+    PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions, WriteStats,
+};
 use flux_datafusion::{PipelineExecutor, PreviewOptions};
 use flux_engine::edge::Edge;
 use flux_engine::node::*;
 use flux_engine::pipeline::Pipeline;
 use flux_engine::sample::SampleConfig;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Test helpers (shared patterns from executor_test.rs)
@@ -54,17 +58,23 @@ fn large_batch() -> RecordBatch {
     .unwrap()
 }
 
-struct MockSource {
+struct MockSourceConnector {
     batches: Vec<RecordBatch>,
 }
 
-impl SourceProvider for MockSource {
-    fn read(
+impl SourceConnector for MockSourceConnector {
+    fn create_table_provider(
         &self,
         _config: &SourceConfig,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<RecordBatch>, ProviderError>> + Send + '_>> {
-        let batches = self.batches.clone();
-        Box::pin(async move { Ok(batches) })
+    ) -> Result<Arc<dyn TableProvider>, ProviderError> {
+        if self.batches.is_empty() {
+            let schema = test_schema();
+            let table = MemTable::try_new(schema, vec![vec![]])?;
+            return Ok(Arc::new(table));
+        }
+        let schema = self.batches[0].schema();
+        let table = MemTable::try_new(schema, vec![self.batches.clone()])?;
+        Ok(Arc::new(table))
     }
 }
 
@@ -73,15 +83,25 @@ struct SpySink {
     called: Arc<AtomicBool>,
 }
 
-impl SinkWriter for SpySink {
-    fn write(
+#[async_trait]
+impl PipelineSink for SpySink {
+    async fn write(
         &self,
         _config: &SinkConfig,
-        batches: Vec<RecordBatch>,
-    ) -> Pin<Box<dyn Future<Output = Result<u64, ProviderError>> + Send + '_>> {
+        data: Vec<RecordBatch>,
+        _options: &WriteOptions,
+    ) -> Result<WriteStats, ProviderError> {
         self.called.store(true, Ordering::Relaxed);
-        let rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
-        Box::pin(async move { Ok(rows) })
+        let rows: u64 = data.iter().map(|b| b.num_rows() as u64).sum();
+        Ok(WriteStats {
+            rows_written: rows,
+            bytes_written: 0,
+            duration: Duration::ZERO,
+        })
+    }
+
+    fn validate_config(&self, _config: &SinkConfig) -> Result<(), ProviderError> {
+        Ok(())
     }
 }
 
@@ -144,7 +164,7 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
 #[tokio::test]
 async fn preview_returns_per_node_outputs() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![test_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
     let sink_called = Arc::new(AtomicBool::new(false));
     registry.register_sink("mock", Arc::new(SpySink { called: Arc::clone(&sink_called) }));
 
@@ -184,7 +204,7 @@ async fn preview_returns_per_node_outputs() {
 #[tokio::test]
 async fn preview_samples_source_with_first_n() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![large_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![large_batch()] }));
     registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
 
     let pipeline = make_pipeline(
@@ -218,7 +238,7 @@ async fn preview_samples_source_with_first_n() {
 #[tokio::test]
 async fn preview_full_sample_passes_all_rows() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![large_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![large_batch()] }));
     registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
 
     let pipeline = make_pipeline(
@@ -247,7 +267,7 @@ async fn preview_full_sample_passes_all_rows() {
 #[tokio::test]
 async fn preview_random_sample_is_deterministic() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![large_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![large_batch()] }));
     registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
 
     let pipeline = make_pipeline(
@@ -273,7 +293,7 @@ async fn preview_random_sample_is_deterministic() {
 #[tokio::test]
 async fn preview_cancellation() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![test_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
     registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
 
     let pipeline = make_pipeline(
@@ -302,7 +322,7 @@ async fn preview_cancellation() {
 #[tokio::test]
 async fn preview_invalid_sql_reports_error() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![test_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
     registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
 
     let pipeline = make_pipeline(
@@ -337,7 +357,7 @@ async fn preview_empty_pipeline_returns_validation_error() {
 #[tokio::test]
 async fn preview_schema_includes_column_info() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![test_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
     registry.register_sink("mock", Arc::new(SpySink { called: Arc::new(AtomicBool::new(false)) }));
 
     let pipeline = make_pipeline(

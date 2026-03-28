@@ -11,8 +11,8 @@ pub enum NodeErrorKind {
     #[error("source provider `{0}` not registered")]
     SourceProviderNotFound(String),
 
-    #[error("sink writer `{0}` not registered")]
-    SinkWriterNotFound(String),
+    #[error("sink connector `{0}` not registered")]
+    SinkNotFound(String),
 
     #[error("no output found for upstream node `{0}`")]
     MissingUpstreamOutput(NodeId),
@@ -26,7 +26,7 @@ pub enum NodeErrorKind {
     #[error("source provider error: {0}")]
     Source(Box<dyn std::error::Error + Send + Sync>),
 
-    #[error("sink writer error: {0}")]
+    #[error("sink error: {0}")]
     Sink(Box<dyn std::error::Error + Send + Sync>),
 
     #[error("Python transforms are not yet supported")]

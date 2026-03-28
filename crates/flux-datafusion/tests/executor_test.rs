@@ -6,17 +6,21 @@
 use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
+use async_trait::async_trait;
+use datafusion::datasource::MemTable;
+use datafusion::datasource::TableProvider;
 use flux_datafusion::error::{ExecutorError, NodeErrorKind};
-use flux_datafusion::provider::{ProviderError, ProviderRegistry, SinkWriter, SourceProvider};
+use flux_datafusion::provider::{
+    PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions, WriteStats,
+};
 use flux_datafusion::{ExecutionOptions, PipelineExecutor, RunStatus, RunStore};
 use flux_engine::edge::Edge;
 use flux_engine::node::*;
 use flux_engine::pipeline::Pipeline;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -56,39 +60,47 @@ fn default_opts() -> ExecutionOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Mock providers
+// Mock connectors
 // ---------------------------------------------------------------------------
 
-/// A source that returns a fixed set of batches.
-struct MockSource {
+/// A source connector that wraps fixed batches in a MemTable TableProvider.
+struct MockSourceConnector {
     batches: Vec<RecordBatch>,
 }
 
-impl SourceProvider for MockSource {
-    fn read(
+impl SourceConnector for MockSourceConnector {
+    fn create_table_provider(
         &self,
         _config: &SourceConfig,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<RecordBatch>, ProviderError>> + Send + '_>> {
-        let batches = self.batches.clone();
-        Box::pin(async move { Ok(batches) })
+    ) -> Result<Arc<dyn TableProvider>, ProviderError> {
+        if self.batches.is_empty() {
+            let schema = test_schema();
+            let table = MemTable::try_new(schema, vec![vec![]])?;
+            return Ok(Arc::new(table));
+        }
+        let schema = self.batches[0].schema();
+        let table = MemTable::try_new(schema, vec![self.batches.clone()])?;
+        Ok(Arc::new(table))
     }
 }
 
-/// A source that sleeps briefly (for cancellation tests).
-struct SlowSource {
+/// A source connector that sleeps briefly (for cancellation tests).
+struct SlowSourceConnector {
     batches: Vec<RecordBatch>,
 }
 
-impl SourceProvider for SlowSource {
-    fn read(
+impl SourceConnector for SlowSourceConnector {
+    fn create_table_provider(
         &self,
         _config: &SourceConfig,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<RecordBatch>, ProviderError>> + Send + '_>> {
-        let batches = self.batches.clone();
-        Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            Ok(batches)
-        })
+    ) -> Result<Arc<dyn TableProvider>, ProviderError> {
+        // The sleep was in the old SourceProvider::read. With TableProvider,
+        // the "slowness" happens at query time. For cancellation tests we just
+        // need the source to produce data — the cancel flag is checked between
+        // nodes, not during a single node's execution.
+        let schema = self.batches[0].schema();
+        let table = MemTable::try_new(schema, vec![self.batches.clone()])?;
+        Ok(Arc::new(table))
     }
 }
 
@@ -97,18 +109,25 @@ struct MockSink {
     captured: Arc<Mutex<Vec<RecordBatch>>>,
 }
 
-impl SinkWriter for MockSink {
-    fn write(
+#[async_trait]
+impl PipelineSink for MockSink {
+    async fn write(
         &self,
         _config: &SinkConfig,
-        batches: Vec<RecordBatch>,
-    ) -> Pin<Box<dyn Future<Output = Result<u64, ProviderError>> + Send + '_>> {
-        let captured = Arc::clone(&self.captured);
-        let row_count: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
-        Box::pin(async move {
-            captured.lock().unwrap().extend(batches);
-            Ok(row_count)
+        data: Vec<RecordBatch>,
+        _options: &WriteOptions,
+    ) -> Result<WriteStats, ProviderError> {
+        let row_count: u64 = data.iter().map(|b| b.num_rows() as u64).sum();
+        self.captured.lock().unwrap().extend(data);
+        Ok(WriteStats {
+            rows_written: row_count,
+            bytes_written: 0,
+            duration: Duration::ZERO,
         })
+    }
+
+    fn validate_config(&self, _config: &SinkConfig) -> Result<(), ProviderError> {
+        Ok(())
     }
 }
 
@@ -184,7 +203,7 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
 
 fn mock_registry(batches: Vec<RecordBatch>, sink_capture: Arc<Mutex<Vec<RecordBatch>>>) -> ProviderRegistry {
     let mut reg = ProviderRegistry::new();
-    reg.register_source("mock", Arc::new(MockSource { batches }));
+    reg.register_source("mock", Arc::new(MockSourceConnector { batches }));
     reg.register_sink("mock", Arc::new(MockSink { captured: sink_capture }));
     reg
 }
@@ -268,7 +287,7 @@ async fn sql_transform_filters_rows() {
 #[tokio::test]
 async fn multi_input_join_transform() {
     let mut registry = ProviderRegistry::new();
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![test_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
 
     let pipeline = make_pipeline(
         "join",
@@ -298,7 +317,7 @@ async fn multi_input_join_transform() {
     // src_b has ids [4,5] - no overlap with src_a [1,2,3], so inner join yields 0 rows
     registry.register_source(
         "mock_b",
-        Arc::new(MockSource { batches: vec![second_batch()] }),
+        Arc::new(MockSourceConnector { batches: vec![second_batch()] }),
     );
     let captured = Arc::new(Mutex::new(Vec::new()));
     registry.register_sink("mock", Arc::new(MockSink { captured: Arc::clone(&captured) }));
@@ -532,8 +551,8 @@ async fn cancellation_stops_execution() {
     // Build a pipeline with two source nodes: first one is slow,
     // and we cancel before the second node runs.
     let mut registry = ProviderRegistry::new();
-    registry.register_source("slow", Arc::new(SlowSource { batches: vec![test_batch()] }));
-    registry.register_source("mock", Arc::new(MockSource { batches: vec![test_batch()] }));
+    registry.register_source("slow", Arc::new(SlowSourceConnector { batches: vec![test_batch()] }));
+    registry.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
     let captured = Arc::new(Mutex::new(Vec::new()));
     registry.register_sink("mock", Arc::new(MockSink { captured: Arc::clone(&captured) }));
 

@@ -113,7 +113,7 @@ impl PipelineExecutor {
 
             match &node.kind {
                 NodeKind::Source(src_cfg) => {
-                    let batches = Self::execute_source(src_cfg, registry).await.map_err(
+                    let batches = Self::execute_source(node_id, src_cfg, registry).await.map_err(
                         |kind| ExecutorError::Node {
                             node_id: node_id.clone(),
                             kind,
