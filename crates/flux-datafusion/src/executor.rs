@@ -8,6 +8,7 @@
 
 use crate::error::{ExecutorError, NodeErrorKind};
 use crate::provider::ProviderRegistry;
+use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
 use crate::run::{NodeRunStats, PipelineRun, RunStatus};
 use crate::run_store::RunStore;
@@ -32,6 +33,10 @@ pub struct ExecutionOptions {
     /// Set to `true` from another thread/task to cancel execution after the
     /// current node completes.
     pub cancel: Arc<AtomicBool>,
+    /// Optional environment resolver for catalog-based table resolution.
+    /// When set, the `SessionContext` for SQL transforms is configured with
+    /// this resolver's catalog hierarchy.
+    pub environment_resolver: Option<Arc<EnvironmentResolver>>,
 }
 
 impl Default for ExecutionOptions {
@@ -40,6 +45,7 @@ impl Default for ExecutionOptions {
             environment: "default".to_string(),
             run_store: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            environment_resolver: None,
         }
     }
 }
@@ -120,7 +126,12 @@ impl PipelineExecutor {
                         let upstream_ids = pipeline.upstream_of(node_id);
                         match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
                             Ok(data) => {
-                                Self::execute_sql_transform(&xform_cfg.code, data).await
+                                Self::execute_sql_transform(
+                                    &xform_cfg.code,
+                                    data,
+                                    options.environment_resolver.as_ref(),
+                                )
+                                .await
                             }
                             Err(e) => Err(e),
                         }
@@ -280,8 +291,16 @@ impl PipelineExecutor {
     pub(crate) async fn execute_sql_transform(
         sql: &str,
         upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
+        resolver: Option<&Arc<EnvironmentResolver>>,
     ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
         let ctx = SessionContext::new();
+
+        // Register the environment resolver if provided, so that SQL queries
+        // can reference tables from the active environment's catalog with
+        // fallback resolution.
+        if let Some(resolver) = resolver {
+            ctx.register_catalog_list(resolver.clone());
+        }
 
         for (node_id, batches) in &upstream_data {
             if batches.is_empty() {

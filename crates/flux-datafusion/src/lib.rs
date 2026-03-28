@@ -1,18 +1,22 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+pub mod environment;
 pub mod error;
 pub mod executor;
 pub mod preview;
 pub mod provider;
+pub mod resolver;
 pub mod result;
 pub mod run;
 pub mod run_store;
 pub mod stats;
 
+pub use environment::{Environment, EnvironmentStore, TableOverride};
 pub use executor::{ExecutionOptions, PipelineExecutor};
 pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult};
 pub use provider::{ProviderRegistry, SinkWriter, SourceProvider};
+pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
 pub use run::{NodeRunStats, PipelineRun, RunId, RunStatus};
 pub use run_store::RunStore;

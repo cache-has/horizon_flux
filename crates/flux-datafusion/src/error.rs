@@ -64,3 +64,28 @@ pub enum RunStoreError {
     #[error("invalid run status: {0}")]
     InvalidStatus(String),
 }
+
+/// Errors from the environment system.
+#[derive(Debug, thiserror::Error)]
+pub enum EnvironmentError {
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    #[error("environment `{0}` not found")]
+    NotFound(String),
+
+    #[error("environment `{0}` already exists")]
+    AlreadyExists(String),
+
+    #[error("fallback environment `{0}` not found")]
+    FallbackNotFound(String),
+
+    #[error("cannot delete the `prod` environment")]
+    CannotDeleteProd,
+
+    #[error("`prod` cannot have a fallback environment")]
+    ProdCannotHaveFallback,
+
+    #[error("cyclic fallback chain detected")]
+    CyclicFallback,
+}

@@ -155,7 +155,7 @@ impl PipelineExecutor {
 
                     let batches = match xform_cfg.mode {
                         flux_engine::node::TransformMode::Sql => {
-                            Self::execute_sql_transform(&xform_cfg.code, upstream_data)
+                            Self::execute_sql_transform(&xform_cfg.code, upstream_data, None)
                                 .await
                                 .map_err(|kind| ExecutorError::Node {
                                     node_id: node_id.clone(),
