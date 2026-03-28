@@ -48,8 +48,11 @@ export function NodeEditorModal() {
   const [localConnector, setLocalConnector] = useState('');
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
 
-  // Input schemas for transform editor
+  // Input schemas and upstream data for transform editor
   const [inputSchemas, setInputSchemas] = useState<InputSchema[]>([]);
+  const [upstreamData, setUpstreamData] = useState<
+    Record<string, Record<string, unknown>[]>
+  >({});
 
   // Preview runner ref (set by TransformEditor)
   const previewRunnerRef = useRef<(() => void) | null>(null);
@@ -87,42 +90,53 @@ export function NodeEditorModal() {
     setShowDiscardPrompt(false);
   }, [apiNode?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load input schemas for transforms
+  // Load input schemas and upstream data for transforms
   useEffect(() => {
     if (!editingNodeId || role !== 'transform' || !pipelineId || pipelineId === 'demo')
       return;
 
-    let cancelled = false;
+    const controller = new AbortController();
 
-    async function loadSchemas() {
+    async function loadUpstream() {
       try {
-        const result = await previewPipeline(pipelineId!, { max_rows: 0 });
-        if (cancelled) return;
+        // Fetch with rows so we can pass upstream data to single-node preview
+        const result = await previewPipeline(
+          pipelineId!,
+          { max_rows: 100 },
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
 
         // Find upstream node IDs
         const upstreamIds = edges
           .filter((e) => e.target === editingNodeId)
           .map((e) => e.source);
         const schemas: InputSchema[] = [];
+        const data: Record<string, Record<string, unknown>[]> = {};
         for (const uid of upstreamIds) {
           const upstreamNode = result.nodes.find((n) => n.node_id === uid);
           const rfUpstream = nodes.find((n) => n.id === uid);
+          const name = rfUpstream?.data.label ?? uid;
           if (upstreamNode) {
             schemas.push({
-              nodeName: rfUpstream?.data.label ?? uid,
+              nodeName: name,
               columns: upstreamNode.columns,
             });
+            data[name] = upstreamNode.rows;
           }
         }
         setInputSchemas(schemas);
-      } catch {
+        setUpstreamData(data);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return;
         // Backend not available — empty schemas
         setInputSchemas([]);
+        setUpstreamData({});
       }
     }
 
-    loadSchemas();
-    return () => { cancelled = true; };
+    loadUpstream();
+    return () => { controller.abort(); };
   }, [editingNodeId, role, pipelineId, edges, nodes]);
 
   // -----------------------------------------------------------------------
@@ -321,6 +335,7 @@ export function NodeEditorModal() {
                 <TransformEditor
                   apiNode={apiNode}
                   inputSchemas={inputSchemas}
+                  upstreamData={upstreamData}
                   mode={localMode}
                   code={localCode}
                   onModeChange={handleModeChange}

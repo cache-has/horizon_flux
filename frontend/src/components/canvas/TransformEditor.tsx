@@ -20,6 +20,8 @@ interface InputSchema {
 export interface TransformEditorProps {
   apiNode: ApiNode;
   inputSchemas: InputSchema[];
+  /** Upstream row data keyed by node name, for single-node preview. */
+  upstreamData: Record<string, Record<string, unknown>[]>;
   mode: 'sql' | 'python';
   code: string;
   onModeChange: (mode: 'sql' | 'python') => void;
@@ -174,6 +176,7 @@ type Monaco = Parameters<OnMount>[1];
 
 export function TransformEditor({
   inputSchemas,
+  upstreamData,
   mode,
   code,
   onCodeChange,
@@ -202,28 +205,46 @@ export function TransformEditor({
 
   // Debounced preview on code change
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const codeRef = useRef(code);
   codeRef.current = code;
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const upstreamRef = useRef(upstreamData);
+  upstreamRef.current = upstreamData;
 
   const runPreview = useCallback(async () => {
+    // Cancel any in-flight preview request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setPreviewLoading(true);
     setPreviewError(null);
     try {
-      const result = await previewNode({
-        node: {
-          type: 'transform',
-          mode: modeRef.current,
-          code: codeRef.current,
+      const hasUpstream = Object.keys(upstreamRef.current).length > 0;
+      const result = await previewNode(
+        {
+          node: {
+            type: 'transform',
+            mode: modeRef.current,
+            code: codeRef.current,
+          },
+          upstream: hasUpstream ? upstreamRef.current : undefined,
+          sample: { max_rows: 50 },
         },
-        sample: { max_rows: 50 },
-      });
-      setPreview(result);
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        setPreview(result);
+      }
     } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
       setPreviewError((err as Error).message);
     } finally {
-      setPreviewLoading(false);
+      if (!controller.signal.aborted) {
+        setPreviewLoading(false);
+      }
     }
   }, []);
 
@@ -246,10 +267,11 @@ export function TransformEditor({
     [onCodeChange, runPreview],
   );
 
-  // Cleanup debounce on unmount
+  // Cleanup debounce and abort on unmount
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortRef.current?.abort();
     };
   }, []);
 

@@ -335,15 +335,10 @@ interface InlineNameProps {
   onRename: (newName: string) => void;
 }
 
-function InlineName({ name, onRename }: InlineNameProps) {
+function InlineNameInner({ name, onRename }: InlineNameProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setDraft(name);
-    setEditing(false);
-  }, [name]);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -389,6 +384,11 @@ function InlineName({ name, onRename }: InlineNameProps) {
   );
 }
 
+/** Wrapper that resets InlineNameInner state when `name` changes via key. */
+function InlineName({ name, onRename }: InlineNameProps) {
+  return <InlineNameInner key={name} name={name} onRename={onRename} />;
+}
+
 // ---------------------------------------------------------------------------
 // Main SidePanel component
 // ---------------------------------------------------------------------------
@@ -410,6 +410,13 @@ export function SidePanel() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
 
+  // Cache key: pipeline version — invalidate when pipeline config changes
+  const previewCacheRef = useRef<{
+    version: number;
+    data: Map<string, ApiPreviewNodeResponse>;
+  } | null>(null);
+  const pipelineVersion = apiPipeline?.version ?? 0;
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const apiNode = apiPipeline?.nodes.find((n) => n.id === selectedNodeId);
   const isOpen = selectedNode !== null;
@@ -428,29 +435,50 @@ export function SidePanel() {
   useEffect(() => {
     if (!pipelineId || pipelineId === 'demo' || !selectedNodeId) return;
 
-    let cancelled = false;
+    // Use cached preview if pipeline version hasn't changed
+    const cached = previewCacheRef.current;
+    if (cached && cached.version === pipelineVersion && cached.data.has(selectedNodeId)) {
+      setPreview(cached.data);
+      setPreviewLoading(false);
+      // Still load runs (cheap, important to be fresh)
+    } else {
+      // Cache miss — need to clear so we don't show stale data for this node
+      setPreview(new Map());
+    }
+
+    const controller = new AbortController();
 
     async function loadPreview() {
+      // Skip fetch if cache hit
+      if (cached && cached.version === pipelineVersion && cached.data.has(selectedNodeId!)) {
+        return;
+      }
       setPreviewLoading(true);
       try {
-        const res = await previewPipeline(pipelineId!, { max_rows: 10 });
-        if (cancelled) return;
+        const res = await previewPipeline(
+          pipelineId!,
+          { max_rows: 10 },
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
         const map = new Map<string, ApiPreviewNodeResponse>();
         for (const node of res.nodes) {
           map.set(node.node_id, node);
         }
+        previewCacheRef.current = { version: pipelineVersion, data: map };
         setPreview(map);
-      } catch {
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return;
         // Preview not available (backend may not be running)
       } finally {
-        if (!cancelled) setPreviewLoading(false);
+        if (!controller.signal.aborted) setPreviewLoading(false);
       }
     }
 
     async function loadRuns() {
       try {
         const res = await fetchPipelineRuns(pipelineId!, 1, 0);
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         if (res.data.length > 0) {
           const run = res.data[0];
           const map = new Map<string, ApiNodeRunStats>();
@@ -468,9 +496,9 @@ export function SidePanel() {
     loadRuns();
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [pipelineId, selectedNodeId]);
+  }, [pipelineId, selectedNodeId, pipelineVersion]);
 
   // Rename handler — updates the node label in store and marks dirty
   const handleRename = useCallback(

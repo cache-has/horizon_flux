@@ -172,11 +172,13 @@ export interface ApiNodePreviewRequest {
 export async function previewPipeline(
   id: string,
   sample?: { max_rows?: number },
+  signal?: AbortSignal,
 ): Promise<ApiPreviewResponse> {
   const res = await fetch(`${BASE}/${id}/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sample }),
+    signal,
   });
   if (!res.ok) {
     throw new Error(`Preview failed: ${res.status} ${res.statusText}`);
@@ -187,11 +189,13 @@ export async function previewPipeline(
 /** Preview a single node's output. */
 export async function previewNode(
   request: ApiNodePreviewRequest,
+  signal?: AbortSignal,
 ): Promise<ApiPreviewNodeResponse> {
   const res = await fetch('/api/preview/node', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
+    signal,
   });
   if (!res.ok) {
     throw new Error(`Node preview failed: ${res.status} ${res.statusText}`);
