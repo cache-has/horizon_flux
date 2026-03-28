@@ -762,6 +762,7 @@ mod tests {
             query: None,
             write_mode: None,
             batch_size: None,
+            conflict_keys: Vec::new(),
         };
 
         let sql = build_query(&config, &schema, &pg_types, None, &[], None);
@@ -782,6 +783,7 @@ mod tests {
             query: None,
             write_mode: None,
             batch_size: None,
+            conflict_keys: Vec::new(),
         };
 
         let projection = vec![0, 2];
@@ -802,6 +804,7 @@ mod tests {
             query: None,
             write_mode: None,
             batch_size: None,
+            conflict_keys: Vec::new(),
         };
 
         let filters = vec![Expr::BinaryExpr(BinaryExpr {
@@ -830,6 +833,7 @@ mod tests {
             query: None,
             write_mode: None,
             batch_size: None,
+            conflict_keys: Vec::new(),
         };
 
         let sql = build_query(&config, &schema, &pg_types, None, &[], None);
@@ -848,6 +852,7 @@ mod tests {
             query: Some("SELECT count(*) AS total FROM users".to_string()),
             write_mode: None,
             batch_size: None,
+            conflict_keys: Vec::new(),
         };
 
         let filters = vec![Expr::BinaryExpr(BinaryExpr {

@@ -11,6 +11,7 @@
 pub mod config;
 pub mod file_sink;
 pub mod file_source;
+pub mod postgres_sink;
 pub mod postgres_source;
 pub mod registry;
 pub mod rest_api_source;
@@ -18,6 +19,7 @@ pub mod rest_api_source;
 pub use config::ConnectorConfig;
 pub use file_sink::FileSink;
 pub use file_source::FileSource;
+pub use postgres_sink::PostgresSink;
 pub use postgres_source::PostgresSource;
 pub use registry::ConnectorRegistry;
 pub use rest_api_source::RestApiSource;
@@ -51,6 +53,11 @@ pub fn default_registry() -> ConnectorRegistry {
     registry.register_sink("file", Arc::clone(&file_sink));
     registry.register_sink("csv", Arc::clone(&file_sink));
     registry.register_sink("parquet", file_sink);
+
+    let pg_sink: Arc<dyn flux_datafusion::provider::PipelineSink> =
+        Arc::new(PostgresSink::new());
+    registry.register_sink("postgresql", Arc::clone(&pg_sink));
+    registry.register_sink("postgres", pg_sink);
 
     registry
 }

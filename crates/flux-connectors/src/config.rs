@@ -113,6 +113,9 @@ pub struct PostgreSqlConfig {
     /// Batch size for insert operations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
+    /// Conflict key columns for upsert mode (used in ON CONFLICT).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflict_keys: Vec<String>,
 }
 
 /// PostgreSQL sink write modes.
