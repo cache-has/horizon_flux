@@ -1,0 +1,313 @@
+// Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Pipeline execution engine.
+//!
+//! Walks the validated DAG in topological order, dispatching each node to the
+//! appropriate handler (source provider, DataFusion SQL, or sink writer).
+
+use crate::error::{ExecutorError, NodeErrorKind};
+use crate::provider::ProviderRegistry;
+use crate::result::PipelineResult;
+use crate::run::{NodeRunStats, PipelineRun, RunStatus};
+use crate::run_store::RunStore;
+use crate::stats::NodeStats;
+use arrow::record_batch::RecordBatch;
+use datafusion::datasource::MemTable;
+use datafusion::prelude::SessionContext;
+use flux_engine::node::{NodeKind, SourceConfig, TransformMode};
+use flux_engine::{dag, NodeId, Pipeline};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Instant, SystemTime};
+use tracing::{debug, info, warn};
+
+/// Options controlling a pipeline execution.
+pub struct ExecutionOptions {
+    /// Environment name for this run (e.g. "dev", "prod").
+    pub environment: String,
+    /// Optional run store for persisting execution history.
+    pub run_store: Option<Arc<RunStore>>,
+    /// Set to `true` from another thread/task to cancel execution after the
+    /// current node completes.
+    pub cancel: Arc<AtomicBool>,
+}
+
+impl Default for ExecutionOptions {
+    fn default() -> Self {
+        Self {
+            environment: "default".to_string(),
+            run_store: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+/// Executes a pipeline by walking the DAG in topological order.
+pub struct PipelineExecutor;
+
+impl PipelineExecutor {
+    /// Execute a pipeline to completion.
+    ///
+    /// Validates the DAG, walks nodes in topological order, and dispatches each
+    /// node to the appropriate handler. Returns a [`PipelineResult`] containing
+    /// all node outputs and per-node statistics, along with a [`PipelineRun`]
+    /// record suitable for persistence.
+    ///
+    /// Uses fail-fast semantics: execution stops at the first node error.
+    /// If `options.cancel` is set, execution stops after the current node and
+    /// returns [`ExecutorError::Cancelled`].
+    pub async fn execute(
+        pipeline: &Pipeline,
+        registry: &ProviderRegistry,
+        options: &ExecutionOptions,
+    ) -> Result<(PipelineResult, PipelineRun), ExecutorError> {
+        dag::validate(pipeline).map_err(ExecutorError::Validation)?;
+        let order = dag::topological_sort(pipeline);
+
+        info!(pipeline = %pipeline.name, nodes = order.len(), "starting pipeline execution");
+
+        // Create the run record.
+        let mut run = match &options.run_store {
+            Some(store) => store
+                .create_run(&pipeline.name, &options.environment)
+                .map_err(ExecutorError::RunStore)?,
+            None => PipelineRun::new(&pipeline.name, &options.environment),
+        };
+
+        let run_start_wall = SystemTime::now();
+        let run_start = Instant::now();
+
+        // Mark running.
+        run.status = RunStatus::Running;
+        run.start_time = Some(run_start_wall);
+        if let Some(store) = &options.run_store {
+            let _ = store.set_running(&run.id, run_start_wall);
+        }
+
+        let mut outputs: HashMap<NodeId, Vec<RecordBatch>> = HashMap::new();
+        let mut stats: Vec<NodeStats> = Vec::new();
+
+        for node_id in &order {
+            // Check cancellation before each node.
+            if options.cancel.load(Ordering::Relaxed) {
+                warn!(pipeline = %pipeline.name, "execution cancelled");
+                let end_wall = SystemTime::now();
+                run.status = RunStatus::Cancelled;
+                run.end_time = Some(end_wall);
+                if let Some(store) = &options.run_store {
+                    let _ = store.finish_run(&run.id, RunStatus::Cancelled, end_wall, None);
+                }
+                return Err(ExecutorError::Cancelled);
+            }
+
+            let node = pipeline
+                .node(node_id)
+                .expect("topological_sort returned an ID not in the pipeline");
+
+            debug!(node = %node_id, kind = ?std::mem::discriminant(&node.kind), "executing node");
+
+            let node_start = Instant::now();
+            let node_start_wall = SystemTime::now();
+            let mut rows_in: u64 = 0;
+
+            let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
+                NodeKind::Source(src_cfg) => Self::execute_source(src_cfg, registry).await,
+
+                NodeKind::Transform(xform_cfg) => match xform_cfg.mode {
+                    TransformMode::Sql => {
+                        let upstream_ids = pipeline.upstream_of(node_id);
+                        match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                            Ok(data) => {
+                                Self::execute_sql_transform(&xform_cfg.code, data).await
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    TransformMode::Python => Err(NodeErrorKind::PythonNotSupported),
+                },
+
+                NodeKind::Sink(sink_cfg) => {
+                    let upstream_ids = pipeline.upstream_of(node_id);
+                    match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                        Ok(upstream_data) => {
+                            let all_batches: Vec<RecordBatch> = upstream_data
+                                .into_values()
+                                .flat_map(|batches| batches.iter().cloned())
+                                .collect();
+                            Self::execute_sink(sink_cfg, &all_batches, registry)
+                                .await
+                                .map(|_rows_written| all_batches)
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+
+            let node_end = Instant::now();
+            let node_end_wall = SystemTime::now();
+
+            match result {
+                Ok(batches) => {
+                    let rows_out: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
+                    debug!(node = %node_id, rows_in, rows_out, "node completed");
+
+                    stats.push(NodeStats {
+                        node_id: node_id.clone(),
+                        start_time: node_start,
+                        end_time: node_end,
+                        rows_in,
+                        rows_out,
+                        error: None,
+                    });
+
+                    let node_run_stats = NodeRunStats {
+                        node_id: node_id.clone(),
+                        start_time: node_start_wall,
+                        end_time: node_end_wall,
+                        rows_in,
+                        rows_out,
+                        error: None,
+                    };
+                    if let Some(store) = &options.run_store {
+                        let _ = store.save_node_stats(&run.id, &node_run_stats);
+                    }
+                    run.node_stats.push(node_run_stats);
+
+                    outputs.insert(node_id.clone(), batches);
+                }
+                Err(kind) => {
+                    let error_msg = kind.to_string();
+
+                    stats.push(NodeStats {
+                        node_id: node_id.clone(),
+                        start_time: node_start,
+                        end_time: node_end,
+                        rows_in,
+                        rows_out: 0,
+                        error: Some(error_msg.clone()),
+                    });
+
+                    let node_run_stats = NodeRunStats {
+                        node_id: node_id.clone(),
+                        start_time: node_start_wall,
+                        end_time: node_end_wall,
+                        rows_in,
+                        rows_out: 0,
+                        error: Some(error_msg.clone()),
+                    };
+                    if let Some(store) = &options.run_store {
+                        let _ = store.save_node_stats(&run.id, &node_run_stats);
+                    }
+                    run.node_stats.push(node_run_stats);
+
+                    // Finalize as failed.
+                    let end_wall = SystemTime::now();
+                    run.status = RunStatus::Failed;
+                    run.end_time = Some(end_wall);
+                    run.error = Some(error_msg);
+                    if let Some(store) = &options.run_store {
+                        let _ = store.finish_run(
+                            &run.id,
+                            RunStatus::Failed,
+                            end_wall,
+                            run.error.as_deref(),
+                        );
+                    }
+
+                    return Err(ExecutorError::Node {
+                        node_id: node_id.clone(),
+                        kind,
+                    });
+                }
+            }
+        }
+
+        let run_end = Instant::now();
+        let run_end_wall = SystemTime::now();
+
+        info!(
+            pipeline = %pipeline.name,
+            duration_ms = run_end.duration_since(run_start).as_millis(),
+            "pipeline execution complete"
+        );
+
+        // Finalize as success.
+        run.status = RunStatus::Success;
+        run.end_time = Some(run_end_wall);
+        if let Some(store) = &options.run_store {
+            let _ = store.finish_run(&run.id, RunStatus::Success, run_end_wall, None);
+        }
+
+        let pipeline_result = PipelineResult {
+            pipeline_name: pipeline.name.clone(),
+            start_time: run_start,
+            end_time: run_end,
+            node_outputs: outputs,
+            node_stats: stats,
+        };
+
+        Ok((pipeline_result, run))
+    }
+
+    pub(crate) async fn execute_source(
+        config: &SourceConfig,
+        registry: &ProviderRegistry,
+    ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
+        let provider = registry
+            .get_source(&config.connector)
+            .ok_or_else(|| NodeErrorKind::SourceProviderNotFound(config.connector.clone()))?;
+        provider.read(config).await.map_err(NodeErrorKind::Source)
+    }
+
+    pub(crate) fn gather_upstream<'a>(
+        upstream_ids: &[&NodeId],
+        outputs: &'a HashMap<NodeId, Vec<RecordBatch>>,
+        rows_in: &mut u64,
+    ) -> Result<HashMap<NodeId, &'a Vec<RecordBatch>>, NodeErrorKind> {
+        let mut upstream_data = HashMap::new();
+        for uid in upstream_ids {
+            let batches = outputs
+                .get(*uid)
+                .ok_or_else(|| NodeErrorKind::MissingUpstreamOutput((*uid).clone()))?;
+            *rows_in += batches.iter().map(|b| b.num_rows() as u64).sum::<u64>();
+            upstream_data.insert((*uid).clone(), batches);
+        }
+        Ok(upstream_data)
+    }
+
+    pub(crate) async fn execute_sql_transform(
+        sql: &str,
+        upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
+    ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
+        let ctx = SessionContext::new();
+
+        for (node_id, batches) in &upstream_data {
+            if batches.is_empty() {
+                continue;
+            }
+            let schema = batches[0].schema();
+            let mem_table = MemTable::try_new(schema, vec![batches.to_vec()])?;
+            ctx.register_table(node_id.to_string().as_str(), Arc::new(mem_table))?;
+        }
+
+        let df = ctx.sql(sql).await?;
+        let batches = df.collect().await?;
+        Ok(batches)
+    }
+
+    async fn execute_sink(
+        config: &flux_engine::node::SinkConfig,
+        batches: &[RecordBatch],
+        registry: &ProviderRegistry,
+    ) -> Result<u64, NodeErrorKind> {
+        let writer = registry
+            .get_sink(&config.connector)
+            .ok_or_else(|| NodeErrorKind::SinkWriterNotFound(config.connector.clone()))?;
+        writer
+            .write(config, batches.to_vec())
+            .await
+            .map_err(NodeErrorKind::Sink)
+    }
+}

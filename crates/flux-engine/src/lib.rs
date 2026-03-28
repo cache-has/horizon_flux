@@ -6,6 +6,7 @@ pub mod edge;
 pub mod error;
 pub mod node;
 pub mod pipeline;
+pub mod sample;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -16,6 +17,7 @@ pub use edge::Edge;
 pub use error::{DagError, EngineError};
 pub use node::{Node, NodeId, NodeKind};
 pub use pipeline::Pipeline;
+pub use sample::SampleConfig;
 
 #[cfg(test)]
 mod tests {

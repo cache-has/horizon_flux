@@ -1,3 +1,23 @@
+// Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+pub mod error;
+pub mod executor;
+pub mod preview;
+pub mod provider;
+pub mod result;
+pub mod run;
+pub mod run_store;
+pub mod stats;
+
+pub use executor::{ExecutionOptions, PipelineExecutor};
+pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult};
+pub use provider::{ProviderRegistry, SinkWriter, SourceProvider};
+pub use result::PipelineResult;
+pub use run::{NodeRunStats, PipelineRun, RunId, RunStatus};
+pub use run_store::RunStore;
+pub use stats::NodeStats;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
