@@ -115,6 +115,7 @@ export async function updatePipeline(
 export interface ApiColumnInfo {
   name: string;
   data_type: string;
+  nullable: boolean;
 }
 
 /** Single node result from a preview run. */

@@ -91,6 +91,7 @@ pub struct PreviewNodeResponse {
 pub struct ColumnInfo {
     pub name: String,
     pub data_type: String,
+    pub nullable: bool,
 }
 
 /// Full preview response.
@@ -294,6 +295,7 @@ async fn preview_pipeline(
                     .map(|f| ColumnInfo {
                         name: f.name().clone(),
                         data_type: format!("{}", f.data_type()),
+                        nullable: f.is_nullable(),
                     })
                     .collect();
 
@@ -405,4 +407,30 @@ pub fn batches_to_json_rows(
         .filter(|line| !line.is_empty())
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn column_info_serializes_nullable() {
+        let col = ColumnInfo {
+            name: "age".into(),
+            data_type: "Int32".into(),
+            nullable: true,
+        };
+        let json = serde_json::to_value(&col).unwrap();
+        assert_eq!(json["name"], "age");
+        assert_eq!(json["data_type"], "Int32");
+        assert_eq!(json["nullable"], true);
+
+        let not_null = ColumnInfo {
+            name: "id".into(),
+            data_type: "Int64".into(),
+            nullable: false,
+        };
+        let json2 = serde_json::to_value(&not_null).unwrap();
+        assert_eq!(json2["nullable"], false);
+    }
 }

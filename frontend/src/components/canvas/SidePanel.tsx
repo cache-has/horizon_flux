@@ -47,21 +47,63 @@ function truncateCode(code: string, lines: number): string {
 
 interface SchemaListProps {
   preview: ApiPreviewNodeResponse | null;
+  collapsible?: boolean;
 }
 
-function SchemaList({ preview }: SchemaListProps) {
+function SchemaList({ preview, collapsible = true }: SchemaListProps) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [copiedCol, setCopiedCol] = useState<string | null>(null);
+
   if (!preview || preview.columns.length === 0) {
     return <span className="side-panel__empty">No schema available</span>;
   }
+
+  const handleCopy = (name: string) => {
+    navigator.clipboard.writeText(name).then(() => {
+      setCopiedCol(name);
+      setTimeout(() => setCopiedCol(null), 1200);
+    });
+  };
+
   return (
-    <ul className="side-panel__schema-list">
-      {preview.columns.map((col) => (
-        <li key={col.name} className="side-panel__schema-item">
-          <span className="side-panel__schema-name">{col.name}</span>
-          <span className="side-panel__schema-type">{col.data_type}</span>
-        </li>
-      ))}
-    </ul>
+    <div>
+      {collapsible && (
+        <button
+          className="side-panel__schema-toggle"
+          onClick={() => setCollapsed((c) => !c)}
+        >
+          <span className={`side-panel__schema-arrow${collapsed ? '' : ' side-panel__schema-arrow--open'}`}>
+            &#9654;
+          </span>
+          {preview.columns.length} column{preview.columns.length !== 1 ? 's' : ''}
+        </button>
+      )}
+      {!collapsed && (
+        <ul className="side-panel__schema-list">
+          {preview.columns.map((col) => (
+            <li
+              key={col.name}
+              className="side-panel__schema-item"
+              onClick={() => handleCopy(col.name)}
+              title={`Click to copy "${col.name}"`}
+            >
+              <span className="side-panel__schema-name">
+                {col.name}
+                {copiedCol === col.name && (
+                  <span className="side-panel__schema-copied">copied</span>
+                )}
+              </span>
+              <span className="side-panel__schema-meta">
+                <span className="side-panel__schema-type">{col.data_type}</span>
+                {col.nullable && (
+                  <span className="side-panel__schema-nullable">?</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

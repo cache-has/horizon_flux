@@ -87,7 +87,12 @@ function SchemaSidebar({
                     title={`Click to insert "${col.name}" at cursor`}
                   >
                     <span className="transform-editor__col-name">{col.name}</span>
-                    <span className="transform-editor__col-type">{col.data_type}</span>
+                    <span className="transform-editor__col-meta">
+                      <span className="transform-editor__col-type">{col.data_type}</span>
+                      {col.nullable && (
+                        <span className="transform-editor__col-nullable">?</span>
+                      )}
+                    </span>
                   </li>
                 ))}
               </ul>

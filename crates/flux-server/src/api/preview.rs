@@ -171,6 +171,7 @@ fn build_preview_response(
                 .map(|f| ColumnInfo {
                     name: f.name().clone(),
                     data_type: format!("{}", f.data_type()),
+                    nullable: f.is_nullable(),
                 })
                 .collect()
         })

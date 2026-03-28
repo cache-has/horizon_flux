@@ -291,7 +291,12 @@ function SourcePreview({ config, connector }: { config: Record<string, unknown>;
               {preview.columns.map((c) => (
                 <li key={c.name} className="connector-editor__schema-item">
                   <span className="connector-editor__schema-name">{c.name}</span>
-                  <span className="connector-editor__schema-type">{c.data_type}</span>
+                  <span className="connector-editor__schema-meta">
+                    <span className="connector-editor__schema-type">{c.data_type}</span>
+                    {c.nullable && (
+                      <span className="connector-editor__schema-nullable">?</span>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
