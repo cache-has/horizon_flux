@@ -15,7 +15,8 @@
     "@xyflow/react": "^12.10.2",
     "d3-force": "^3.0.0",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "zustand": "^4.5.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

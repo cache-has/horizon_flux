@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -9,89 +9,88 @@ import {
   BackgroundVariant,
   Controls,
   MiniMap,
+  Panel,
   type OnConnect,
   type OnNodesChange,
   type OnEdgesChange,
   type NodeTypes,
-  addEdge,
-  useNodesState,
-  useEdgesState,
+  type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import type { PipelineNode, PipelineEdge } from '../../types/pipeline';
+import type { PipelineNode } from '../../types/pipeline';
 import { PipelineNodeComponent } from './PipelineNode';
 import { useForceLayout } from '../../hooks/useForceLayout';
+import { usePipelineStore } from '../../stores/pipelineStore';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
   pipeline: PipelineNodeComponent,
 };
 
-/** Default edge options: animated Bezier curves. */
+/** Default edge options: Bezier curves. */
 const defaultEdgeOptions = {
   type: 'default',
   animated: false,
 };
 
-// Demo nodes for initial canvas — will be replaced by backend data
-const initialNodes: PipelineNode[] = [
-  {
-    id: 'source-1',
-    type: 'pipeline',
-    position: { x: 100, y: 200 },
-    data: {
-      label: 'CSV Import',
-      role: 'source',
-      status: 'idle',
-      pinnedPosition: false,
-      envOverridden: false,
-    },
-  },
-  {
-    id: 'transform-1',
-    type: 'pipeline',
-    position: { x: 400, y: 200 },
-    data: {
-      label: 'Filter Rows',
-      role: 'transform',
-      status: 'idle',
-      pinnedPosition: false,
-      envOverridden: false,
-    },
-  },
-  {
-    id: 'sink-1',
-    type: 'pipeline',
-    position: { x: 700, y: 200 },
-    data: {
-      label: 'PostgreSQL',
-      role: 'sink',
-      status: 'idle',
-      pinnedPosition: false,
-      envOverridden: false,
-    },
-  },
-];
-
-const initialEdges: PipelineEdge[] = [
-  { id: 'e-source-1-transform-1', source: 'source-1', target: 'transform-1' },
-  { id: 'e-transform-1-sink-1', source: 'transform-1', target: 'sink-1' },
-];
-
 function PipelineCanvasInner() {
-  const [nodes, setNodes, onNodesChange] =
-    useNodesState<PipelineNode>(initialNodes);
-  const [edges, setEdges, onEdgesChange] =
-    useEdgesState<PipelineEdge>(initialEdges);
+  const nodes = usePipelineStore((s) => s.nodes);
+  const edges = usePipelineStore((s) => s.edges);
+  const setNodes = usePipelineStore((s) => s.setNodes);
+  const onNodesChange = usePipelineStore((s) => s.onNodesChange);
+  const onEdgesChange = usePipelineStore((s) => s.onEdgesChange);
+  const onConnect = usePipelineStore((s) => s.onConnect);
+  const pinNode = usePipelineStore((s) => s.pinNode);
+  const unpinAll = usePipelineStore((s) => s.unpinAll);
+  const markDirty = usePipelineStore((s) => s.markDirty);
+  const simulationHasRun = usePipelineStore((s) => s.simulationHasRun);
+  const markSimulationRun = usePipelineStore((s) => s.markSimulationRun);
 
-  useForceLayout(nodes, edges, setNodes);
+  const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
 
-  const onConnect: OnConnect = useCallback(
-    (connection) => {
-      setEdges((eds: PipelineEdge[]) => addEdge(connection, eds));
+  /** Called when simulation settles — save positions. */
+  const handleSettled = useCallback(() => {
+    markSimulationRun();
+    markDirty();
+  }, [markSimulationRun, markDirty]);
+
+  // The force layout hook uses Node<PipelineNodeData> (type?: string)
+  // while our store uses PipelineNode (type: 'pipeline'). The shapes are
+  // compatible at runtime, so we bridge the variance gap with a cast.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const setNodesForLayout = setNodes as any;
+
+  const { rerun, rerunAll } = useForceLayout(nodes, edges, setNodesForLayout, {
+    // Skip simulation if pipeline was loaded with saved positions
+    enabled: !simulationHasRun,
+    onSettled: handleSettled,
+  });
+
+  /** When a user finishes dragging a node, pin it and save. */
+  const handleNodeDragStop = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      pinNode(node.id);
     },
-    [setEdges],
+    [pinNode],
+  );
+
+  /** Re-layout button handler. */
+  const handleRelayout = useCallback(() => {
+    if (unpinOnRelayout) {
+      unpinAll();
+      rerunAll();
+    } else {
+      rerun();
+    }
+    // After re-layout, positions will be saved via onSettled
+  }, [unpinOnRelayout, unpinAll, rerun, rerunAll]);
+
+  const handleConnect: OnConnect = useCallback(
+    (connection) => {
+      onConnect(connection);
+    },
+    [onConnect],
   );
 
   return (
@@ -101,7 +100,8 @@ function PipelineCanvasInner() {
         edges={edges}
         onNodesChange={onNodesChange as OnNodesChange}
         onEdgesChange={onEdgesChange as OnEdgesChange}
-        onConnect={onConnect}
+        onConnect={handleConnect}
+        onNodeDragStop={handleNodeDragStop}
         nodeTypes={nodeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
         fitView
@@ -133,6 +133,23 @@ function PipelineCanvasInner() {
           pannable
           zoomable
         />
+        <Panel position="top-right" className="relayout-panel">
+          <label className="relayout-checkbox">
+            <input
+              type="checkbox"
+              checked={unpinOnRelayout}
+              onChange={(e) => setUnpinOnRelayout(e.target.checked)}
+            />
+            Unpin all
+          </label>
+          <button
+            className="relayout-button"
+            onClick={handleRelayout}
+            title="Re-run force-directed layout"
+          >
+            Re-layout
+          </button>
+        </Panel>
       </ReactFlow>
     </div>
   );

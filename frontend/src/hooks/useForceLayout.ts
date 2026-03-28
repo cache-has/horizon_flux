@@ -150,6 +150,8 @@ function collideRect(padding = 10) {
 export interface UseForceLayoutOptions {
   /** Whether the force layout is enabled. Defaults to true. */
   enabled?: boolean;
+  /** Called when the simulation settles (alpha below threshold). */
+  onSettled?: () => void;
 }
 
 /**
@@ -161,16 +163,20 @@ export interface UseForceLayoutOptions {
 export function useForceLayout(
   nodes: Node<PipelineNodeData>[],
   edges: Edge[],
-  setNodes: React.Dispatch<React.SetStateAction<Node<PipelineNodeData>[]>>,
+  setNodes: (updater: (current: Node<PipelineNodeData>[]) => Node<PipelineNodeData>[]) => void,
   options: UseForceLayoutOptions = {},
 ) {
-  const { enabled = true } = options;
+  const { enabled = true, onSettled } = options;
   const { fitView } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
 
   const simulationRef = useRef<Simulation<SimNode, SimulationLinkDatum<SimNode>> | null>(null);
   const runningRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+  const onSettledRef = useRef(onSettled);
+  useEffect(() => {
+    onSettledRef.current = onSettled;
+  }, [onSettled]);
 
   // Track structural identity to detect when to restart simulation
   const structureKeyRef = useRef('');
@@ -187,13 +193,17 @@ export function useForceLayout(
   }, []);
 
   const runSimulation = useCallback(
-    (rfNodes: Node<PipelineNodeData>[], rfEdges: Edge[]) => {
+    (
+      rfNodes: Node<PipelineNodeData>[],
+      rfEdges: Edge[],
+      ignorePin = false,
+    ) => {
       stopSimulation();
 
       const depths = computeDepths(rfNodes, rfEdges);
 
       const simNodes: SimNode[] = rfNodes.map((node) => {
-        const isPinned = node.data.pinnedPosition;
+        const isPinned = !ignorePin && node.data.pinnedPosition;
         return {
           id: node.id,
           x: node.position.x,
@@ -261,6 +271,8 @@ export function useForceLayout(
           runningRef.current = false;
           // Final fitView once settled
           requestAnimationFrame(() => fitView({ padding: 0.3 }));
+          // Notify that simulation has settled
+          onSettledRef.current?.();
           return;
         }
 
@@ -305,8 +317,10 @@ export function useForceLayout(
   return {
     /** Check whether the simulation is currently running (call in event handlers, not render). */
     getIsRunning: () => runningRef.current,
-    /** Manually re-run the simulation (e.g., "Re-layout" button). */
+    /** Manually re-run the simulation, respecting pinned positions. */
     rerun: () => runSimulation(nodes, edges),
+    /** Re-run the simulation, ignoring all pinned positions (full re-layout). */
+    rerunAll: () => runSimulation(nodes, edges, true),
     /** Stop the simulation immediately. */
     stop: stopSimulation,
   };
