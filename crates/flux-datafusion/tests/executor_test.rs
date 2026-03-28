@@ -162,13 +162,13 @@ fn sql_transform_node(id: &str, sql: &str) -> Node {
     }
 }
 
-fn python_transform_node(id: &str) -> Node {
+fn python_transform_node(id: &str, code: &str) -> Node {
     Node {
         id: NodeId::new(id),
         name: id.to_string(),
         kind: NodeKind::Transform(TransformConfig {
             mode: TransformMode::Python,
-            code: "print('hello')".to_string(),
+            code: code.to_string(),
             materialized: false,
         }),
         position: Position::default(),
@@ -331,12 +331,75 @@ async fn multi_input_join_transform() {
 }
 
 #[tokio::test]
-async fn python_transform_returns_not_supported() {
+async fn python_transform_passthrough() {
+    let code = r#"
+import polars as pl
+
+def transform(inputs, params):
+    return inputs["src"]
+"#;
     let pipeline = make_pipeline(
-        "python",
+        "python_passthrough",
         vec![
             source_node("src"),
-            python_transform_node("py"),
+            python_transform_node("py", code),
+            sink_node("out"),
+        ],
+        vec![Edge::new("src", "py"), Edge::new("py", "out")],
+    );
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], captured.clone());
+
+    let (result, run) = PipelineExecutor::execute(&pipeline, &registry, &default_opts())
+        .await
+        .expect("pipeline should succeed");
+
+    assert_eq!(run.status, RunStatus::Success);
+    assert_eq!(result.node_stats[1].rows_out, 3); // passthrough: 3 rows
+    let written = captured.lock().unwrap();
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0].num_rows(), 3);
+}
+
+#[tokio::test]
+async fn python_transform_filter() {
+    let code = r#"
+import polars as pl
+
+def transform(inputs, params):
+    df = inputs["src"]
+    return df.filter(pl.col("id") > 1)
+"#;
+    let pipeline = make_pipeline(
+        "python_filter",
+        vec![
+            source_node("src"),
+            python_transform_node("py", code),
+            sink_node("out"),
+        ],
+        vec![Edge::new("src", "py"), Edge::new("py", "out")],
+    );
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], captured.clone());
+
+    let (result, _run) = PipelineExecutor::execute(&pipeline, &registry, &default_opts())
+        .await
+        .expect("pipeline should succeed");
+
+    // test_batch has ids [1,2,3], filter > 1 keeps [2,3]
+    assert_eq!(result.node_stats[1].rows_out, 2);
+}
+
+#[tokio::test]
+async fn python_transform_syntax_error() {
+    let code = "def transform(inputs, params)\n    return inputs['src']"; // missing colon
+    let pipeline = make_pipeline(
+        "python_syntax_err",
+        vec![
+            source_node("src"),
+            python_transform_node("py", code),
             sink_node("out"),
         ],
         vec![Edge::new("src", "py"), Edge::new("py", "out")],
@@ -352,7 +415,71 @@ async fn python_transform_returns_not_supported() {
     match err {
         ExecutorError::Node { ref node_id, ref kind } => {
             assert_eq!(node_id.0, "py");
-            assert!(matches!(kind, NodeErrorKind::PythonNotSupported));
+            let msg = kind.to_string();
+            assert!(msg.contains("SyntaxError"), "expected SyntaxError, got: {msg}");
+        }
+        other => panic!("expected Node error, got: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn python_transform_missing_function() {
+    let code = "x = 42"; // no transform function defined
+    let pipeline = make_pipeline(
+        "python_no_fn",
+        vec![
+            source_node("src"),
+            python_transform_node("py", code),
+            sink_node("out"),
+        ],
+        vec![Edge::new("src", "py"), Edge::new("py", "out")],
+    );
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], captured);
+
+    let err = PipelineExecutor::execute(&pipeline, &registry, &default_opts())
+        .await
+        .unwrap_err();
+
+    match err {
+        ExecutorError::Node { ref node_id, ref kind } => {
+            assert_eq!(node_id.0, "py");
+            let msg = kind.to_string();
+            assert!(msg.contains("transform"), "expected missing-function message, got: {msg}");
+        }
+        other => panic!("expected Node error, got: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn python_transform_wrong_return_type() {
+    let code = r#"
+def transform(inputs, params):
+    return "not a dataframe"
+"#;
+    let pipeline = make_pipeline(
+        "python_bad_return",
+        vec![
+            source_node("src"),
+            python_transform_node("py", code),
+            sink_node("out"),
+        ],
+        vec![Edge::new("src", "py"), Edge::new("py", "out")],
+    );
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], captured);
+
+    let err = PipelineExecutor::execute(&pipeline, &registry, &default_opts())
+        .await
+        .unwrap_err();
+
+    match err {
+        ExecutorError::Node { ref node_id, ref kind } => {
+            assert_eq!(node_id.0, "py");
+            let msg = kind.to_string();
+            assert!(msg.contains("DataFrame"), "expected wrong-type message, got: {msg}");
         }
         other => panic!("expected Node error, got: {other}"),
     }

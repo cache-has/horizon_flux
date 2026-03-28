@@ -10,7 +10,7 @@
 //! - All intermediate node outputs are retained for inspection
 //! - No run history is persisted
 
-use crate::error::{ExecutorError, NodeErrorKind};
+use crate::error::ExecutorError;
 use crate::executor::PipelineExecutor;
 use crate::provider::ProviderRegistry;
 use arrow::datatypes::SchemaRef;
@@ -163,10 +163,23 @@ impl PipelineExecutor {
                                 })?
                         }
                         flux_engine::node::TransformMode::Python => {
-                            return Err(ExecutorError::Node {
+                            let variables = pipeline
+                                .variables
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    v.default.as_ref().map(|d| (k.clone(), d.clone()))
+                                })
+                                .collect();
+                            crate::python_runtime::execute_python_transform(
+                                &xform_cfg.code,
+                                upstream_data,
+                                &variables,
+                            )
+                            .await
+                            .map_err(|kind| ExecutorError::Node {
                                 node_id: node_id.clone(),
-                                kind: NodeErrorKind::PythonNotSupported,
-                            });
+                                kind,
+                            })?
                         }
                     };
 

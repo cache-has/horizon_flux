@@ -18,6 +18,7 @@ rusqlite = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 regex = { workspace = true }
+tempfile = "3"
 
 [dev-dependencies]
 tokio = { workspace = true }

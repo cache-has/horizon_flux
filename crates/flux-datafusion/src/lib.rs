@@ -7,6 +7,7 @@ pub mod executor;
 pub mod friendly_sql;
 pub mod preview;
 pub mod provider;
+pub mod python_runtime;
 pub mod resolver;
 pub mod result;
 pub mod run;

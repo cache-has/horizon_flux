@@ -139,7 +139,27 @@ impl PipelineExecutor {
                             Err(e) => Err(e),
                         }
                     }
-                    TransformMode::Python => Err(NodeErrorKind::PythonNotSupported),
+                    TransformMode::Python => {
+                        let upstream_ids = pipeline.upstream_of(node_id);
+                        match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                            Ok(data) => {
+                                let variables = pipeline
+                                    .variables
+                                    .iter()
+                                    .filter_map(|(k, v)| {
+                                        v.default.as_ref().map(|d| (k.clone(), d.clone()))
+                                    })
+                                    .collect();
+                                crate::python_runtime::execute_python_transform(
+                                    &xform_cfg.code,
+                                    data,
+                                    &variables,
+                                )
+                                .await
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
                 },
 
                 NodeKind::Sink(sink_cfg) => {

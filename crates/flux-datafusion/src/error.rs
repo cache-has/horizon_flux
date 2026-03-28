@@ -32,8 +32,11 @@ pub enum NodeErrorKind {
     #[error("SQL preprocessing error: {0}")]
     Preprocess(#[from] crate::friendly_sql::PreprocessError),
 
-    #[error("Python transforms are not yet supported")]
-    PythonNotSupported,
+    #[error("Python transform error: {0}")]
+    Python(String),
+
+    #[error("Python interpreter not found (`{0}`). Ensure Python 3 is installed and on your PATH.")]
+    PythonNotFound(String),
 }
 
 /// Top-level executor error.
