@@ -55,6 +55,8 @@ beforeEach(() => {
     loading: false,
     error: null,
     simulationHasRun: false,
+    selectedNodeId: null,
+    editingNodeId: null,
   });
 });
 
@@ -176,6 +178,87 @@ describe('pipelineStore', () => {
       expect(usePipelineStore.getState().simulationHasRun).toBe(false);
       usePipelineStore.getState().markSimulationRun();
       expect(usePipelineStore.getState().simulationHasRun).toBe(true);
+    });
+  });
+
+  describe('selectedNodeId / editingNodeId', () => {
+    it('sets and clears selectedNodeId', () => {
+      usePipelineStore.getState().setSelectedNodeId('src');
+      expect(usePipelineStore.getState().selectedNodeId).toBe('src');
+      usePipelineStore.getState().setSelectedNodeId(null);
+      expect(usePipelineStore.getState().selectedNodeId).toBeNull();
+    });
+
+    it('sets and clears editingNodeId', () => {
+      usePipelineStore.getState().setEditingNodeId('tx');
+      expect(usePipelineStore.getState().editingNodeId).toBe('tx');
+      usePipelineStore.getState().setEditingNodeId(null);
+      expect(usePipelineStore.getState().editingNodeId).toBeNull();
+    });
+  });
+
+  describe('deleteNodes', () => {
+    beforeEach(() => {
+      usePipelineStore.getState().loadFromResponse(makeResponse());
+    });
+
+    it('removes a node and its connected edges', () => {
+      usePipelineStore.getState().deleteNodes(['src']);
+      const state = usePipelineStore.getState();
+      expect(state.nodes).toHaveLength(1);
+      expect(state.nodes[0].id).toBe('tx');
+      expect(state.edges).toHaveLength(0);
+      expect(state.dirty).toBe(true);
+    });
+
+    it('clears selectedNodeId when deleted node was selected', () => {
+      usePipelineStore.getState().setSelectedNodeId('src');
+      usePipelineStore.getState().deleteNodes(['src']);
+      expect(usePipelineStore.getState().selectedNodeId).toBeNull();
+    });
+
+    it('preserves selectedNodeId when a different node is deleted', () => {
+      usePipelineStore.getState().setSelectedNodeId('tx');
+      usePipelineStore.getState().deleteNodes(['src']);
+      expect(usePipelineStore.getState().selectedNodeId).toBe('tx');
+    });
+  });
+
+  describe('deleteEdges', () => {
+    beforeEach(() => {
+      usePipelineStore.getState().loadFromResponse(makeResponse());
+    });
+
+    it('removes edges by ID', () => {
+      usePipelineStore.getState().deleteEdges(['e-src-tx']);
+      const state = usePipelineStore.getState();
+      expect(state.edges).toHaveLength(0);
+      expect(state.nodes).toHaveLength(2); // nodes unchanged
+      expect(state.dirty).toBe(true);
+    });
+  });
+
+  describe('duplicateNode', () => {
+    beforeEach(() => {
+      usePipelineStore.getState().loadFromResponse(makeResponse());
+    });
+
+    it('creates a copy of the node with offset position', () => {
+      usePipelineStore.getState().duplicateNode('src');
+      const state = usePipelineStore.getState();
+      expect(state.nodes).toHaveLength(3);
+      const copy = state.nodes[2];
+      expect(copy.data.label).toBe('Source (copy)');
+      expect(copy.data.role).toBe('source');
+      expect(copy.data.pinnedPosition).toBe(false);
+      expect(copy.position.x).toBe(150); // 100 + 50
+      expect(copy.position.y).toBe(250); // 200 + 50
+      expect(state.dirty).toBe(true);
+    });
+
+    it('does nothing for a non-existent node', () => {
+      usePipelineStore.getState().duplicateNode('nonexistent');
+      expect(usePipelineStore.getState().nodes).toHaveLength(2);
     });
   });
 });

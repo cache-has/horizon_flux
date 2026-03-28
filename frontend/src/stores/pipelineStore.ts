@@ -115,6 +115,10 @@ export interface PipelineStoreState {
   error: string | null;
   /** Whether the initial simulation has run for the current pipeline. */
   simulationHasRun: boolean;
+  /** The ID of the node selected via single-click (for side panel). */
+  selectedNodeId: string | null;
+  /** The ID of the node opened for editing via double-click (for modal editor). */
+  editingNodeId: string | null;
 }
 
 export interface PipelineStoreActions {
@@ -142,6 +146,16 @@ export interface PipelineStoreActions {
   savePositions: () => Promise<void>;
   /** Record that the initial simulation has run. */
   markSimulationRun: () => void;
+  /** Set the selected node (single-click). Pass null to deselect. */
+  setSelectedNodeId: (nodeId: string | null) => void;
+  /** Set the node being edited (double-click). Pass null to close editor. */
+  setEditingNodeId: (nodeId: string | null) => void;
+  /** Delete nodes by ID and remove their connected edges. */
+  deleteNodes: (nodeIds: string[]) => void;
+  /** Delete edges by ID. */
+  deleteEdges: (edgeIds: string[]) => void;
+  /** Duplicate a node, placing it offset from the original. */
+  duplicateNode: (nodeId: string) => void;
 }
 
 export type PipelineStore = PipelineStoreState & PipelineStoreActions;
@@ -171,6 +185,8 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   loading: false,
   error: null,
   simulationHasRun: false,
+  selectedNodeId: null,
+  editingNodeId: null,
 
   // Actions
   loadPipeline: async (id: string) => {
@@ -285,5 +301,72 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
 
   markSimulationRun: () => {
     set({ simulationHasRun: true });
+  },
+
+  setSelectedNodeId: (nodeId: string | null) => {
+    set({ selectedNodeId: nodeId });
+  },
+
+  setEditingNodeId: (nodeId: string | null) => {
+    set({ editingNodeId: nodeId });
+  },
+
+  deleteNodes: (nodeIds: string[]) => {
+    const idSet = new Set(nodeIds);
+    set((state) => ({
+      nodes: state.nodes.filter((n) => !idSet.has(n.id)),
+      edges: state.edges.filter(
+        (e) => !idSet.has(e.source) && !idSet.has(e.target),
+      ),
+      // Clear selection if deleted node was selected
+      selectedNodeId:
+        state.selectedNodeId && idSet.has(state.selectedNodeId)
+          ? null
+          : state.selectedNodeId,
+      editingNodeId:
+        state.editingNodeId && idSet.has(state.editingNodeId)
+          ? null
+          : state.editingNodeId,
+      dirty: true,
+    }));
+    debouncedSave(get().savePositions);
+  },
+
+  deleteEdges: (edgeIds: string[]) => {
+    const idSet = new Set(edgeIds);
+    set((state) => ({
+      edges: state.edges.filter((e) => !idSet.has(e.id)),
+      dirty: true,
+    }));
+    debouncedSave(get().savePositions);
+  },
+
+  duplicateNode: (nodeId: string) => {
+    const state = get();
+    const original = state.nodes.find((n) => n.id === nodeId);
+    if (!original) return;
+
+    const newId = `${original.id}-copy-${Date.now()}`;
+    const duplicate: PipelineNode = {
+      ...original,
+      id: newId,
+      position: {
+        x: original.position.x + 50,
+        y: original.position.y + 50,
+      },
+      selected: false,
+      data: {
+        ...original.data,
+        label: `${original.data.label} (copy)`,
+        pinnedPosition: false,
+        status: 'idle',
+      },
+    };
+
+    set((state) => ({
+      nodes: [...state.nodes, duplicate],
+      dirty: true,
+    }));
+    debouncedSave(get().savePositions);
   },
 }));

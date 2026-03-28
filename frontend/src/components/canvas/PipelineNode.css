@@ -18,6 +18,12 @@
   transform: scale(1.04);
 }
 
+/* Selected node styling (React Flow sets .selected on the wrapper) */
+.react-flow__node.selected .pipeline-node {
+  border-color: var(--accent, #a855f7);
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.3);
+}
+
 /* Role-specific border colors */
 .pipeline-node--source {
   border-color: #3b82f6;

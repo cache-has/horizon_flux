@@ -10,21 +10,29 @@ import {
   Controls,
   MiniMap,
   Panel,
+  useReactFlow,
   type OnConnect,
   type OnNodesChange,
   type OnEdgesChange,
   type NodeTypes,
   type EdgeTypes,
   type Node,
+  type Edge,
+  type NodeMouseHandler,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import type { PipelineNode } from '../../types/pipeline';
+import type { PipelineNode, PipelineEdge, NodeRole } from '../../types/pipeline';
 import { PipelineNodeComponent } from './PipelineNode';
 import { PipelineEdgeComponent, EdgeMarkerDefs } from './PipelineEdge';
 import { useForceLayout } from '../../hooks/useForceLayout';
 import { useConnectionValidation } from '../../hooks/useConnectionValidation';
 import { usePipelineStore } from '../../stores/pipelineStore';
+import {
+  CanvasContextMenu,
+  type ContextMenuState,
+} from './CanvasContextMenu';
+import { ConfirmDialog } from './ConfirmDialog';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
@@ -49,13 +57,31 @@ function PipelineCanvasInner() {
   const onEdgesChange = usePipelineStore((s) => s.onEdgesChange);
   const onConnect = usePipelineStore((s) => s.onConnect);
   const pinNode = usePipelineStore((s) => s.pinNode);
+  const unpinNode = usePipelineStore((s) => s.unpinNode);
   const unpinAll = usePipelineStore((s) => s.unpinAll);
   const markDirty = usePipelineStore((s) => s.markDirty);
   const simulationHasRun = usePipelineStore((s) => s.simulationHasRun);
   const markSimulationRun = usePipelineStore((s) => s.markSimulationRun);
+  const setSelectedNodeId = usePipelineStore((s) => s.setSelectedNodeId);
+  const setEditingNodeId = usePipelineStore((s) => s.setEditingNodeId);
+  const deleteNodes = usePipelineStore((s) => s.deleteNodes);
+  const deleteEdges = usePipelineStore((s) => s.deleteEdges);
+  const duplicateNode = usePipelineStore((s) => s.duplicateNode);
+
+  const { screenToFlowPosition } = useReactFlow();
 
   const isValidConnection = useConnectionValidation(edges);
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+
+  // Delete confirmation dialog state
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    nodeIds?: string[];
+    edgeIds?: string[];
+    message: string;
+  } | null>(null);
 
   /** Called when simulation settles — save positions. */
   const handleSettled = useCallback(() => {
@@ -101,6 +127,282 @@ function PipelineCanvasInner() {
     [onConnect],
   );
 
+  // -------------------------------------------------------------------------
+  // Node interaction handlers
+  // -------------------------------------------------------------------------
+
+  /** Single click: select node for side panel. */
+  const handleNodeClick: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      setSelectedNodeId(node.id);
+    },
+    [setSelectedNodeId],
+  );
+
+  /** Double click: open modal editor. */
+  const handleNodeDoubleClick: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      setEditingNodeId(node.id);
+    },
+    [setEditingNodeId],
+  );
+
+  /** Click on empty canvas: deselect. */
+  const handlePaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+    setContextMenu(null);
+  }, [setSelectedNodeId]);
+
+  // -------------------------------------------------------------------------
+  // Delete handling with confirmation
+  // -------------------------------------------------------------------------
+
+  /** Intercept delete key to show confirmation. */
+  const handleNodesDelete = useCallback(
+    (deletedNodes: Node[]) => {
+      const ids = deletedNodes.map((n) => n.id);
+      const count = ids.length;
+      setDeleteConfirm({
+        nodeIds: ids,
+        message:
+          count === 1
+            ? `Delete "${(deletedNodes[0].data as PipelineNode['data']).label}"?`
+            : `Delete ${count} selected nodes?`,
+      });
+    },
+    [],
+  );
+
+  const handleEdgesDelete = useCallback(
+    (deletedEdges: Edge[]) => {
+      const ids = deletedEdges.map((e) => e.id);
+      setDeleteConfirm({
+        edgeIds: ids,
+        message:
+          ids.length === 1
+            ? 'Delete this connection?'
+            : `Delete ${ids.length} connections?`,
+      });
+    },
+    [],
+  );
+
+  const confirmDelete = useCallback(() => {
+    if (deleteConfirm?.nodeIds) {
+      deleteNodes(deleteConfirm.nodeIds);
+    }
+    if (deleteConfirm?.edgeIds) {
+      deleteEdges(deleteConfirm.edgeIds);
+    }
+    setDeleteConfirm(null);
+  }, [deleteConfirm, deleteNodes, deleteEdges]);
+
+  const cancelDelete = useCallback(() => {
+    setDeleteConfirm(null);
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Context menu handlers
+  // -------------------------------------------------------------------------
+
+  const handleNodeContextMenu: NodeMouseHandler = useCallback(
+    (event, node) => {
+      event.preventDefault();
+      const data = node.data as PipelineNode['data'];
+
+      // If multiple nodes are selected, show multi-select menu
+      const selectedNodes = usePipelineStore
+        .getState()
+        .nodes.filter((n) => n.selected);
+      if (selectedNodes.length > 1 && node.selected) {
+        setContextMenu({
+          kind: 'multi',
+          nodeIds: selectedNodes.map((n) => n.id),
+          x: event.clientX,
+          y: event.clientY,
+        });
+        return;
+      }
+
+      setContextMenu({
+        kind: 'node',
+        nodeId: node.id,
+        nodeRole: data.role,
+        nodeLabel: data.label,
+        isPinned: data.pinnedPosition,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    },
+    [],
+  );
+
+  const handleEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      event.preventDefault();
+      setContextMenu({
+        kind: 'edge',
+        edgeId: edge.id,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    },
+    [],
+  );
+
+  const handlePaneContextMenu = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      event.preventDefault();
+      const canvasPos = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      setContextMenu({
+        kind: 'canvas',
+        canvasX: canvasPos.x,
+        canvasY: canvasPos.y,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    },
+    [screenToFlowPosition],
+  );
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  /** Handle actions dispatched from the context menu. */
+  const handleContextAction = useCallback(
+    (action: string, payload?: Record<string, unknown>) => {
+      switch (action) {
+        case 'edit-node':
+          setEditingNodeId(payload?.nodeId as string);
+          break;
+        case 'rename-node':
+          // Rename will be handled by side panel / inline editor (doc 11)
+          setSelectedNodeId(payload?.nodeId as string);
+          break;
+        case 'duplicate-node':
+          duplicateNode(payload?.nodeId as string);
+          break;
+        case 'pin-node':
+          pinNode(payload?.nodeId as string);
+          break;
+        case 'unpin-node':
+          unpinNode(payload?.nodeId as string);
+          break;
+        case 'delete-node': {
+          const nodeId = payload?.nodeId as string;
+          const node = usePipelineStore
+            .getState()
+            .nodes.find((n) => n.id === nodeId);
+          setDeleteConfirm({
+            nodeIds: [nodeId],
+            message: `Delete "${node?.data.label ?? nodeId}"?`,
+          });
+          break;
+        }
+        case 'delete-nodes': {
+          const nodeIds = payload?.nodeIds as string[];
+          setDeleteConfirm({
+            nodeIds,
+            message: `Delete ${nodeIds.length} selected nodes?`,
+          });
+          break;
+        }
+        case 'delete-edge':
+          setDeleteConfirm({
+            edgeIds: [payload?.edgeId as string],
+            message: 'Delete this connection?',
+          });
+          break;
+        case 'view-edge-metadata':
+          // Edge metadata viewing is handled by the existing edge click/hover tooltip
+          break;
+        case 'add-node': {
+          const role = payload?.role as NodeRole;
+          const x = payload?.x as number;
+          const y = payload?.y as number;
+          const connector = payload?.connector as string | undefined;
+          const mode = payload?.mode as string | undefined;
+          const newId = `${role}-${Date.now()}`;
+          const labelParts = [
+            connector ?? mode ?? role,
+          ];
+          const label =
+            labelParts[0].charAt(0).toUpperCase() + labelParts[0].slice(1);
+
+          const newNode: PipelineNode = {
+            id: newId,
+            type: 'pipeline',
+            position: { x, y },
+            data: {
+              label: `New ${label}`,
+              role,
+              status: 'idle',
+              pinnedPosition: false,
+              envOverridden: false,
+            },
+          };
+          usePipelineStore.getState().setNodes((current) => [...current, newNode]);
+          usePipelineStore.getState().markDirty();
+          break;
+        }
+        case 'create-transform-from-selected': {
+          // Create a new transform node with all selected nodes as inputs
+          const nodeIds = payload?.nodeIds as string[];
+          const store = usePipelineStore.getState();
+          const selectedNodes = store.nodes.filter((n) =>
+            nodeIds.includes(n.id),
+          );
+          // Place the new transform to the right of selected nodes
+          const maxX = Math.max(...selectedNodes.map((n) => n.position.x));
+          const avgY =
+            selectedNodes.reduce((sum, n) => sum + n.position.y, 0) /
+            selectedNodes.length;
+          const newId = `transform-${Date.now()}`;
+          const newNode: PipelineNode = {
+            id: newId,
+            type: 'pipeline',
+            position: { x: maxX + 250, y: avgY },
+            data: {
+              label: 'New Transform',
+              role: 'transform',
+              status: 'idle',
+              pinnedPosition: false,
+              envOverridden: false,
+            },
+          };
+          // Create edges from all selected nodes to the new transform
+          const newEdges: PipelineEdge[] = nodeIds.map((srcId) => ({
+            id: `e-${srcId}-${newId}`,
+            source: srcId,
+            target: newId,
+            type: 'pipeline' as const,
+          }));
+          store.setNodes((current) => [...current, newNode]);
+          usePipelineStore.setState((state) => ({
+            edges: [...state.edges, ...newEdges],
+            dirty: true,
+          }));
+          break;
+        }
+        case 'create-dev-override':
+        case 'view-preview':
+          // These will be implemented in later planning phases
+          break;
+      }
+    },
+    [
+      setEditingNodeId,
+      setSelectedNodeId,
+      duplicateNode,
+      pinNode,
+      unpinNode,
+    ],
+  );
+
   return (
     <div className="pipeline-canvas">
       <ReactFlow
@@ -110,6 +412,14 @@ function PipelineCanvasInner() {
         onEdgesChange={onEdgesChange as OnEdgesChange}
         onConnect={handleConnect}
         onNodeDragStop={handleNodeDragStop}
+        onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
+        onPaneClick={handlePaneClick}
+        onNodesDelete={handleNodesDelete}
+        onEdgesDelete={handleEdgesDelete}
+        onNodeContextMenu={handleNodeContextMenu}
+        onEdgeContextMenu={handleEdgeContextMenu}
+        onPaneContextMenu={handlePaneContextMenu}
         isValidConnection={isValidConnection}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
@@ -162,6 +472,20 @@ function PipelineCanvasInner() {
           </button>
         </Panel>
       </ReactFlow>
+
+      <CanvasContextMenu
+        state={contextMenu}
+        onClose={closeContextMenu}
+        onAction={handleContextAction}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirm !== null}
+        title="Confirm Delete"
+        message={deleteConfirm?.message ?? ''}
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      />
     </div>
   );
 }
