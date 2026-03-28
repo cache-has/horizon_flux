@@ -99,7 +99,11 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
 /// 4. Opens the browser
 /// 5. Serves until shutdown signal
 /// 6. Cleans up lockfile via RAII guard
-pub async fn serve(config: ServerConfig, app_state: AppState) -> Result<(), ServerError> {
+pub async fn serve(
+    config: ServerConfig,
+    app_state: AppState,
+    on_ready: Option<Box<dyn FnOnce(u16) + Send>>,
+) -> Result<(), ServerError> {
     let lock_path = lockfile::default_path()?;
 
     // --- Instance detection ---
@@ -133,6 +137,10 @@ pub async fn serve(config: ServerConfig, app_state: AppState) -> Result<(), Serv
     let url = format!("http://localhost:{port}");
     info!("Horizon Flux listening on {url}");
     println!("Horizon Flux is running at {url}");
+
+    if let Some(cb) = on_ready {
+        cb(port);
+    }
 
     // --- Open browser ---
     if config.open_browser {

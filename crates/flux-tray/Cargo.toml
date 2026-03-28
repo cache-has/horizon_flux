@@ -5,4 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+flux-engine = { workspace = true }
+flux-datafusion = { workspace = true }
+tray-icon = { workspace = true }
+notify-rust = { workspace = true }
+crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
+open = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

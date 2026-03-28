@@ -97,18 +97,44 @@ fn main() -> Result<()> {
                 _ => None,
             };
 
+            let event_tx = flux_server::AppState::new_event_channel();
+
+            // Spawn the system tray (degrades gracefully if unavailable).
+            let tray_handle = flux_tray::spawn(
+                flux_tray::TrayConfig {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                },
+                event_tx.subscribe(),
+            );
+
             let app_state = flux_server::AppState {
                 pipeline_store,
                 run_store,
                 connector_registry,
                 environment_store,
                 secret_store,
-                event_tx: flux_server::AppState::new_event_channel(),
+                event_tx,
+            };
+
+            let on_ready: Option<Box<dyn FnOnce(u16) + Send>> = match &tray_handle {
+                Some(handle) => {
+                    let cmd_tx = handle.cmd_sender();
+                    Some(Box::new(move |port| {
+                        let url = format!("http://localhost:{port}");
+                        let _ = cmd_tx.send(flux_tray::TrayCommand::SetUrl(url));
+                    }))
+                }
+                None => None,
             };
 
             let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-            rt.block_on(flux_server::serve(config, app_state))
+            rt.block_on(flux_server::serve(config, app_state, on_ready))
                 .context("server failed")?;
+
+            // Clean up the tray on server exit.
+            if let Some(handle) = tray_handle {
+                handle.shutdown();
+            }
         }
     }
 
