@@ -82,10 +82,15 @@ describe('PipelineCanvas', () => {
   });
 
   it('renders nodes from the store', () => {
-    render(<PipelineCanvas />);
+    const { container } = render(<PipelineCanvas />);
     expect(screen.getByText('CSV Import')).toBeInTheDocument();
     expect(screen.getByText('Filter Rows')).toBeInTheDocument();
-    expect(screen.getByText('PostgreSQL')).toBeInTheDocument();
+    // "PostgreSQL" appears in both the palette and a pipeline node — check the node specifically
+    const nodeLabels = container.querySelectorAll('.pipeline-node__label');
+    const pgNode = Array.from(nodeLabels).find(
+      (el) => el.textContent === 'PostgreSQL',
+    );
+    expect(pgNode).toBeInTheDocument();
   });
 
   it('renders background dots', () => {

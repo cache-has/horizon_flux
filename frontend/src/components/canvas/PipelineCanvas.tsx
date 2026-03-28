@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -33,6 +33,8 @@ import {
   type ContextMenuState,
 } from './CanvasContextMenu';
 import { ConfirmDialog } from './ConfirmDialog';
+import { NodePalette, PALETTE_DRAG_TYPE } from './NodePalette';
+import type { PaletteItem } from './NodePalette';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
@@ -272,6 +274,52 @@ function PipelineCanvasInner() {
     setContextMenu(null);
   }, []);
 
+  // -------------------------------------------------------------------------
+  // Node palette state & drag-and-drop from palette onto canvas
+  // -------------------------------------------------------------------------
+
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+
+  const handleDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      const raw = event.dataTransfer.getData(PALETTE_DRAG_TYPE);
+      if (!raw) return;
+
+      const item: PaletteItem = JSON.parse(raw);
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      const newId = `${item.role}-${Date.now()}`;
+      const label =
+        item.subtype.charAt(0).toUpperCase() + item.subtype.slice(1);
+
+      const newNode: PipelineNode = {
+        id: newId,
+        type: 'pipeline',
+        position,
+        data: {
+          label: `New ${label}`,
+          role: item.role,
+          status: 'idle',
+          pinnedPosition: false,
+          envOverridden: false,
+        },
+      };
+      usePipelineStore.getState().setNodes((current) => [...current, newNode]);
+      usePipelineStore.getState().markDirty();
+    },
+    [screenToFlowPosition],
+  );
+
   /** Handle actions dispatched from the context menu. */
   const handleContextAction = useCallback(
     (action: string, payload?: Record<string, unknown>) => {
@@ -404,7 +452,11 @@ function PipelineCanvasInner() {
   );
 
   return (
-    <div className="pipeline-canvas">
+    <div className="pipeline-canvas" ref={reactFlowWrapper}>
+      <NodePalette
+        collapsed={paletteCollapsed}
+        onToggle={() => setPaletteCollapsed((c) => !c)}
+      />
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -420,6 +472,8 @@ function PipelineCanvasInner() {
         onNodeContextMenu={handleNodeContextMenu}
         onEdgeContextMenu={handleEdgeContextMenu}
         onPaneContextMenu={handlePaneContextMenu}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
         isValidConnection={isValidConnection}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
