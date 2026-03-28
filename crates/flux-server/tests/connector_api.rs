@@ -21,6 +21,7 @@ fn test_state() -> AppState {
         run_store: Arc::new(RunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(flux_connectors::default_registry()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
+        secret_store: None,
     }
 }
 
@@ -75,6 +76,7 @@ async fn list_connectors_empty_registry() {
         run_store: Arc::new(RunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
+        secret_store: None,
     };
     let app = test_router(state);
     let resp = app

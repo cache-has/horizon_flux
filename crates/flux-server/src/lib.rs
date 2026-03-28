@@ -56,7 +56,8 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
         .nest("/pipelines", api::pipelines::router())
         .nest("/connectors", api::connectors::router())
         .nest("/preview", api::preview::router())
-        .nest("/environments", api::environments::router());
+        .nest("/environments", api::environments::router())
+        .nest("/secrets", api::secrets::router());
 
     let app = Router::new().nest("/api", api_routes).with_state(app_state);
 

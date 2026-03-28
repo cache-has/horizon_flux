@@ -79,11 +79,28 @@ fn main() -> Result<()> {
                     .context("failed to open environment store")?,
             );
 
+            // Open the secret store if a password is available via env var.
+            let secret_store = match std::env::var("HORIZON_FLUX_SECRET_PASSWORD") {
+                Ok(password) if !password.is_empty() => {
+                    let secrets_path = data_dir.join("secrets.db");
+                    match flux_secrets::SecretStore::open_or_init(&secrets_path, password.as_bytes())
+                    {
+                        Ok(store) => Some(Arc::new(std::sync::Mutex::new(store))),
+                        Err(e) => {
+                            tracing::warn!("Could not open secret store: {e}");
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+
             let app_state = flux_server::AppState {
                 pipeline_store,
                 run_store,
                 connector_registry,
                 environment_store,
+                secret_store,
             };
 
             let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
