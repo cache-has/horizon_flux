@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type { ApiNode, ApiColumnInfo, ApiPreviewNodeResponse } from '../../api/pipelines';
 import { previewNode } from '../../api/pipelines';
+import { JoinConfigurator } from './JoinConfigurator';
 import './transform-editor.css';
 
 // ---------------------------------------------------------------------------
@@ -183,6 +184,22 @@ export function TransformEditor({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
+  // Join configurator: show when exactly 2 inputs and SQL mode
+  const canShowJoin = inputSchemas.length === 2 && mode === 'sql';
+  const [joinActive, setJoinActive] = useState(false);
+
+  // Auto-activate join view when a fresh transform gets 2 inputs and has no code yet
+  const prevCanShowRef = useRef(canShowJoin);
+  useEffect(() => {
+    if (canShowJoin && !prevCanShowRef.current && !code.trim()) {
+      setJoinActive(true);
+    }
+    if (!canShowJoin) {
+      setJoinActive(false);
+    }
+    prevCanShowRef.current = canShowJoin;
+  }, [canShowJoin, code]);
+
   // Debounced preview on code change
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const codeRef = useRef(code);
@@ -314,32 +331,72 @@ export function TransformEditor({
   const editorLanguage = mode === 'sql' ? 'sql' : 'python';
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
+  const handleSwitchToCode = useCallback(() => {
+    setJoinActive(false);
+  }, []);
+
+  const handleJoinSqlGenerated = useCallback(
+    (sql: string) => {
+      onCodeChange(sql);
+    },
+    [onCodeChange],
+  );
+
   return (
     <div className="transform-editor">
-      <div className="transform-editor__main">
-        <div className="transform-editor__code">
-          <div className="monaco-container">
-            <Editor
-              language={editorLanguage}
-              theme={isDark ? 'vs-dark' : 'vs'}
-              value={code}
-              onChange={handleCodeChange}
-              onMount={handleEditorMount}
-              options={{
-                fontSize: 13,
-                fontFamily: 'var(--mono)',
-                minimap: { enabled: code.split('\n').length > 30 },
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                wordWrap: 'off',
-                tabSize: mode === 'python' ? 4 : 2,
-                automaticLayout: true,
-                padding: { top: 8 },
-              }}
-            />
-          </div>
+      {/* Toggle banner when join configurator is available but not active */}
+      {canShowJoin && !joinActive && (
+        <div className="transform-editor__join-banner">
+          <button
+            className="transform-editor__join-banner-btn"
+            onClick={() => setJoinActive(true)}
+          >
+            Open visual join configurator
+          </button>
         </div>
-        <SchemaSidebar inputs={inputSchemas} onColumnClick={handleColumnClick} />
+      )}
+
+      <div className="transform-editor__main">
+        {joinActive ? (
+          <JoinConfigurator
+            left={{
+              nodeName: inputSchemas[0].nodeName,
+              columns: inputSchemas[0].columns,
+            }}
+            right={{
+              nodeName: inputSchemas[1].nodeName,
+              columns: inputSchemas[1].columns,
+            }}
+            onSqlGenerated={handleJoinSqlGenerated}
+            onSwitchToCode={handleSwitchToCode}
+          />
+        ) : (
+          <>
+            <div className="transform-editor__code">
+              <div className="monaco-container">
+                <Editor
+                  language={editorLanguage}
+                  theme={isDark ? 'vs-dark' : 'vs'}
+                  value={code}
+                  onChange={handleCodeChange}
+                  onMount={handleEditorMount}
+                  options={{
+                    fontSize: 13,
+                    fontFamily: 'var(--mono)',
+                    minimap: { enabled: code.split('\n').length > 30 },
+                    lineNumbers: 'on',
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'off',
+                    tabSize: mode === 'python' ? 4 : 2,
+                    automaticLayout: true,
+                    padding: { top: 8 },
+                  }}
+                />
+              </div>
+            </div>
+            <SchemaSidebar inputs={inputSchemas} onColumnClick={handleColumnClick} />
+          </>
+        )}
       </div>
       <PreviewPanel preview={preview} loading={previewLoading} error={previewError} />
     </div>

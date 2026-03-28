@@ -1,0 +1,226 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.join-cfg {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Header bar: join type selector + switch-to-code button */
+.join-cfg__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  flex-shrink: 0;
+}
+
+.join-cfg__header label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text, #6b6375);
+}
+
+.join-cfg__type-select {
+  font-size: 12px;
+  font-family: var(--sans);
+  padding: 4px 8px;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  color: var(--text-h, #08060d);
+  cursor: pointer;
+}
+
+.join-cfg__type-select:focus {
+  outline: none;
+  border-color: var(--accent, #a855f7);
+}
+
+.join-cfg__spacer {
+  flex: 1;
+}
+
+.join-cfg__switch-btn {
+  font-size: 12px;
+  font-family: var(--sans);
+  padding: 4px 12px;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  color: var(--accent, #a855f7);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.join-cfg__switch-btn:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+  border-color: var(--accent, #a855f7);
+}
+
+/* Body: two column lists with SVG lines between them */
+.join-cfg__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Column list panel (left or right) */
+.join-cfg__panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.join-cfg__panel-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-h, #08060d);
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.join-cfg__panel-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text, #6b6375);
+  background: var(--code-bg, #f4f3ec);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.join-cfg__col-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.join-cfg__col-row:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+}
+
+.join-cfg__col-row--selected {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.15));
+}
+
+.join-cfg__col-row--mapped {
+  font-weight: 500;
+}
+
+.join-cfg__col-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--border, #e5e4e7);
+  flex-shrink: 0;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.join-cfg__col-row--mapped .join-cfg__col-dot,
+.join-cfg__col-row--selected .join-cfg__col-dot {
+  border-color: var(--accent, #a855f7);
+  background: var(--accent, #a855f7);
+}
+
+.join-cfg__col-label {
+  font-family: var(--mono);
+  color: var(--text-h, #08060d);
+}
+
+.join-cfg__col-dtype {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text, #6b6375);
+  margin-left: auto;
+}
+
+/* SVG connector area between panels */
+.join-cfg__lines {
+  width: 80px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.join-cfg__lines svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.join-cfg__line {
+  stroke: var(--accent, #a855f7);
+  stroke-width: 2;
+  fill: none;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.join-cfg__line:hover {
+  stroke-width: 3;
+  stroke: #ef4444;
+}
+
+/* Mappings summary below the body */
+.join-cfg__mappings {
+  border-top: 1px solid var(--border, #e5e4e7);
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text, #6b6375);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.join-cfg__mapping-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+  border-radius: 3px;
+  color: var(--text-h, #08060d);
+  cursor: pointer;
+}
+
+.join-cfg__mapping-chip:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.join-cfg__mapping-chip::after {
+  content: "\00d7";
+  font-size: 13px;
+  color: var(--text, #6b6375);
+}
+
+.join-cfg__mapping-chip:hover::after {
+  color: #ef4444;
+}
+
+.join-cfg__empty {
+  font-style: italic;
+  color: var(--text, #6b6375);
+}
