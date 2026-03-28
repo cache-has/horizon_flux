@@ -4,6 +4,7 @@
 pub mod environment;
 pub mod error;
 pub mod executor;
+pub mod friendly_sql;
 pub mod preview;
 pub mod provider;
 pub mod resolver;
@@ -13,6 +14,7 @@ pub mod run_store;
 pub mod stats;
 
 pub use environment::{Environment, EnvironmentStore, TableOverride};
+pub use friendly_sql::{preprocess_sql, PreprocessError};
 pub use executor::{ExecutionOptions, PipelineExecutor};
 pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult};
 pub use provider::{

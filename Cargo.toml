@@ -61,5 +61,8 @@ async-trait = "0.1"
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
+# Regex
+regex = "1"
+
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }

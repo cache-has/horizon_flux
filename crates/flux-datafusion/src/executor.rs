@@ -322,16 +322,23 @@ impl PipelineExecutor {
             ctx.register_catalog_list(resolver.clone());
         }
 
+        // Build schema map for the friendly SQL preprocessor and register tables.
+        let mut table_schemas = HashMap::new();
         for (node_id, batches) in &upstream_data {
             if batches.is_empty() {
                 continue;
             }
             let schema = batches[0].schema();
+            table_schemas.insert(node_id.to_string(), schema.clone());
             let mem_table = MemTable::try_new(schema, vec![batches.to_vec()])?;
             ctx.register_table(node_id.to_string().as_str(), Arc::new(mem_table))?;
         }
 
-        let df = ctx.sql(sql).await?;
+        // Preprocess friendly SQL syntax (GROUP BY ALL, EXCLUDE, COLUMNS, bare FROM)
+        // into standard SQL that DataFusion understands.
+        let processed_sql = crate::friendly_sql::preprocess_sql(sql, &table_schemas)?;
+
+        let df = ctx.sql(&processed_sql).await?;
         let batches = df.collect().await?;
         Ok(batches)
     }

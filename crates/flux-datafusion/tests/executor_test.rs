@@ -411,9 +411,12 @@ async fn invalid_sql_returns_datafusion_error() {
 
     match err {
         ExecutorError::Node { ref kind, .. } => {
-            assert!(matches!(kind, NodeErrorKind::DataFusion(_)));
+            assert!(
+                matches!(kind, NodeErrorKind::DataFusion(_) | NodeErrorKind::Preprocess(_)),
+                "expected DataFusion or Preprocess error, got: {kind}"
+            );
         }
-        other => panic!("expected DataFusion error, got: {other}"),
+        other => panic!("expected node error, got: {other}"),
     }
 }
 

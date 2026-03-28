@@ -29,6 +29,9 @@ pub enum NodeErrorKind {
     #[error("sink error: {0}")]
     Sink(Box<dyn std::error::Error + Send + Sync>),
 
+    #[error("SQL preprocessing error: {0}")]
+    Preprocess(#[from] crate::friendly_sql::PreprocessError),
+
     #[error("Python transforms are not yet supported")]
     PythonNotSupported,
 }

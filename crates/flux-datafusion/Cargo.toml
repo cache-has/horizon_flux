@@ -17,6 +17,7 @@ tracing = { workspace = true }
 rusqlite = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
