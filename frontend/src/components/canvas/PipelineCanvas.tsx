@@ -14,12 +14,14 @@ import {
   type OnNodesChange,
   type OnEdgesChange,
   type NodeTypes,
+  type EdgeTypes,
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import type { PipelineNode } from '../../types/pipeline';
 import { PipelineNodeComponent } from './PipelineNode';
+import { PipelineEdgeComponent, EdgeMarkerDefs } from './PipelineEdge';
 import { useForceLayout } from '../../hooks/useForceLayout';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import './PipelineCanvas.css';
@@ -28,9 +30,13 @@ const nodeTypes: NodeTypes = {
   pipeline: PipelineNodeComponent,
 };
 
-/** Default edge options: Bezier curves. */
+const edgeTypes: EdgeTypes = {
+  pipeline: PipelineEdgeComponent,
+};
+
+/** Default edge options: use our custom pipeline edge. */
 const defaultEdgeOptions = {
-  type: 'default',
+  type: 'pipeline',
   animated: false,
 };
 
@@ -103,6 +109,7 @@ function PipelineCanvasInner() {
         onConnect={handleConnect}
         onNodeDragStop={handleNodeDragStop}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
         fitView
         fitViewOptions={{ padding: 0.3 }}
@@ -113,6 +120,7 @@ function PipelineCanvasInner() {
         deleteKeyCode="Delete"
         multiSelectionKeyCode="Shift"
       >
+        <EdgeMarkerDefs />
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
         <Controls />
         <MiniMap

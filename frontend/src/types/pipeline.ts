@@ -35,5 +35,19 @@ export interface PipelineNodeData extends Record<string, unknown> {
 /** A pipeline node is a React Flow Node carrying our custom data. */
 export type PipelineNode = Node<PipelineNodeData, 'pipeline'>;
 
-/** A pipeline edge is a standard React Flow Edge (Bezier by default). */
-export type PipelineEdge = Edge;
+/** Application-specific data stored on each React Flow edge. */
+export interface PipelineEdgeData extends Record<string, unknown> {
+  /** Row count that flowed through this connection in the last run. */
+  rowCount?: number;
+  /** Data volume in bytes transferred during the last run. */
+  dataVolumeBytes?: number;
+  /** Elapsed time in milliseconds for the last transfer. */
+  elapsedMs?: number;
+  /** Schema columns flowing through this connection. */
+  schemaSummary?: SchemaColumn[];
+  /** Whether the connection is actively transferring data (triggers animation). */
+  animated?: boolean;
+}
+
+/** A pipeline edge is a React Flow Edge carrying our custom data. */
+export type PipelineEdge = Edge<PipelineEdgeData, 'pipeline'>;

@@ -49,6 +49,7 @@ function apiEdgeToReactFlow(apiEdge: ApiEdge): PipelineEdge {
     id: `e-${apiEdge.from}-${apiEdge.to}`,
     source: apiEdge.from,
     target: apiEdge.to,
+    type: 'pipeline',
   };
 }
 
@@ -219,7 +220,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
 
   onConnect: (connection: Connection) => {
     set((state) => ({
-      edges: addEdge(connection, state.edges),
+      edges: addEdge({ ...connection, type: 'pipeline' }, state.edges),
     }));
   },
 

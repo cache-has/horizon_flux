@@ -21,14 +21,7 @@
   background: var(--accent-bg, rgba(170, 59, 255, 0.1));
 }
 
-.pipeline-canvas .react-flow__edge-path {
-  stroke: var(--border, #e5e4e7);
-  stroke-width: 2;
-}
-
-.pipeline-canvas .react-flow__edge.selected .react-flow__edge-path {
-  stroke: var(--accent, #a855f7);
-}
+/* Edge styling is handled by PipelineEdge.css */
 
 .pipeline-canvas .react-flow__selection {
   background: rgba(168, 85, 247, 0.08);
