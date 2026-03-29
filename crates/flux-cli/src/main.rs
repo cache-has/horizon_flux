@@ -63,17 +63,21 @@ enum Command {
         #[command(subcommand)]
         action: secret::SecretAction,
     },
-    /// Export a pipeline definition to a JSON file.
+    /// Export a pipeline definition to a JSON file, or all pipelines to a directory.
     Export {
-        /// Pipeline name or UUID.
-        pipeline: String,
-        /// Output file path (defaults to `{pipeline_name}.json` in the current directory).
+        /// Pipeline name or UUID (omit when using --all).
+        pipeline: Option<String>,
+        /// Output file path (single pipeline) or directory (--all).
+        /// Defaults to `{pipeline_name}.json` in the current directory.
         #[arg(short, long)]
         output: Option<std::path::PathBuf>,
+        /// Export all pipelines to the output directory.
+        #[arg(long)]
+        all: bool,
     },
-    /// Import a pipeline definition from a JSON file.
+    /// Import a pipeline definition from a JSON file, or all pipelines from a directory.
     Import {
-        /// Path to the JSON pipeline file.
+        /// Path to a JSON pipeline file or a directory of JSON files.
         file: std::path::PathBuf,
         /// How to handle name conflicts: reject, rename, or overwrite.
         #[arg(long, default_value = "reject")]
@@ -156,11 +160,28 @@ fn run(cli: Cli, format: OutputFormat) -> Result<()> {
 
         Some(Command::Secret { action }) => secret::handle(action).context("secret command failed"),
 
-        Some(Command::Export { pipeline, output }) => {
-            export_pipeline(&pipeline, output.as_deref(), format)
+        Some(Command::Export {
+            pipeline,
+            output,
+            all,
+        }) => {
+            if all {
+                export_all(output.as_deref(), format)
+            } else {
+                let pipeline = pipeline
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("pipeline name or UUID required (or use --all)"))?;
+                export_pipeline(pipeline, output.as_deref(), format)
+            }
         }
 
-        Some(Command::Import { file, on_conflict }) => import_pipeline(&file, &on_conflict, format),
+        Some(Command::Import { file, on_conflict }) => {
+            if file.is_dir() {
+                import_directory(&file, &on_conflict, format)
+            } else {
+                import_pipeline(&file, &on_conflict, format)
+            }
+        }
 
         Some(Command::Run {
             pipeline,
@@ -208,18 +229,7 @@ fn export_pipeline(
     let out_path = match output {
         Some(p) => p.to_path_buf(),
         None => {
-            let name: String = record
-                .pipeline
-                .name
-                .chars()
-                .map(|c| {
-                    if c.is_alphanumeric() || c == '-' || c == '_' {
-                        c
-                    } else {
-                        '_'
-                    }
-                })
-                .collect();
+            let name = sanitize_name(&record.pipeline.name);
             std::path::PathBuf::from(format!("{name}.json"))
         }
     };
@@ -244,6 +254,85 @@ fn export_pipeline(
         }
     }
     Ok(())
+}
+
+fn export_all(output_dir: Option<&std::path::Path>, format: OutputFormat) -> Result<()> {
+    let data_dir = dirs::home_dir()
+        .context("could not determine home directory")?
+        .join(".horizon-flux");
+    let pipelines_dir = data_dir.join("pipelines");
+    let pipeline_store =
+        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
+            .context("failed to open pipeline store")?;
+
+    let out_dir = output_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    std::fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create directory {}", out_dir.display()))?;
+
+    let total = pipeline_store
+        .count()
+        .context("failed to count pipelines")?;
+    let records = pipeline_store
+        .list(total, 0)
+        .context("failed to list pipelines")?;
+
+    if records.is_empty() {
+        match format {
+            OutputFormat::Human => println!("No pipelines to export."),
+            OutputFormat::Json => println!("{}", serde_json::json!({ "exported": [] })),
+        }
+        return Ok(());
+    }
+
+    let mut exported = Vec::new();
+    for record in &records {
+        let json = record
+            .pipeline
+            .to_json()
+            .with_context(|| format!("failed to serialize pipeline `{}`", record.pipeline.name))?;
+        let file_name = sanitize_name(&record.pipeline.name);
+        let out_path = out_dir.join(format!("{file_name}.json"));
+        std::fs::write(&out_path, &json)
+            .with_context(|| format!("failed to write {}", out_path.display()))?;
+        exported.push((record.pipeline.name.clone(), out_path));
+    }
+
+    match format {
+        OutputFormat::Human => {
+            println!("Exported {} pipelines to {}/", exported.len(), out_dir.display());
+            for (name, path) in &exported {
+                println!("  `{name}` → {}", path.display());
+            }
+        }
+        OutputFormat::Json => {
+            let items: Vec<_> = exported
+                .iter()
+                .map(|(name, path)| {
+                    serde_json::json!({
+                        "pipeline": name,
+                        "path": path.display().to_string(),
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "exported": items }))?);
+        }
+    }
+    Ok(())
+}
+
+fn sanitize_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn import_pipeline(file: &std::path::Path, on_conflict: &str, format: OutputFormat) -> Result<()> {
@@ -315,6 +404,150 @@ fn import_pipeline(file: &std::path::Path, on_conflict: &str, format: OutputForm
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
         }
+    }
+    Ok(())
+}
+
+fn import_directory(
+    dir: &std::path::Path,
+    on_conflict: &str,
+    format: OutputFormat,
+) -> Result<()> {
+    let data_dir = dirs::home_dir()
+        .context("could not determine home directory")?
+        .join(".horizon-flux");
+    let pipelines_dir = data_dir.join("pipelines");
+    std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
+    let pipeline_store =
+        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
+            .context("failed to open pipeline store")?;
+
+    let mut json_files: Vec<_> = std::fs::read_dir(dir)
+        .with_context(|| format!("failed to read directory {}", dir.display()))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json") && path.is_file() {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+    json_files.sort();
+
+    if json_files.is_empty() {
+        match format {
+            OutputFormat::Human => println!("No JSON files found in {}", dir.display()),
+            OutputFormat::Json => println!("{}", serde_json::json!({ "imported": [] })),
+        }
+        return Ok(());
+    }
+
+    let mut imported = Vec::new();
+    let mut errors = Vec::new();
+
+    for path in &json_files {
+        let json = match std::fs::read_to_string(path) {
+            Ok(j) => j,
+            Err(e) => {
+                errors.push((path.display().to_string(), format!("{e}")));
+                continue;
+            }
+        };
+
+        let (mut pipeline, warnings) = match flux_engine::Pipeline::from_json_with_warnings(&json) {
+            Ok(pw) => pw,
+            Err(e) => {
+                errors.push((path.display().to_string(), format!("{e}")));
+                continue;
+            }
+        };
+
+        for w in &warnings.undefined_variables {
+            eprintln!("warning: {} ({}): {w}", path.display(), pipeline.name);
+        }
+
+        let existing = pipeline_store
+            .get_by_name(&pipeline.name)
+            .context("failed to check for name conflict")?;
+
+        let record = if let Some(existing_record) = existing {
+            match on_conflict {
+                "rename" => {
+                    let base_name = pipeline.name.clone();
+                    let mut counter = 2u32;
+                    loop {
+                        let candidate = format!("{base_name} ({counter})");
+                        if pipeline_store.get_by_name(&candidate)?.is_none() {
+                            pipeline.name = candidate;
+                            break;
+                        }
+                        counter += 1;
+                        anyhow::ensure!(counter <= 100, "could not find a unique name");
+                    }
+                    pipeline_store
+                        .create(pipeline)
+                        .context("failed to create pipeline")?
+                }
+                "overwrite" => pipeline_store
+                    .update(&existing_record.id, pipeline)
+                    .context("failed to overwrite pipeline")?,
+                _ => {
+                    errors.push((
+                        path.display().to_string(),
+                        format!(
+                            "pipeline `{}` already exists (use --on-conflict rename or overwrite)",
+                            pipeline.name
+                        ),
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            pipeline_store
+                .create(pipeline)
+                .context("failed to create pipeline")?
+        };
+
+        imported.push((record.pipeline.name.clone(), record.id.to_string()));
+    }
+
+    match format {
+        OutputFormat::Human => {
+            if !imported.is_empty() {
+                println!("Imported {} pipelines from {}/", imported.len(), dir.display());
+                for (name, id) in &imported {
+                    println!("  `{name}` (id: {id})");
+                }
+            }
+            if !errors.is_empty() {
+                eprintln!("{} files failed:", errors.len());
+                for (path, err) in &errors {
+                    eprintln!("  {path}: {err}");
+                }
+            }
+        }
+        OutputFormat::Json => {
+            let items: Vec<_> = imported
+                .iter()
+                .map(|(name, id)| serde_json::json!({ "pipeline": name, "id": id }))
+                .collect();
+            let errs: Vec<_> = errors
+                .iter()
+                .map(|(path, err)| serde_json::json!({ "file": path, "error": err }))
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({ "imported": items, "errors": errs })
+                )?
+            );
+        }
+    }
+
+    if !errors.is_empty() && imported.is_empty() {
+        anyhow::bail!("all imports failed");
     }
     Ok(())
 }
@@ -392,11 +625,46 @@ mod tests {
         let cli = Cli::try_parse_from(["horizon-flux", "export", "my-pipeline", "-o", "out.json"])
             .unwrap();
         match cli.command {
-            Some(Command::Export { pipeline, output }) => {
-                assert_eq!(pipeline, "my-pipeline");
+            Some(Command::Export {
+                pipeline,
+                output,
+                all,
+            }) => {
+                assert_eq!(pipeline.as_deref(), Some("my-pipeline"));
                 assert_eq!(output.unwrap().to_str().unwrap(), "out.json");
+                assert!(!all);
             }
             _ => panic!("expected Export"),
+        }
+    }
+
+    #[test]
+    fn parse_export_all() {
+        let cli =
+            Cli::try_parse_from(["horizon-flux", "export", "--all", "-o", "./pipelines/"]).unwrap();
+        match cli.command {
+            Some(Command::Export {
+                pipeline,
+                output,
+                all,
+            }) => {
+                assert!(pipeline.is_none());
+                assert_eq!(output.unwrap().to_str().unwrap(), "./pipelines/");
+                assert!(all);
+            }
+            _ => panic!("expected Export"),
+        }
+    }
+
+    #[test]
+    fn parse_import_directory() {
+        let cli = Cli::try_parse_from(["horizon-flux", "import", "./pipelines/"]).unwrap();
+        match cli.command {
+            Some(Command::Import { file, on_conflict }) => {
+                assert_eq!(file.to_str().unwrap(), "./pipelines/");
+                assert_eq!(on_conflict, "reject");
+            }
+            _ => panic!("expected Import"),
         }
     }
 
@@ -424,6 +692,13 @@ mod tests {
     #[test]
     fn exit_code_constants() {
         assert_eq!(EXIT_PIPELINE_FAILURE, 2);
+    }
+
+    #[test]
+    fn sanitize_name_replaces_special_chars() {
+        assert_eq!(sanitize_name("My Pipeline!"), "My_Pipeline_");
+        assert_eq!(sanitize_name("hello-world_2"), "hello-world_2");
+        assert_eq!(sanitize_name("a/b c.d"), "a_b_c_d");
     }
 
     #[test]
