@@ -252,6 +252,41 @@ pub enum StdoutFormat {
 // ---------------------------------------------------------------------------
 
 impl ConnectorConfig {
+    /// Return the set of valid top-level config keys for a connector type.
+    ///
+    /// Used to validate environment override keys — overrides may only set
+    /// keys that the target connector actually supports.
+    pub fn valid_config_keys(connector: &str) -> Option<&'static [&'static str]> {
+        match connector {
+            "file" | "csv" | "parquet" => {
+                Some(&["path", "format", "options"])
+            }
+            "postgresql" | "postgres" => Some(&[
+                "connection_string",
+                "table",
+                "query",
+                "write_mode",
+                "batch_size",
+                "conflict_keys",
+            ]),
+            "rest_api" | "rest" | "http" => Some(&[
+                "url",
+                "method",
+                "headers",
+                "auth",
+                "response_format",
+                "data_path",
+                "pagination",
+                "schema",
+                "rate_limit_ms",
+                "max_retries",
+                "max_pages",
+            ]),
+            "stdout" => Some(&["format", "max_rows"]),
+            _ => None,
+        }
+    }
+
     /// Try to deserialize a `ConnectorConfig` from a connector type name and
     /// opaque JSON value (as stored in pipeline definitions).
     pub fn from_json(

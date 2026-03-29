@@ -847,3 +847,87 @@ fn run_store_list_filters_by_pipeline() {
     let all_runs = store.list_runs(None, 10).unwrap();
     assert_eq!(all_runs.len(), 3);
 }
+
+// ---------------------------------------------------------------------------
+// Environment override tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn environment_override_applied_to_sink() {
+    // Verify that a pipeline with environment overrides executes successfully
+    // when the active environment matches an override entry.
+    let mut pipeline = make_pipeline(
+        "override_test",
+        vec![
+            source_node("src"),
+            sql_transform_node("xform", "SELECT id, value FROM src"),
+            sink_node("out"),
+        ],
+        vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
+    );
+
+    // Add an environment override for the "prod" environment on the sink node.
+    let mut prod_overrides = BTreeMap::new();
+    prod_overrides.insert(
+        "out".to_string(),
+        serde_json::json!({"output_path": "/prod/output.csv"}),
+    );
+    pipeline
+        .environment_overrides
+        .insert("prod".to_string(), prod_overrides);
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], Arc::clone(&captured));
+
+    // Execute with "prod" environment — should succeed and apply override.
+    let opts = ExecutionOptions {
+        environment: "prod".to_string(),
+        ..default_opts()
+    };
+
+    let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
+        .await
+        .expect("pipeline with overrides should succeed");
+
+    assert_eq!(run.status, RunStatus::Success);
+    let sink_data = captured.lock().unwrap();
+    assert_eq!(sink_data.len(), 1);
+    assert_eq!(sink_data[0].num_rows(), 3);
+}
+
+#[tokio::test]
+async fn no_override_when_environment_doesnt_match() {
+    // Verify pipeline executes normally when the active environment has no overrides.
+    let mut pipeline = make_pipeline(
+        "no_match",
+        vec![
+            source_node("src"),
+            sink_node("out"),
+        ],
+        vec![Edge::new("src", "out")],
+    );
+
+    // Override exists for "prod" but we run in "dev".
+    let mut prod_overrides = BTreeMap::new();
+    prod_overrides.insert(
+        "out".to_string(),
+        serde_json::json!({"output_path": "/prod/output.csv"}),
+    );
+    pipeline
+        .environment_overrides
+        .insert("prod".to_string(), prod_overrides);
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], Arc::clone(&captured));
+
+    let opts = ExecutionOptions {
+        environment: "dev".to_string(),
+        ..default_opts()
+    };
+
+    let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
+        .await
+        .expect("pipeline should succeed without matching overrides");
+
+    assert_eq!(run.status, RunStatus::Success);
+}

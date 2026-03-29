@@ -86,12 +86,21 @@ impl ConnectorRegistry {
     }
 
     /// Validate all connector configurations in a pipeline before execution.
+    ///
+    /// Checks that referenced connector types are registered, sink configs are
+    /// valid, and environment override keys match the target connector's schema.
     pub fn validate_pipeline(&self, pipeline: &flux_engine::Pipeline) -> Result<(), Vec<String>> {
+        use std::collections::HashMap;
+
         let mut errors = Vec::new();
+
+        // Build a node_id → connector_type lookup for override validation.
+        let mut node_connectors: HashMap<&str, &str> = HashMap::new();
 
         for node in &pipeline.nodes {
             match &node.kind {
                 flux_engine::node::NodeKind::Source(cfg) => {
+                    node_connectors.insert(node.id.0.as_str(), cfg.connector.as_str());
                     if !self.sources.contains_key(&cfg.connector) {
                         errors.push(format!(
                             "node `{}`: source connector `{}` not registered",
@@ -100,6 +109,7 @@ impl ConnectorRegistry {
                     }
                 }
                 flux_engine::node::NodeKind::Sink(cfg) => {
+                    node_connectors.insert(node.id.0.as_str(), cfg.connector.as_str());
                     if !self.sinks.contains_key(&cfg.connector) {
                         errors.push(format!(
                             "node `{}`: sink connector `{}` not registered",
@@ -113,6 +123,48 @@ impl ConnectorRegistry {
                     }
                 }
                 flux_engine::node::NodeKind::Transform(_) => {}
+            }
+        }
+
+        // Validate environment override keys against connector schemas.
+        for (env_name, env_overrides) in &pipeline.environment_overrides {
+            for (node_id, override_val) in env_overrides {
+                let Some(connector_type) = node_connectors.get(node_id.as_str()) else {
+                    // Node not found or is a transform — node-existence is
+                    // checked by flux-engine's validate_import, and transforms
+                    // don't have connector configs to override.
+                    if pipeline.nodes.iter().any(|n| {
+                        n.id.0 == *node_id
+                            && matches!(n.kind, flux_engine::node::NodeKind::Transform(_))
+                    }) {
+                        errors.push(format!(
+                            "environment `{env_name}`: override for transform node \
+                             `{node_id}` is not supported (only source/sink nodes \
+                             can have config overrides)",
+                        ));
+                    }
+                    continue;
+                };
+
+                let Some(valid_keys) =
+                    crate::config::ConnectorConfig::valid_config_keys(connector_type)
+                else {
+                    continue; // Unknown connector — already reported above.
+                };
+
+                if let Some(obj) = override_val.as_object() {
+                    for key in obj.keys() {
+                        if !valid_keys.contains(&key.as_str()) {
+                            errors.push(format!(
+                                "environment `{env_name}`, node `{node_id}`: \
+                                 override key `{key}` is not a valid config field \
+                                 for connector `{connector_type}` \
+                                 (valid keys: {})",
+                                valid_keys.join(", "),
+                            ));
+                        }
+                    }
+                }
             }
         }
 
@@ -159,4 +211,125 @@ pub enum ConnectorError {
 
     #[error("connector `{connector}` validation failed: {message}")]
     ValidationFailed { connector: String, message: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use flux_engine::edge::Edge;
+    use flux_engine::node::*;
+    use flux_engine::pipeline::Pipeline;
+    use std::collections::BTreeMap;
+
+    fn simple_pipeline() -> Pipeline {
+        Pipeline {
+            name: "test".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            nodes: vec![
+                Node {
+                    id: NodeId::new("src"),
+                    name: "src".into(),
+                    kind: NodeKind::Source(SourceConfig {
+                        connector: "csv".into(),
+                        config: serde_json::json!({"path": "/data/input.csv", "format": "csv"}),
+                    }),
+                    position: Position::default(),
+                    pinned_position: false,
+                },
+                Node {
+                    id: NodeId::new("sink"),
+                    name: "sink".into(),
+                    kind: NodeKind::Sink(SinkConfig {
+                        connector: "stdout".into(),
+                        config: serde_json::json!({"format": "table"}),
+                    }),
+                    position: Position::default(),
+                    pinned_position: false,
+                },
+            ],
+            edges: vec![Edge::new("src", "sink")],
+        }
+    }
+
+    #[test]
+    fn valid_override_keys_pass() {
+        let registry = crate::default_registry();
+        let mut pipeline = simple_pipeline();
+
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "src".to_string(),
+            serde_json::json!({"path": "/data/prod.csv"}),
+        );
+        pipeline
+            .environment_overrides
+            .insert("prod".into(), overrides);
+
+        assert!(registry.validate_pipeline(&pipeline).is_ok());
+    }
+
+    #[test]
+    fn invalid_override_key_rejected() {
+        let registry = crate::default_registry();
+        let mut pipeline = simple_pipeline();
+
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "sink".to_string(),
+            serde_json::json!({"nonexistent_field": true}),
+        );
+        pipeline
+            .environment_overrides
+            .insert("prod".into(), overrides);
+
+        let errors = registry.validate_pipeline(&pipeline).unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.contains("nonexistent_field")
+                && e.contains("not a valid config field")),
+            "expected invalid key error, got: {errors:?}",
+        );
+    }
+
+    #[test]
+    fn override_on_transform_node_rejected() {
+        let registry = crate::default_registry();
+        let mut pipeline = simple_pipeline();
+
+        // Add a transform node.
+        pipeline.nodes.push(Node {
+            id: NodeId::new("xform"),
+            name: "xform".into(),
+            kind: NodeKind::Transform(TransformConfig {
+                mode: TransformMode::Sql,
+                code: "SELECT * FROM src".into(),
+                materialized: false,
+            }),
+            position: Position::default(),
+            pinned_position: false,
+        });
+        pipeline.edges = vec![
+            Edge::new("src", "xform"),
+            Edge::new("xform", "sink"),
+        ];
+
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "xform".to_string(),
+            serde_json::json!({"code": "SELECT 1"}),
+        );
+        pipeline
+            .environment_overrides
+            .insert("prod".into(), overrides);
+
+        let errors = registry.validate_pipeline(&pipeline).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("transform") && e.contains("not supported")),
+            "expected transform override error, got: {errors:?}",
+        );
+    }
 }

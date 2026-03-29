@@ -168,8 +168,17 @@ impl PipelineExecutor {
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
                 NodeKind::Source(src_cfg) => {
-                    // Interpolate variables in source connector config.
                     let mut interpolated_cfg = src_cfg.clone();
+                    // Apply environment override before variable interpolation.
+                    if let Some(overrides) = pipeline
+                        .environment_overrides
+                        .get(&options.environment)
+                        .and_then(|env| env.get(&node_id.0))
+                    {
+                        debug!(node = %node_id, env = %options.environment, "applying environment override to source");
+                        merge_override(&mut interpolated_cfg.config, overrides);
+                    }
+                    // Interpolate variables in source connector config.
                     interpolated_cfg.config =
                         resolved_vars.interpolate_json(&interpolated_cfg.config);
                     Self::execute_source(node_id, &interpolated_cfg, registry).await
@@ -218,8 +227,17 @@ impl PipelineExecutor {
                                 .into_values()
                                 .flat_map(|batches| batches.iter().cloned())
                                 .collect();
-                            // Interpolate variables in sink connector config.
                             let mut interpolated_cfg = sink_cfg.clone();
+                            // Apply environment override before variable interpolation.
+                            if let Some(overrides) = pipeline
+                                .environment_overrides
+                                .get(&options.environment)
+                                .and_then(|env| env.get(&node_id.0))
+                            {
+                                debug!(node = %node_id, env = %options.environment, "applying environment override to sink");
+                                merge_override(&mut interpolated_cfg.config, overrides);
+                            }
+                            // Interpolate variables in sink connector config.
                             interpolated_cfg.config =
                                 resolved_vars.interpolate_json(&interpolated_cfg.config);
                             Self::execute_sink(&interpolated_cfg, all_batches, registry)
@@ -470,9 +488,62 @@ impl PipelineExecutor {
     }
 }
 
+/// Shallow-merge an environment override into a node's connector config.
+///
+/// If the override is a JSON object, its keys are merged into `base` (which
+/// must also be a JSON object). Non-object overrides or bases are left
+/// unchanged — the override simply replaces the base value.
+fn merge_override(base: &mut Value, override_val: &Value) {
+    if let (Some(base_map), Some(over_map)) = (base.as_object_mut(), override_val.as_object()) {
+        for (k, v) in over_map {
+            base_map.insert(k.clone(), v.clone());
+        }
+    }
+}
+
 /// Send a progress event if a sender is available. Silently ignores closed channels.
 fn emit(sender: &Option<mpsc::UnboundedSender<ExecutionEvent>>, event: ExecutionEvent) {
     if let Some(tx) = sender {
         let _ = tx.send(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn merge_override_merges_keys() {
+        let mut base = json!({"path": "/data/dev.csv", "format": "csv"});
+        let over = json!({"path": "/data/prod.csv"});
+        merge_override(&mut base, &over);
+        assert_eq!(base["path"], "/data/prod.csv");
+        assert_eq!(base["format"], "csv"); // untouched
+    }
+
+    #[test]
+    fn merge_override_adds_new_keys() {
+        let mut base = json!({"path": "/data/file.csv"});
+        let over = json!({"format": "parquet"});
+        merge_override(&mut base, &over);
+        assert_eq!(base["path"], "/data/file.csv");
+        assert_eq!(base["format"], "parquet");
+    }
+
+    #[test]
+    fn merge_override_noop_for_non_objects() {
+        let mut base = json!("scalar");
+        let over = json!({"key": "val"});
+        merge_override(&mut base, &over);
+        assert_eq!(base, json!("scalar")); // unchanged
+    }
+
+    #[test]
+    fn merge_override_empty_override_is_noop() {
+        let mut base = json!({"path": "/data/file.csv"});
+        let over = json!({});
+        merge_override(&mut base, &over);
+        assert_eq!(base["path"], "/data/file.csv");
     }
 }
