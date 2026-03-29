@@ -57,6 +57,8 @@ beforeEach(() => {
     simulationHasRun: false,
     selectedNodeId: null,
     editingNodeId: null,
+    _undoStack: [],
+    _redoStack: [],
   });
 });
 
@@ -327,5 +329,81 @@ describe('buildApiPipeline', () => {
 
     const result = buildApiPipeline(base, [], rfEdges);
     expect(result.edges).toEqual([{ from: 'src', to: 'tx' }]);
+  });
+});
+
+describe('undo / redo', () => {
+  beforeEach(() => {
+    usePipelineStore.getState().loadFromResponse(makeResponse());
+  });
+
+  it('deleteNodes is undoable', () => {
+    expect(usePipelineStore.getState().nodes).toHaveLength(2);
+    usePipelineStore.getState().deleteNodes(['src']);
+    expect(usePipelineStore.getState().nodes).toHaveLength(1);
+    expect(usePipelineStore.getState().canUndo()).toBe(true);
+
+    usePipelineStore.getState().undo();
+    expect(usePipelineStore.getState().nodes).toHaveLength(2);
+    expect(usePipelineStore.getState().nodes.find((n) => n.id === 'src')).toBeTruthy();
+    expect(usePipelineStore.getState().edges).toHaveLength(1);
+  });
+
+  it('redo restores the undone action', () => {
+    usePipelineStore.getState().deleteNodes(['src']);
+    usePipelineStore.getState().undo();
+    expect(usePipelineStore.getState().nodes).toHaveLength(2);
+    expect(usePipelineStore.getState().canRedo()).toBe(true);
+
+    usePipelineStore.getState().redo();
+    expect(usePipelineStore.getState().nodes).toHaveLength(1);
+    expect(usePipelineStore.getState().canRedo()).toBe(false);
+  });
+
+  it('new action clears redo stack', () => {
+    usePipelineStore.getState().deleteNodes(['src']);
+    usePipelineStore.getState().undo();
+    expect(usePipelineStore.getState().canRedo()).toBe(true);
+
+    // New mutation clears redo
+    usePipelineStore.getState().deleteEdges(['e-src-tx']);
+    expect(usePipelineStore.getState().canRedo()).toBe(false);
+  });
+
+  it('undo on empty stack is a no-op', () => {
+    const before = usePipelineStore.getState().nodes;
+    usePipelineStore.getState().undo();
+    expect(usePipelineStore.getState().nodes).toBe(before);
+  });
+
+  it('redo on empty stack is a no-op', () => {
+    const before = usePipelineStore.getState().nodes;
+    usePipelineStore.getState().redo();
+    expect(usePipelineStore.getState().nodes).toBe(before);
+  });
+
+  it('duplicateNode is undoable', () => {
+    usePipelineStore.getState().duplicateNode('src');
+    expect(usePipelineStore.getState().nodes).toHaveLength(3);
+
+    usePipelineStore.getState().undo();
+    expect(usePipelineStore.getState().nodes).toHaveLength(2);
+  });
+
+  it('loadFromResponse clears undo/redo stacks', () => {
+    usePipelineStore.getState().deleteNodes(['src']);
+    expect(usePipelineStore.getState().canUndo()).toBe(true);
+
+    usePipelineStore.getState().loadFromResponse(makeResponse());
+    expect(usePipelineStore.getState().canUndo()).toBe(false);
+    expect(usePipelineStore.getState().canRedo()).toBe(false);
+  });
+
+  it('respects max stack size', () => {
+    // Push 55 snapshots (exceeds MAX_UNDO_STACK of 50)
+    for (let i = 0; i < 55; i++) {
+      usePipelineStore.getState().pushSnapshot();
+    }
+    expect(usePipelineStore.getState()._undoStack.length).toBeLessThanOrEqual(50);
   });
 });

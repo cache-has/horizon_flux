@@ -76,22 +76,35 @@ function PipelineCanvasInner() {
   const duplicateNode = usePipelineStore((s) => s.duplicateNode);
 
   const selectedNodeId = usePipelineStore((s) => s.selectedNodeId);
+  const undo = usePipelineStore((s) => s.undo);
+  const redo = usePipelineStore((s) => s.redo);
+  const pushSnapshot = usePipelineStore((s) => s.pushSnapshot);
 
   const { screenToFlowPosition } = useReactFlow();
 
   const isValidConnection = useConnectionValidation(edges);
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
 
-  // Close side panel on Escape key
+  // Keyboard shortcuts: Escape to close side panel, Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && selectedNodeId) {
         setSelectedNodeId(null);
+        return;
+      }
+
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (mod && e.key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        redo();
       }
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNodeId, setSelectedNodeId]);
+  }, [selectedNodeId, setSelectedNodeId, undo, redo]);
 
   // Sync environment overrides → node envOverridden badges
   const tableOverrides = useEnvironmentStore((s) => s.tableOverrides);
@@ -357,6 +370,7 @@ function PipelineCanvasInner() {
           envOverridden: false,
         },
       };
+      usePipelineStore.getState().pushSnapshot();
       usePipelineStore.getState().setNodes((current) => [...current, newNode]);
       usePipelineStore.getState().markDirty();
     },
@@ -436,6 +450,7 @@ function PipelineCanvasInner() {
               envOverridden: false,
             },
           };
+          usePipelineStore.getState().pushSnapshot();
           usePipelineStore.getState().setNodes((current) => [...current, newNode]);
           usePipelineStore.getState().markDirty();
           break;
@@ -443,6 +458,7 @@ function PipelineCanvasInner() {
         case 'create-transform-from-selected': {
           // Create a new transform node with all selected nodes as inputs
           const nodeIds = payload?.nodeIds as string[];
+          usePipelineStore.getState().pushSnapshot();
           const store = usePipelineStore.getState();
           const selectedNodes = store.nodes.filter((n) =>
             nodeIds.includes(n.id),

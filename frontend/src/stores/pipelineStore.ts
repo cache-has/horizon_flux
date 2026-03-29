@@ -95,6 +95,19 @@ export function buildApiPipeline(
 }
 
 // ---------------------------------------------------------------------------
+// Undo/redo snapshot types
+// ---------------------------------------------------------------------------
+
+/** The subset of pipeline state captured for undo/redo. */
+export interface PipelineSnapshot {
+  nodes: PipelineNode[];
+  edges: PipelineEdge[];
+  apiPipeline: ApiPipeline | null;
+}
+
+const MAX_UNDO_STACK = 50;
+
+// ---------------------------------------------------------------------------
 // Store types
 // ---------------------------------------------------------------------------
 
@@ -119,6 +132,10 @@ export interface PipelineStoreState {
   selectedNodeId: string | null;
   /** The ID of the node opened for editing via double-click (for modal editor). */
   editingNodeId: string | null;
+  /** Undo stack of pipeline snapshots. */
+  _undoStack: PipelineSnapshot[];
+  /** Redo stack of pipeline snapshots. */
+  _redoStack: PipelineSnapshot[];
 }
 
 export interface PipelineStoreActions {
@@ -161,6 +178,16 @@ export interface PipelineStoreActions {
     nodeId: string,
     patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config'>>,
   ) => Promise<void>;
+  /** Push the current state onto the undo stack (call before external mutations). */
+  pushSnapshot: () => void;
+  /** Undo the last undoable action. */
+  undo: () => void;
+  /** Redo the last undone action. */
+  redo: () => void;
+  /** Whether undo is available. */
+  canUndo: () => boolean;
+  /** Whether redo is available. */
+  canRedo: () => boolean;
 }
 
 export type PipelineStore = PipelineStoreState & PipelineStoreActions;
@@ -192,6 +219,8 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   simulationHasRun: false,
   selectedNodeId: null,
   editingNodeId: null,
+  _undoStack: [],
+  _redoStack: [],
 
   // Actions
   loadPipeline: async (id: string) => {
@@ -224,6 +253,8 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
       error: null,
       // If nodes already have saved positions, skip initial simulation
       simulationHasRun: hasPositions,
+      _undoStack: [],
+      _redoStack: [],
     });
   },
 
@@ -240,6 +271,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   },
 
   onConnect: (connection: Connection) => {
+    get().pushSnapshot();
     set((state) => ({
       edges: addEdge({ ...connection, type: 'pipeline' }, state.edges),
     }));
@@ -317,6 +349,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   },
 
   deleteNodes: (nodeIds: string[]) => {
+    get().pushSnapshot();
     const idSet = new Set(nodeIds);
     set((state) => ({
       nodes: state.nodes.filter((n) => !idSet.has(n.id)),
@@ -338,6 +371,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   },
 
   deleteEdges: (edgeIds: string[]) => {
+    get().pushSnapshot();
     const idSet = new Set(edgeIds);
     set((state) => ({
       edges: state.edges.filter((e) => !idSet.has(e.id)),
@@ -350,6 +384,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
     const state = get();
     const original = state.nodes.find((n) => n.id === nodeId);
     if (!original) return;
+    get().pushSnapshot();
 
     const newId = `${original.id}-copy-${Date.now()}`;
     const duplicate: PipelineNode = {
@@ -378,6 +413,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   updateNodeConfig: async (nodeId, patch) => {
     const { pipelineId, apiPipeline, edges } = get();
     if (!pipelineId || !apiPipeline) return;
+    get().pushSnapshot();
 
     // Update the apiPipeline node in place
     const updatedApiNodes = apiPipeline.nodes.map((n) =>
@@ -405,4 +441,69 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
       set({ error: (err as Error).message });
     }
   },
+
+  pushSnapshot: () => {
+    const { nodes, edges, apiPipeline, _undoStack } = get();
+    const snapshot: PipelineSnapshot = {
+      nodes: structuredClone(nodes),
+      edges: structuredClone(edges),
+      apiPipeline: apiPipeline ? structuredClone(apiPipeline) : null,
+    };
+    const stack = [..._undoStack, snapshot];
+    if (stack.length > MAX_UNDO_STACK) stack.shift();
+    set({ _undoStack: stack, _redoStack: [] });
+  },
+
+  undo: () => {
+    const { _undoStack, nodes, edges, apiPipeline } = get();
+    if (_undoStack.length === 0) return;
+
+    const stack = [..._undoStack];
+    const snapshot = stack.pop()!;
+
+    // Push current state onto redo stack
+    const redoSnapshot: PipelineSnapshot = {
+      nodes: structuredClone(nodes),
+      edges: structuredClone(edges),
+      apiPipeline: apiPipeline ? structuredClone(apiPipeline) : null,
+    };
+
+    set({
+      nodes: snapshot.nodes,
+      edges: snapshot.edges,
+      apiPipeline: snapshot.apiPipeline,
+      _undoStack: stack,
+      _redoStack: [...get()._redoStack, redoSnapshot],
+      dirty: true,
+    });
+    debouncedSave(get().savePositions);
+  },
+
+  redo: () => {
+    const { _redoStack, nodes, edges, apiPipeline } = get();
+    if (_redoStack.length === 0) return;
+
+    const stack = [..._redoStack];
+    const redoSnapshot = stack.pop()!;
+
+    // Push current state onto undo stack
+    const undoSnapshot: PipelineSnapshot = {
+      nodes: structuredClone(nodes),
+      edges: structuredClone(edges),
+      apiPipeline: apiPipeline ? structuredClone(apiPipeline) : null,
+    };
+
+    set({
+      nodes: redoSnapshot.nodes,
+      edges: redoSnapshot.edges,
+      apiPipeline: redoSnapshot.apiPipeline,
+      _undoStack: [...get()._undoStack, undoSnapshot],
+      _redoStack: stack,
+      dirty: true,
+    });
+    debouncedSave(get().savePositions);
+  },
+
+  canUndo: () => get()._undoStack.length > 0,
+  canRedo: () => get()._redoStack.length > 0,
 }));
