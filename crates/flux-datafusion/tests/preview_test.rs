@@ -372,6 +372,7 @@ async fn preview_cancellation() {
         sample: SampleConfig::default(),
         cancel,
         progress: None,
+        variable_overrides: std::collections::HashMap::new(),
     };
 
     let err = PipelineExecutor::preview(&pipeline, &registry, &opts)

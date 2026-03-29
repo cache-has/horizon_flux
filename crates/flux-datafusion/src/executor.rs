@@ -18,7 +18,9 @@ use arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
 use flux_engine::node::{NodeKind, SourceConfig, TransformMode};
+use flux_engine::variables::{BuiltinContext, ResolvedVariables};
 use flux_engine::{NodeId, Pipeline, dag};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,6 +46,9 @@ pub struct ExecutionOptions {
     /// complete, or fail. The receiver is typically the server layer that
     /// broadcasts to WebSocket clients.
     pub progress: Option<mpsc::UnboundedSender<ExecutionEvent>>,
+    /// Runtime variable overrides. These take highest precedence over
+    /// pipeline defaults and built-in variables.
+    pub variable_overrides: HashMap<String, Value>,
 }
 
 impl Default for ExecutionOptions {
@@ -54,6 +59,7 @@ impl Default for ExecutionOptions {
             cancel: Arc::new(AtomicBool::new(false)),
             environment_resolver: None,
             progress: None,
+            variable_overrides: HashMap::new(),
         }
     }
 }
@@ -108,6 +114,16 @@ impl PipelineExecutor {
             },
         );
 
+        // Resolve pipeline variables: built-ins + defaults + overrides.
+        let builtin = BuiltinContext {
+            run_date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            run_id: run.id.to_string(),
+            pipeline_name: pipeline.name.clone(),
+            environment: options.environment.clone(),
+        };
+        let resolved_vars =
+            ResolvedVariables::resolve(pipeline, &options.variable_overrides, &builtin);
+
         let mut outputs: HashMap<NodeId, Vec<RecordBatch>> = HashMap::new();
         let mut stats: Vec<NodeStats> = Vec::new();
 
@@ -151,15 +167,24 @@ impl PipelineExecutor {
             let mut rows_in: u64 = 0;
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
-                NodeKind::Source(src_cfg) => Self::execute_source(node_id, src_cfg, registry).await,
+                NodeKind::Source(src_cfg) => {
+                    // Interpolate variables in source connector config.
+                    let mut interpolated_cfg = src_cfg.clone();
+                    interpolated_cfg.config =
+                        resolved_vars.interpolate_json(&interpolated_cfg.config);
+                    Self::execute_source(node_id, &interpolated_cfg, registry).await
+                }
 
                 NodeKind::Transform(xform_cfg) => match xform_cfg.mode {
                     TransformMode::Sql => {
                         let upstream_ids = pipeline.upstream_of(node_id);
                         match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
                             Ok(data) => {
+                                // Interpolate variables in SQL code.
+                                let interpolated_sql =
+                                    resolved_vars.interpolate(&xform_cfg.code);
                                 Self::execute_sql_transform(
-                                    &xform_cfg.code,
+                                    &interpolated_sql,
                                     data,
                                     options.environment_resolver.as_ref(),
                                 )
@@ -172,17 +197,11 @@ impl PipelineExecutor {
                         let upstream_ids = pipeline.upstream_of(node_id);
                         match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
                             Ok(data) => {
-                                let variables = pipeline
-                                    .variables
-                                    .iter()
-                                    .filter_map(|(k, v)| {
-                                        v.default.as_ref().map(|d| (k.clone(), d.clone()))
-                                    })
-                                    .collect();
+                                // Pass all resolved variables to Python (not just defaults).
                                 crate::python_runtime::execute_python_transform(
                                     &xform_cfg.code,
                                     data,
-                                    &variables,
+                                    resolved_vars.as_map(),
                                 )
                                 .await
                             }
@@ -199,7 +218,11 @@ impl PipelineExecutor {
                                 .into_values()
                                 .flat_map(|batches| batches.iter().cloned())
                                 .collect();
-                            Self::execute_sink(sink_cfg, all_batches, registry)
+                            // Interpolate variables in sink connector config.
+                            let mut interpolated_cfg = sink_cfg.clone();
+                            interpolated_cfg.config =
+                                resolved_vars.interpolate_json(&interpolated_cfg.config);
+                            Self::execute_sink(&interpolated_cfg, all_batches, registry)
                                 .await
                                 .map(|(batches, _write_stats)| batches)
                         }

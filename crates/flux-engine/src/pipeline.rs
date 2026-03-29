@@ -55,6 +55,22 @@ impl Pipeline {
         Ok(pipeline)
     }
 
+    /// Deserialize from JSON with schema validation and variable reference warnings.
+    ///
+    /// Like [`from_json`](Self::from_json), but also returns non-fatal warnings
+    /// for undefined `{{ variable }}` references in node code and configs.
+    pub fn from_json_with_warnings(
+        json: &str,
+    ) -> Result<(Self, crate::error::ImportWarnings), crate::error::ImportError> {
+        let pipeline: Pipeline =
+            serde_json::from_str(json).map_err(crate::error::ImportError::Json)?;
+        crate::validate::validate_import(&pipeline)?;
+        let warnings = crate::error::ImportWarnings {
+            undefined_variables: crate::variables::validate_variable_references(&pipeline),
+        };
+        Ok((pipeline, warnings))
+    }
+
     /// Look up a node by its ID.
     pub fn node(&self, id: &NodeId) -> Option<&Node> {
         self.nodes.iter().find(|n| n.id == *id)

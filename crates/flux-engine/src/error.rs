@@ -60,6 +60,18 @@ pub enum ImportError {
     Validation(Vec<ValidationError>),
 }
 
+/// Result of a successful pipeline import, which may include non-fatal warnings.
+#[derive(Debug, Clone, Default)]
+pub struct ImportWarnings {
+    pub undefined_variables: Vec<crate::variables::VariableWarning>,
+}
+
+impl ImportWarnings {
+    pub fn is_empty(&self) -> bool {
+        self.undefined_variables.is_empty()
+    }
+}
+
 /// A single validation error found during pipeline import.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ValidationError {

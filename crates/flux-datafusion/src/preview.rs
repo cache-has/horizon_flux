@@ -18,7 +18,9 @@ use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use flux_engine::node::NodeKind;
 use flux_engine::sample::SampleConfig;
+use flux_engine::variables::{BuiltinContext, ResolvedVariables};
 use flux_engine::{NodeId, Pipeline, dag};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +36,8 @@ pub struct PreviewOptions {
     pub cancel: Arc<AtomicBool>,
     /// Optional channel for real-time preview progress events.
     pub progress: Option<mpsc::UnboundedSender<ExecutionEvent>>,
+    /// Runtime variable overrides for preview.
+    pub variable_overrides: HashMap<String, Value>,
 }
 
 impl Default for PreviewOptions {
@@ -42,6 +46,7 @@ impl Default for PreviewOptions {
             sample: SampleConfig::default(),
             cancel: Arc::new(AtomicBool::new(false)),
             progress: None,
+            variable_overrides: HashMap::new(),
         }
     }
 }
@@ -102,6 +107,17 @@ impl PipelineExecutor {
         );
 
         let start = Instant::now();
+
+        // Resolve pipeline variables for preview.
+        let builtin = BuiltinContext {
+            run_date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            run_id: uuid::Uuid::new_v4().to_string(),
+            pipeline_name: pipeline.name.clone(),
+            environment: pipeline.default_environment.clone(),
+        };
+        let resolved_vars =
+            ResolvedVariables::resolve(pipeline, &options.variable_overrides, &builtin);
+
         let mut outputs: HashMap<NodeId, Vec<RecordBatch>> = HashMap::new();
         let mut node_results: HashMap<NodeId, PreviewNodeResult> = HashMap::new();
 
@@ -118,7 +134,10 @@ impl PipelineExecutor {
 
             match &node.kind {
                 NodeKind::Source(src_cfg) => {
-                    let batches = Self::execute_source(node_id, src_cfg, registry)
+                    let mut interpolated_cfg = src_cfg.clone();
+                    interpolated_cfg.config =
+                        resolved_vars.interpolate_json(&interpolated_cfg.config);
+                    let batches = Self::execute_source(node_id, &interpolated_cfg, registry)
                         .await
                         .map_err(|kind| ExecutorError::Node {
                             node_id: node_id.clone(),
@@ -160,7 +179,9 @@ impl PipelineExecutor {
 
                     let batches = match xform_cfg.mode {
                         flux_engine::node::TransformMode::Sql => {
-                            Self::execute_sql_transform(&xform_cfg.code, upstream_data, None)
+                            let interpolated_sql =
+                                resolved_vars.interpolate(&xform_cfg.code);
+                            Self::execute_sql_transform(&interpolated_sql, upstream_data, None)
                                 .await
                                 .map_err(|kind| ExecutorError::Node {
                                     node_id: node_id.clone(),
@@ -168,17 +189,10 @@ impl PipelineExecutor {
                                 })?
                         }
                         flux_engine::node::TransformMode::Python => {
-                            let variables = pipeline
-                                .variables
-                                .iter()
-                                .filter_map(|(k, v)| {
-                                    v.default.as_ref().map(|d| (k.clone(), d.clone()))
-                                })
-                                .collect();
                             crate::python_runtime::execute_python_transform(
                                 &xform_cfg.code,
                                 upstream_data,
-                                &variables,
+                                resolved_vars.as_map(),
                             )
                             .await
                             .map_err(|kind| ExecutorError::Node {

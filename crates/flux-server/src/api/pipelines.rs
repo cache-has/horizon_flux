@@ -70,6 +70,9 @@ impl From<flux_engine::PipelineRecord> for PipelineResponse {
 struct RunRequest {
     #[serde(default = "default_environment")]
     environment: String,
+    /// Runtime variable overrides (highest precedence).
+    #[serde(default)]
+    variables: std::collections::HashMap<String, serde_json::Value>,
 }
 
 fn default_environment() -> String {
@@ -81,6 +84,9 @@ fn default_environment() -> String {
 struct PreviewRequest {
     #[serde(default)]
     sample: Option<SampleConfig>,
+    /// Runtime variable overrides for preview.
+    #[serde(default)]
+    variables: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Serializable preview node result (Arrow schemas/batches → JSON).
@@ -243,12 +249,20 @@ async fn run_pipeline(
         }
     });
 
+    // Validate variable overrides against declared types.
+    let override_errors =
+        flux_engine::variables::validate_overrides(&record.pipeline, &req.variables);
+    if !override_errors.is_empty() {
+        return Err(ApiError::bad_request(override_errors.join("; ")));
+    }
+
     let options = ExecutionOptions {
         environment: req.environment,
         run_store: Some(Arc::clone(&state.run_store)),
         cancel: Arc::new(AtomicBool::new(false)),
         environment_resolver: None,
         progress: Some(progress_tx),
+        variable_overrides: req.variables,
     };
 
     let (_result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
@@ -292,6 +306,7 @@ async fn preview_pipeline(
         sample,
         cancel: Arc::new(AtomicBool::new(false)),
         progress: None,
+        variable_overrides: req.variables,
     };
 
     let preview = tokio::time::timeout(
