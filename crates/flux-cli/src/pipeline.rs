@@ -250,10 +250,11 @@ async fn execute_pipeline(
 }
 
 fn print_progress_event(event: &flux_datafusion::ExecutionEvent) {
+    use crate::color;
     use flux_datafusion::ExecutionEvent;
     match event {
         ExecutionEvent::RunStarted { pipeline_name, .. } => {
-            eprintln!("Running `{pipeline_name}`...");
+            eprintln!("Running {}...", color::bold(&format!("`{pipeline_name}`")));
         }
         ExecutionEvent::NodeStarted { node_id, .. } => {
             eprintln!("  ▶ {node_id}");
@@ -265,22 +266,29 @@ fn print_progress_event(event: &flux_datafusion::ExecutionEvent) {
             ..
         } => {
             eprintln!(
-                "  ✓ {node_id} — {rows_out} rows ({})",
-                format_duration_ms(*duration_ms)
+                "  {} {node_id} — {rows_out} rows ({})",
+                color::green("✓"),
+                color::dim(&format_duration_ms(*duration_ms))
             );
         }
         ExecutionEvent::NodeFailed { node_id, error, .. } => {
-            eprintln!("  ✗ {node_id} — {error}");
+            eprintln!("  {} {node_id} — {error}", color::red("✗"));
         }
         ExecutionEvent::RunCompleted {
             status,
             duration_ms,
             ..
         } => {
+            let status_str = status.as_str();
+            let colored_status = if *status == flux_datafusion::RunStatus::Failed {
+                color::red(status_str).to_string()
+            } else {
+                color::green(status_str).to_string()
+            };
             eprintln!(
                 "Finished: {} ({})",
-                status.as_str(),
-                format_duration_ms(*duration_ms)
+                colored_status,
+                color::dim(&format_duration_ms(*duration_ms))
             );
         }
     }
@@ -305,10 +313,13 @@ pub fn list(format: OutputFormat) -> Result<()> {
             }
             // Table header
             println!(
-                "{:<30} {:>5} {:>5} {:>20} {:>6}",
-                "NAME", "NODES", "EDGES", "LAST RUN", "RUNS"
+                "{}",
+                crate::color::bold(&format!(
+                    "{:<30} {:>5} {:>5} {:>20} {:>6}",
+                    "NAME", "NODES", "EDGES", "LAST RUN", "RUNS"
+                ))
             );
-            println!("{}", "-".repeat(70));
+            println!("{}", crate::color::dim(&"-".repeat(70)));
             for r in &records {
                 let last_run = r
                     .last_run_at
@@ -451,10 +462,13 @@ pub fn history(pipeline_name: &str, limit: u32, format: OutputFormat) -> Result<
                 return Ok(());
             }
             println!(
-                "{:<36}  {:<10}  {:<20}  {:>10}",
-                "RUN ID", "STATUS", "STARTED", "DURATION"
+                "{}",
+                crate::color::bold(&format!(
+                    "{:<36}  {:<10}  {:<20}  {:>10}",
+                    "RUN ID", "STATUS", "STARTED", "DURATION"
+                ))
             );
-            println!("{}", "-".repeat(80));
+            println!("{}", crate::color::dim(&"-".repeat(80)));
             for run in &runs {
                 let started = run
                     .start_time
@@ -464,12 +478,16 @@ pub fn history(pipeline_name: &str, limit: u32, format: OutputFormat) -> Result<
                     .duration_ms()
                     .map(format_duration_ms)
                     .unwrap_or_else(|| "-".into());
+                let status_str = run.status.as_str();
+                let colored_status =
+                    if run.status == flux_datafusion::RunStatus::Failed {
+                        crate::color::red(status_str).to_string()
+                    } else {
+                        crate::color::green(status_str).to_string()
+                    };
                 println!(
                     "{:<36}  {:<10}  {:<20}  {:>10}",
-                    run.id,
-                    run.status.as_str(),
-                    started,
-                    duration,
+                    run.id, colored_status, started, duration,
                 );
             }
         }

@@ -16,6 +16,7 @@ flux-secrets = { workspace = true }
 flux-server = { workspace = true }
 flux-tray = { workspace = true }
 clap = { workspace = true }
+owo-colors = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
 libc = { workspace = true }

@@ -71,6 +71,7 @@ rand = "0.9"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+owo-colors = { version = "4", features = ["supports-colors"] }
 rpassword = "7"
 
 # Filesystem

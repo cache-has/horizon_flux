@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+pub mod color;
+mod environment;
 mod pipeline;
 mod secret;
 mod server;
@@ -62,6 +64,11 @@ enum Command {
     Secret {
         #[command(subcommand)]
         action: secret::SecretAction,
+    },
+    /// Manage environments (fallback chains, table overrides).
+    Env {
+        #[command(subcommand)]
+        action: environment::EnvAction,
     },
     /// Export a pipeline definition to a JSON file, or all pipelines to a directory.
     Export {
@@ -123,6 +130,7 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    color::init();
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -137,7 +145,7 @@ fn main() -> ExitCode {
     match run(cli, format) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("Error: {e:#}");
+            eprintln!("{} {e:#}", color::red("Error:"));
             ExitCode::FAILURE
         }
     }
@@ -159,6 +167,10 @@ fn run(cli: Cli, format: OutputFormat) -> Result<()> {
         Some(Command::Status) => server::handle(server::ServerAction::Status, format),
 
         Some(Command::Secret { action }) => secret::handle(action).context("secret command failed"),
+
+        Some(Command::Env { action }) => {
+            environment::handle(action, format).context("env command failed")
+        }
 
         Some(Command::Export {
             pipeline,
@@ -792,6 +804,127 @@ mod tests {
             }
             _ => panic!("expected History"),
         }
+    }
+
+    #[test]
+    fn parse_env_list() {
+        let cli = Cli::try_parse_from(["horizon-flux", "env", "list"]).unwrap();
+        match cli.command {
+            Some(Command::Env { action }) => {
+                assert!(matches!(action, environment::EnvAction::List));
+            }
+            _ => panic!("expected Env"),
+        }
+    }
+
+    #[test]
+    fn parse_env_create_with_fallback() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "env",
+            "create",
+            "staging",
+            "--fallback",
+            "prod",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Env { action }) => match action {
+                environment::EnvAction::Create { name, fallback } => {
+                    assert_eq!(name, "staging");
+                    assert_eq!(fallback.as_deref(), Some("prod"));
+                }
+                _ => panic!("expected Create"),
+            },
+            _ => panic!("expected Env"),
+        }
+    }
+
+    #[test]
+    fn parse_env_create_no_fallback() {
+        let cli = Cli::try_parse_from(["horizon-flux", "env", "create", "isolated"]).unwrap();
+        match cli.command {
+            Some(Command::Env { action }) => match action {
+                environment::EnvAction::Create { name, fallback } => {
+                    assert_eq!(name, "isolated");
+                    assert!(fallback.is_none());
+                }
+                _ => panic!("expected Create"),
+            },
+            _ => panic!("expected Env"),
+        }
+    }
+
+    #[test]
+    fn parse_env_delete() {
+        let cli = Cli::try_parse_from(["horizon-flux", "env", "delete", "staging"]).unwrap();
+        match cli.command {
+            Some(Command::Env { action }) => match action {
+                environment::EnvAction::Delete { name } => {
+                    assert_eq!(name, "staging");
+                }
+                _ => panic!("expected Delete"),
+            },
+            _ => panic!("expected Env"),
+        }
+    }
+
+    #[test]
+    fn parse_env_show() {
+        let cli = Cli::try_parse_from(["horizon-flux", "env", "show", "dev"]).unwrap();
+        match cli.command {
+            Some(Command::Env { action }) => match action {
+                environment::EnvAction::Show { name } => {
+                    assert_eq!(name, "dev");
+                }
+                _ => panic!("expected Show"),
+            },
+            _ => panic!("expected Env"),
+        }
+    }
+
+    #[test]
+    fn parse_secret_set_from_env() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "secret",
+            "set",
+            "api_key",
+            "--from-env",
+            "MY_API_KEY",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Secret { action }) => match action {
+                secret::SecretAction::Set {
+                    name,
+                    value,
+                    env,
+                    from_env,
+                } => {
+                    assert_eq!(name, "api_key");
+                    assert!(value.is_none());
+                    assert!(env.is_none());
+                    assert_eq!(from_env.as_deref(), Some("MY_API_KEY"));
+                }
+                _ => panic!("expected Set"),
+            },
+            _ => panic!("expected Secret"),
+        }
+    }
+
+    #[test]
+    fn parse_secret_set_from_env_conflicts_with_value() {
+        let result = Cli::try_parse_from([
+            "horizon-flux",
+            "secret",
+            "set",
+            "api_key",
+            "literal_value",
+            "--from-env",
+            "MY_API_KEY",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]

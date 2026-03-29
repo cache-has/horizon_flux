@@ -20,6 +20,9 @@ pub enum SecretAction {
         /// Environment scope (e.g. prod, dev). Omit for a default secret.
         #[arg(long, short)]
         env: Option<String>,
+        /// Read the secret value from the named environment variable.
+        #[arg(long, conflicts_with = "value")]
+        from_env: Option<String>,
     },
     /// List all secret names (never shows values).
     List,
@@ -36,7 +39,12 @@ pub enum SecretAction {
 pub fn handle(action: SecretAction) -> Result<()> {
     match action {
         SecretAction::Init => init(),
-        SecretAction::Set { name, value, env } => set(&name, value.as_deref(), env.as_deref()),
+        SecretAction::Set {
+            name,
+            value,
+            env,
+            from_env,
+        } => set(&name, value.as_deref(), env.as_deref(), from_env.as_deref()),
         SecretAction::List => list(),
         SecretAction::Delete { name, env } => delete(&name, env.as_deref()),
     }
@@ -76,16 +84,21 @@ fn init() -> Result<()> {
     Ok(())
 }
 
-fn set(name: &str, value: Option<&str>, env: Option<&str>) -> Result<()> {
+fn set(name: &str, value: Option<&str>, env: Option<&str>, from_env: Option<&str>) -> Result<()> {
     let store = open_store()?;
 
-    let secret_value = match value {
-        Some(v) => v.to_string(),
-        None => {
-            // Read from stdin (allows piping).
-            let mut buf = String::new();
-            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
-            buf.trim_end().to_string()
+    let secret_value = if let Some(var_name) = from_env {
+        std::env::var(var_name)
+            .with_context(|| format!("environment variable '{var_name}' is not set"))?
+    } else {
+        match value {
+            Some(v) => v.to_string(),
+            None => {
+                // Read from stdin (allows piping).
+                let mut buf = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+                buf.trim_end().to_string()
+            }
         }
     };
 
@@ -105,8 +118,11 @@ fn list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<30} {:<15} UPDATED", "NAME", "ENVIRONMENT");
-    println!("{}", "-".repeat(65));
+    println!(
+        "{}",
+        crate::color::bold(&format!("{:<30} {:<15} UPDATED", "NAME", "ENVIRONMENT"))
+    );
+    println!("{}", crate::color::dim(&"-".repeat(65)));
     for s in &secrets {
         let env = s.environment.as_deref().unwrap_or("(default)");
         println!("{:<30} {:<15} {}", s.name, env, s.updated_at);
