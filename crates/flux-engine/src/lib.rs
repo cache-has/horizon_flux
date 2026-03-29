@@ -20,7 +20,9 @@ pub use edge::Edge;
 pub use error::{DagError, EngineError, ImportError, ImportWarnings, ValidationError};
 pub use node::{Node, NodeId, NodeKind};
 pub use pipeline::Pipeline;
-pub use pipeline_store::{PipelineId, PipelineRecord, PipelineStore, PipelineStoreError};
+pub use pipeline_store::{
+    PipelineId, PipelineRecord, PipelineStore, PipelineStoreError, PipelineVersion,
+};
 pub use sample::SampleConfig;
 pub use variables::{BuiltinContext, ResolvedVariables, VariableWarning};
 

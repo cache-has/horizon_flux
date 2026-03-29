@@ -39,6 +39,11 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/preview", post(preview_pipeline))
         .route("/{id}/runs", get(list_runs))
         .route("/{id}/runs/{run_id}", get(get_run))
+        .route("/{id}/versions", get(list_versions))
+        .route(
+            "/{id}/versions/{version}",
+            get(get_version).post(restore_version),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +458,116 @@ async fn get_run(
         .ok_or_else(|| ApiError::not_found("run", &run_id_str))?;
 
     Ok(Json(serde_json::to_value(&run).unwrap()))
+}
+
+// ---------------------------------------------------------------------------
+// Version history handlers
+// ---------------------------------------------------------------------------
+
+/// Version metadata returned in list responses (without the full snapshot).
+#[derive(Debug, Serialize)]
+struct VersionSummary {
+    version: u32,
+    saved_at: u64,
+}
+
+/// Full version response including the pipeline snapshot.
+#[derive(Debug, Serialize)]
+struct VersionResponse {
+    version: u32,
+    saved_at: u64,
+    snapshot: Pipeline,
+}
+
+/// `GET /api/pipelines/:id/versions` — list version history (newest first).
+async fn list_versions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(page): Query<Pagination>,
+) -> Result<Json<PaginatedResponse<VersionSummary>>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+
+    // Verify pipeline exists.
+    let _record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let total = state
+        .pipeline_store
+        .count_versions(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let versions = state
+        .pipeline_store
+        .list_versions(&pipeline_id, page.limit, page.offset)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let data = versions
+        .into_iter()
+        .map(|v| VersionSummary {
+            version: v.version,
+            saved_at: system_time_to_ms(v.saved_at),
+        })
+        .collect();
+
+    Ok(Json(PaginatedResponse {
+        data,
+        total,
+        limit: page.limit,
+        offset: page.offset,
+    }))
+}
+
+/// `GET /api/pipelines/:id/versions/:version` — get a specific version snapshot.
+async fn get_version(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, u32)>,
+) -> Result<Json<VersionResponse>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+
+    let pv = state
+        .pipeline_store
+        .get_version(&pipeline_id, version)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found("version", &format!("{id} v{version}"))
+        })?;
+
+    Ok(Json(VersionResponse {
+        version: pv.version,
+        saved_at: system_time_to_ms(pv.saved_at),
+        snapshot: pv.snapshot,
+    }))
+}
+
+/// `POST /api/pipelines/:id/versions/:version` — restore a previous version.
+///
+/// Restores the pipeline to the state captured in the given version snapshot.
+/// This creates a new version (auto-incremented) with the restored content.
+async fn restore_version(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, u32)>,
+) -> Result<Json<PipelineResponse>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+
+    let pv = state
+        .pipeline_store
+        .get_version(&pipeline_id, version)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found("version", &format!("{id} v{version}"))
+        })?;
+
+    // Update the pipeline with the restored snapshot — this auto-increments
+    // the version and stores a new snapshot.
+    let record = state
+        .pipeline_store
+        .update(&pipeline_id, pv.snapshot)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    Ok(Json(PipelineResponse::from(record)))
 }
 
 // ---------------------------------------------------------------------------

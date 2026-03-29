@@ -202,6 +202,62 @@ export async function bulkExportPipelines(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Version history
+// ---------------------------------------------------------------------------
+
+/** Summary of a pipeline version (without full snapshot). */
+export interface ApiVersionSummary {
+  version: number;
+  saved_at: number;
+}
+
+/** Full version response including the pipeline snapshot. */
+export interface ApiVersionResponse {
+  version: number;
+  saved_at: number;
+  snapshot: ApiPipeline;
+}
+
+/** List version history for a pipeline (newest first). */
+export async function fetchVersions(
+  id: string,
+  limit = 50,
+  offset = 0,
+): Promise<ApiPaginatedResponse<ApiVersionSummary>> {
+  const res = await fetch(`${BASE}/${id}/versions?limit=${limit}&offset=${offset}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch versions: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Fetch a specific version snapshot. */
+export async function fetchVersion(
+  id: string,
+  version: number,
+): Promise<ApiVersionResponse> {
+  const res = await fetch(`${BASE}/${id}/versions/${version}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch version ${version}: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Restore a pipeline to a previous version. Creates a new version with the restored content. */
+export async function restoreVersion(
+  id: string,
+  version: number,
+): Promise<ApiPipelineResponse> {
+  const res = await fetch(`${BASE}/${id}/versions/${version}`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to restore version ${version}: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Preview & run history
 // ---------------------------------------------------------------------------
 

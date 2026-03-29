@@ -57,6 +57,15 @@ pub struct PipelineRecord {
     pub run_count: u32,
 }
 
+/// A stored version snapshot of a pipeline definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineVersion {
+    pub pipeline_id: PipelineId,
+    pub version: u32,
+    pub saved_at: SystemTime,
+    pub snapshot: Pipeline,
+}
+
 /// Errors from pipeline storage operations.
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineStoreError {
@@ -134,13 +143,30 @@ impl PipelineStore {
             );
 
             CREATE INDEX IF NOT EXISTS idx_pipelines_name
-                ON pipelines (name);",
+                ON pipelines (name);
+
+            CREATE TABLE IF NOT EXISTS pipeline_versions (
+                pipeline_id TEXT NOT NULL,
+                version     INTEGER NOT NULL,
+                saved_at    INTEGER NOT NULL,
+                snapshot    TEXT NOT NULL,
+                PRIMARY KEY (pipeline_id, version),
+                FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pipeline_versions_id
+                ON pipeline_versions (pipeline_id, version DESC);
+
+            PRAGMA foreign_keys = ON;",
         )?;
         Ok(())
     }
 
     /// Create a new pipeline. Returns the created record.
-    pub fn create(&self, pipeline: Pipeline) -> Result<PipelineRecord, PipelineStoreError> {
+    ///
+    /// The pipeline's version is set to 1 and an initial version snapshot is
+    /// stored in the history table.
+    pub fn create(&self, mut pipeline: Pipeline) -> Result<PipelineRecord, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
 
         // Check for name conflict.
@@ -156,6 +182,9 @@ impl PipelineStore {
         let now = SystemTime::now();
         let id = PipelineId::new();
 
+        // Ensure version starts at 1.
+        pipeline.version = 1;
+
         // Write definition JSON to filesystem.
         let json = serde_json::to_string_pretty(&pipeline)?;
         std::fs::write(self.json_path(&id), &json)?;
@@ -169,6 +198,13 @@ impl PipelineStore {
                 system_time_to_ms(now),
                 system_time_to_ms(now),
             ],
+        )?;
+
+        // Store initial version snapshot.
+        conn.execute(
+            "INSERT INTO pipeline_versions (pipeline_id, version, saved_at, snapshot)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id.0.to_string(), 1u32, system_time_to_ms(now), &json],
         )?;
 
         Ok(PipelineRecord {
@@ -275,10 +311,13 @@ impl PipelineStore {
     }
 
     /// Update an existing pipeline. Returns the updated record.
+    ///
+    /// The pipeline's version is auto-incremented and a version snapshot is
+    /// stored in the history table.
     pub fn update(
         &self,
         id: &PipelineId,
-        pipeline: Pipeline,
+        mut pipeline: Pipeline,
     ) -> Result<PipelineRecord, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
 
@@ -294,6 +333,23 @@ impl PipelineStore {
             return Err(PipelineStoreError::NameConflict(pipeline.name.clone()));
         }
 
+        // Auto-increment version: read current max version from history table,
+        // then increment. Falls back to the pipeline's own version field if no
+        // history exists (e.g. pipelines created before versioning was added).
+        let current_max: u32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM pipeline_versions WHERE pipeline_id = ?1",
+                params![id.0.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let new_version = if current_max > 0 {
+            current_max + 1
+        } else {
+            pipeline.version.max(1) + 1
+        };
+        pipeline.version = new_version;
+
         let now = SystemTime::now();
 
         // Write updated definition to filesystem.
@@ -308,15 +364,31 @@ impl PipelineStore {
             return Err(PipelineStoreError::NotFound(id.to_string()));
         }
 
+        // Store version snapshot.
+        conn.execute(
+            "INSERT INTO pipeline_versions (pipeline_id, version, saved_at, snapshot)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id.0.to_string(), new_version, system_time_to_ms(now), &json],
+        )?;
+
         // Re-read to get full metadata.
         drop(conn);
         self.get(id)?
             .ok_or_else(|| PipelineStoreError::NotFound(id.to_string()))
     }
 
-    /// Delete a pipeline by ID. Removes both the metadata row and the JSON file.
+    /// Delete a pipeline by ID. Removes the metadata row, version history, and
+    /// the JSON file.
     pub fn delete(&self, id: &PipelineId) -> Result<(), PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
+
+        // Delete version history first (foreign key cascade may handle this,
+        // but we do it explicitly to be safe with PRAGMA foreign_keys off).
+        conn.execute(
+            "DELETE FROM pipeline_versions WHERE pipeline_id = ?1",
+            params![id.0.to_string()],
+        )?;
+
         let rows = conn.execute(
             "DELETE FROM pipelines WHERE id = ?1",
             params![id.0.to_string()],
@@ -332,6 +404,59 @@ impl PipelineStore {
             std::fs::remove_file(&path)?;
         }
         Ok(())
+    }
+
+    /// List version history for a pipeline, newest first.
+    pub fn list_versions(
+        &self,
+        id: &PipelineId,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<PipelineVersion>, PipelineStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT pipeline_id, version, saved_at, snapshot
+             FROM pipeline_versions
+             WHERE pipeline_id = ?1
+             ORDER BY version DESC
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let mut rows = stmt.query(params![id.0.to_string(), limit, offset])?;
+        let mut versions = Vec::new();
+        while let Some(row) = rows.next()? {
+            versions.push(row_to_version(row)?);
+        }
+        Ok(versions)
+    }
+
+    /// Get a specific version snapshot.
+    pub fn get_version(
+        &self,
+        id: &PipelineId,
+        version: u32,
+    ) -> Result<Option<PipelineVersion>, PipelineStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT pipeline_id, version, saved_at, snapshot
+             FROM pipeline_versions
+             WHERE pipeline_id = ?1 AND version = ?2",
+        )?;
+        let mut rows = stmt.query(params![id.0.to_string(), version])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row_to_version(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Count versions for a pipeline.
+    pub fn count_versions(&self, id: &PipelineId) -> Result<u32, PipelineStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: u32 = conn.query_row(
+            "SELECT COUNT(*) FROM pipeline_versions WHERE pipeline_id = ?1",
+            params![id.0.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(count)
     }
 
     /// Record that a pipeline was executed. Updates `last_run_at` to now and
@@ -395,6 +520,23 @@ fn row_to_metadata(row: &rusqlite::Row<'_>) -> Result<PipelineMetadata, Pipeline
         updated_at: ms_to_system_time(updated_ms),
         last_run_at: last_run_ms.map(ms_to_system_time),
         run_count,
+    })
+}
+
+fn row_to_version(row: &rusqlite::Row<'_>) -> Result<PipelineVersion, PipelineStoreError> {
+    let id_str: String = row.get(0)?;
+    let version: u32 = row.get(1)?;
+    let saved_ms: i64 = row.get(2)?;
+    let snapshot_json: String = row.get(3)?;
+
+    let id = Uuid::parse_str(&id_str).map_err(|e| PipelineStoreError::InvalidId(format!("{e}")))?;
+    let snapshot: Pipeline = serde_json::from_str(&snapshot_json)?;
+
+    Ok(PipelineVersion {
+        pipeline_id: PipelineId(id),
+        version,
+        saved_at: ms_to_system_time(saved_ms),
+        snapshot,
     })
 }
 
@@ -566,5 +708,88 @@ mod tests {
         store.record_run(&record.id).unwrap();
         let after_two = store.get(&record.id).unwrap().unwrap();
         assert_eq!(after_two.run_count, 2);
+    }
+
+    #[test]
+    fn create_stores_version_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let record = store.create(test_pipeline("versioned")).unwrap();
+        assert_eq!(record.pipeline.version, 1);
+
+        let versions = store.list_versions(&record.id, 100, 0).unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[0].snapshot.name, "versioned");
+    }
+
+    #[test]
+    fn update_auto_increments_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let record = store.create(test_pipeline("v1")).unwrap();
+        assert_eq!(record.pipeline.version, 1);
+
+        let v2 = store.update(&record.id, test_pipeline("v1")).unwrap();
+        assert_eq!(v2.pipeline.version, 2);
+
+        let v3 = store.update(&record.id, test_pipeline("v1")).unwrap();
+        assert_eq!(v3.pipeline.version, 3);
+
+        let versions = store.list_versions(&record.id, 100, 0).unwrap();
+        assert_eq!(versions.len(), 3);
+        // Newest first.
+        assert_eq!(versions[0].version, 3);
+        assert_eq!(versions[1].version, 2);
+        assert_eq!(versions[2].version, 1);
+    }
+
+    #[test]
+    fn get_specific_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let record = store.create(test_pipeline("snap")).unwrap();
+        store.update(&record.id, test_pipeline("snap-v2")).unwrap();
+
+        let v1 = store.get_version(&record.id, 1).unwrap().unwrap();
+        assert_eq!(v1.snapshot.name, "snap");
+
+        let v2 = store.get_version(&record.id, 2).unwrap().unwrap();
+        assert_eq!(v2.snapshot.name, "snap-v2");
+
+        assert!(store.get_version(&record.id, 99).unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_removes_version_history() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let record = store.create(test_pipeline("bye")).unwrap();
+        store.update(&record.id, test_pipeline("bye")).unwrap();
+        assert_eq!(store.count_versions(&record.id).unwrap(), 2);
+
+        store.delete(&record.id).unwrap();
+        assert_eq!(store.count_versions(&record.id).unwrap(), 0);
+    }
+
+    #[test]
+    fn version_pagination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let record = store.create(test_pipeline("paged")).unwrap();
+        for _ in 0..4 {
+            store.update(&record.id, test_pipeline("paged")).unwrap();
+        }
+        // 5 versions total (1 create + 4 updates).
+        assert_eq!(store.count_versions(&record.id).unwrap(), 5);
+
+        let page1 = store.list_versions(&record.id, 2, 0).unwrap();
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].version, 5);
+        assert_eq!(page1[1].version, 4);
+
+        let page2 = store.list_versions(&record.id, 2, 2).unwrap();
+        assert_eq!(page2.len(), 2);
+        assert_eq!(page2[0].version, 3);
     }
 }
