@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { PipelineNode } from '../../types/pipeline';
-import type { ApiNode } from '../../api/pipelines';
+import type { ApiNode, ApiColumnInfo } from '../../api/pipelines';
 import {
   previewPipeline,
   fetchPipelineRuns,
@@ -12,6 +12,7 @@ import {
   type ApiNodeRunStats,
 } from '../../api/pipelines';
 import { PreviewTable } from './PreviewTable';
+import { computeSchemaDiff, type SchemaDiff } from './schemaDiff';
 import './SidePanel.css';
 
 // ---------------------------------------------------------------------------
@@ -48,9 +49,10 @@ function truncateCode(code: string, lines: number): string {
 interface SchemaListProps {
   preview: ApiPreviewNodeResponse | null;
   collapsible?: boolean;
+  schemaDiff?: SchemaDiff | null;
 }
 
-function SchemaList({ preview, collapsible = true }: SchemaListProps) {
+function SchemaList({ preview, collapsible = true, schemaDiff }: SchemaListProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [copiedCol, setCopiedCol] = useState<string | null>(null);
 
@@ -64,6 +66,10 @@ function SchemaList({ preview, collapsible = true }: SchemaListProps) {
       setTimeout(() => setCopiedCol(null), 1200);
     });
   };
+
+  const diffByName = new Map(
+    schemaDiff?.outputDiffs.map((d) => [d.column.name, d]) ?? [],
+  );
 
   return (
     <div>
@@ -80,24 +86,60 @@ function SchemaList({ preview, collapsible = true }: SchemaListProps) {
       )}
       {!collapsed && (
         <ul className="side-panel__schema-list">
-          {preview.columns.map((col) => (
+          {preview.columns.map((col) => {
+            const diff = diffByName.get(col.name);
+            const diffClass = diff && diff.kind !== 'unchanged'
+              ? ` side-panel__schema-item--diff-${diff.kind}`
+              : '';
+            const diffLabel = diff?.kind === 'added'
+              ? ' (new)'
+              : diff?.kind === 'renamed'
+                ? ` (was ${diff.previousName})`
+                : diff?.kind === 'type_changed'
+                  ? ` (was ${diff.previousType})`
+                  : '';
+            return (
+              <li
+                key={col.name}
+                className={`side-panel__schema-item${diffClass}`}
+                onClick={() => handleCopy(col.name)}
+                title={`Click to copy "${col.name}"${diffLabel}`}
+              >
+                <span className="side-panel__schema-name">
+                  {col.name}
+                  {diffLabel && (
+                    <span className={`side-panel__schema-diff-label side-panel__schema-diff-label--${diff!.kind}`}>
+                      {diffLabel}
+                    </span>
+                  )}
+                  {copiedCol === col.name && (
+                    <span className="side-panel__schema-copied">copied</span>
+                  )}
+                </span>
+                <span className="side-panel__schema-meta">
+                  <span className="side-panel__schema-type">{col.data_type}</span>
+                  {col.nullable && (
+                    <span className="side-panel__schema-nullable">?</span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+          {/* Removed columns */}
+          {schemaDiff?.removedColumns.map((d) => (
             <li
-              key={col.name}
-              className="side-panel__schema-item"
-              onClick={() => handleCopy(col.name)}
-              title={`Click to copy "${col.name}"`}
+              key={`removed-${d.column.name}`}
+              className="side-panel__schema-item side-panel__schema-item--diff-removed"
+              title={`"${d.column.name}" was removed`}
             >
               <span className="side-panel__schema-name">
-                {col.name}
-                {copiedCol === col.name && (
-                  <span className="side-panel__schema-copied">copied</span>
-                )}
+                <s>{d.column.name}</s>
+                <span className="side-panel__schema-diff-label side-panel__schema-diff-label--removed">
+                  {' '}(removed)
+                </span>
               </span>
               <span className="side-panel__schema-meta">
-                <span className="side-panel__schema-type">{col.data_type}</span>
-                {col.nullable && (
-                  <span className="side-panel__schema-nullable">?</span>
-                )}
+                <span className="side-panel__schema-type">{d.column.data_type}</span>
               </span>
             </li>
           ))}
@@ -168,6 +210,7 @@ interface NodeContentProps {
   sampleMethod?: string;
   runStats: ApiNodeRunStats | null;
   upstreamNames: string[];
+  schemaDiff?: SchemaDiff | null;
 }
 
 function SourceContent({ apiNode, preview, previewLoading, sampleMethod, runStats }: NodeContentProps) {
@@ -232,6 +275,7 @@ function TransformContent({
   sampleMethod,
   runStats,
   upstreamNames,
+  schemaDiff,
 }: NodeContentProps) {
   const mode = apiNode?.mode ?? 'sql';
   const code = apiNode?.code ?? '';
@@ -267,12 +311,17 @@ function TransformContent({
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Preview</div>
-        <PreviewTable preview={preview} loading={previewLoading} sampleMethod={sampleMethod} />
+        <PreviewTable
+          preview={preview}
+          loading={previewLoading}
+          sampleMethod={sampleMethod}
+          columnDiffs={schemaDiff?.outputDiffs}
+        />
       </div>
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Output Schema</div>
-        <SchemaList preview={preview} />
+        <SchemaList preview={preview} schemaDiff={schemaDiff} />
       </div>
     </>
   );
@@ -540,6 +589,26 @@ export function SidePanel() {
     setSelectedNodeId(null);
   }, [setSelectedNodeId]);
 
+  // Compute schema diff for transform nodes by comparing upstream columns to output
+  const schemaDiff: SchemaDiff | null = (() => {
+    if (!selectedNode || selectedNode.data.role !== 'transform') return null;
+    const nodePreview = preview.get(selectedNodeId!);
+    if (!nodePreview) return null;
+
+    // Gather all upstream columns (merge from all upstream nodes)
+    const upstreamEdges = edges.filter((e) => e.target === selectedNode.id);
+    const inputColumns: ApiColumnInfo[] = [];
+    for (const edge of upstreamEdges) {
+      const upstreamPreview = preview.get(edge.source);
+      if (upstreamPreview) {
+        inputColumns.push(...upstreamPreview.columns);
+      }
+    }
+
+    if (inputColumns.length === 0) return null;
+    return computeSchemaDiff(inputColumns, nodePreview.columns);
+  })();
+
   // Build content props
   const contentProps: NodeContentProps | null = selectedNode
     ? {
@@ -550,6 +619,7 @@ export function SidePanel() {
         sampleMethod,
         runStats: runStats.get(selectedNodeId!) ?? null,
         upstreamNames,
+        schemaDiff,
       }
     : null;
 

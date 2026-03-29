@@ -4,6 +4,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ApiPreviewNodeResponse, ApiColumnInfo, ApiColumnStats } from '../../api/pipelines';
+import type { ColumnDiff } from './schemaDiff';
 import './PreviewTable.css';
 
 // ---------------------------------------------------------------------------
@@ -123,6 +124,8 @@ export interface PreviewTableProps {
   preview: ApiPreviewNodeResponse | null;
   loading: boolean;
   sampleMethod?: string;
+  /** Per-column diff info (parallel to preview.columns). When provided, column headers are color-coded. */
+  columnDiffs?: ColumnDiff[];
 }
 
 /** Format a column stats object as a tooltip string. */
@@ -151,7 +154,7 @@ export function formatColumnStatsTooltip(stats: ApiColumnStats): string {
   }
 }
 
-export function PreviewTable({ preview, loading, sampleMethod }: PreviewTableProps) {
+export function PreviewTable({ preview, loading, sampleMethod, columnDiffs }: PreviewTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState | null>(null);
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
@@ -282,14 +285,25 @@ export function PreviewTable({ preview, loading, sampleMethod }: PreviewTablePro
               const isSorted = sort?.column === col.name;
               const colStats = preview?.column_stats?.[ci];
               const statsTooltip = colStats ? '\n' + formatColumnStatsTooltip(colStats) : '';
+              const diff = columnDiffs?.[ci];
+              const diffClass = diff && diff.kind !== 'unchanged'
+                ? ` preview-table__th--diff-${diff.kind}`
+                : '';
+              const diffTooltip = diff?.kind === 'renamed'
+                ? `\nRenamed from "${diff.previousName}"`
+                : diff?.kind === 'type_changed'
+                  ? `\nType changed from ${diff.previousType}`
+                  : diff?.kind === 'added'
+                    ? '\nNew column'
+                    : '';
               return (
                 <div
                   key={col.name}
-                  className={`preview-table__th preview-table__th--${columnKinds[ci]}`}
+                  className={`preview-table__th preview-table__th--${columnKinds[ci]}${diffClass}`}
                   style={{ width: w, minWidth: w }}
                   onClick={() => handleSort(col.name)}
                   role="columnheader"
-                  title={`${col.name} (${col.data_type})${statsTooltip}\n— click to sort`}
+                  title={`${col.name} (${col.data_type})${diffTooltip}${statsTooltip}\n— click to sort`}
                 >
                   <span className="preview-table__col-name">{col.name}</span>
                   <span className={`preview-table__type-badge preview-table__type-badge--${columnKinds[ci]}`}>

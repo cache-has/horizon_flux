@@ -267,6 +267,47 @@
   font-weight: 600;
 }
 
+/* Schema diff highlighting */
+.side-panel__schema-item--diff-added {
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.side-panel__schema-item--diff-removed {
+  background: rgba(220, 38, 38, 0.08);
+  opacity: 0.7;
+  cursor: default;
+}
+
+.side-panel__schema-item--diff-type_changed {
+  background: rgba(234, 179, 8, 0.08);
+}
+
+.side-panel__schema-item--diff-renamed {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.side-panel__schema-diff-label {
+  font-size: 9px;
+  font-family: var(--sans);
+  font-weight: 500;
+}
+
+.side-panel__schema-diff-label--added {
+  color: #16a34a;
+}
+
+.side-panel__schema-diff-label--removed {
+  color: #dc2626;
+}
+
+.side-panel__schema-diff-label--type_changed {
+  color: #a16207;
+}
+
+.side-panel__schema-diff-label--renamed {
+  color: #2563eb;
+}
+
 /* Preview table */
 .side-panel__table-wrap {
   overflow-x: auto;
