@@ -181,6 +181,34 @@ impl PipelineStore {
         })
     }
 
+    /// Get a pipeline by name.
+    pub fn get_by_name(&self, name: &str) -> Result<Option<PipelineRecord>, PipelineStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, created_at, updated_at, last_run_at, run_count
+             FROM pipelines WHERE name = ?1",
+        )?;
+        let mut rows = stmt.query(params![name])?;
+        match rows.next()? {
+            Some(row) => {
+                let meta = row_to_metadata(row)?;
+                drop(rows);
+                drop(stmt);
+                drop(conn);
+                let pipeline = self.read_definition(&meta.id)?;
+                Ok(Some(PipelineRecord {
+                    id: meta.id,
+                    pipeline,
+                    created_at: meta.created_at,
+                    updated_at: meta.updated_at,
+                    last_run_at: meta.last_run_at,
+                    run_count: meta.run_count,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Get a pipeline by ID.
     pub fn get(&self, id: &PipelineId) -> Result<Option<PipelineRecord>, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
@@ -427,6 +455,24 @@ mod tests {
         // Verify JSON file exists on disk.
         let json_path = tmp.path().join(format!("{}.json", record.id.0));
         assert!(json_path.exists());
+    }
+
+    #[test]
+    fn get_by_name_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let record = store.create(test_pipeline("lookup")).unwrap();
+
+        let found = store.get_by_name("lookup").unwrap().unwrap();
+        assert_eq!(found.id, record.id);
+        assert_eq!(found.pipeline.name, "lookup");
+    }
+
+    #[test]
+    fn get_by_name_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        assert!(store.get_by_name("nope").unwrap().is_none());
     }
 
     #[test]

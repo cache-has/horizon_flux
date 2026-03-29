@@ -327,3 +327,253 @@ async fn pagination() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["data"].as_array().unwrap().len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Import / Export tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn export_pipeline() {
+    let state = test_state();
+    let app = test_router(state.clone());
+
+    // Create a pipeline first.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines")
+                .header("content-type", "application/json")
+                .body(Body::from(test_pipeline_json("export-me").to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let created = body_json(resp.into_body()).await;
+    let id = created["id"].as_str().unwrap();
+
+    // Export it.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/pipelines/{id}/export"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("application/json"));
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(cd.contains("export-me.json"), "got: {cd}");
+
+    // Verify the body is valid pipeline JSON.
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["name"], "export-me");
+}
+
+#[tokio::test]
+async fn import_pipeline_new() {
+    let state = test_state();
+    let app = test_router(state);
+
+    let req = json!({
+        "pipeline": test_pipeline_json("imported"),
+    });
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines/import")
+                .header("content-type", "application/json")
+                .body(Body::from(req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["pipeline"]["name"], "imported");
+}
+
+#[tokio::test]
+async fn import_pipeline_conflict_reject() {
+    let state = test_state();
+
+    // Create a pipeline.
+    let app = test_router(state.clone());
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/pipelines")
+            .header("content-type", "application/json")
+            .body(Body::from(test_pipeline_json("conflict").to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    // Import with same name (default = reject).
+    let app = test_router(state);
+    let req = json!({ "pipeline": test_pipeline_json("conflict") });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines/import")
+                .header("content-type", "application/json")
+                .body(Body::from(req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn import_pipeline_conflict_rename() {
+    let state = test_state();
+
+    // Create a pipeline.
+    let app = test_router(state.clone());
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/pipelines")
+            .header("content-type", "application/json")
+            .body(Body::from(test_pipeline_json("shared").to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    // Import with same name and rename.
+    let app = test_router(state);
+    let req = json!({
+        "pipeline": test_pipeline_json("shared"),
+        "on_conflict": "rename",
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines/import")
+                .header("content-type", "application/json")
+                .body(Body::from(req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["pipeline"]["name"], "shared (2)");
+}
+
+#[tokio::test]
+async fn import_pipeline_conflict_overwrite() {
+    let state = test_state();
+
+    // Create a pipeline.
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines")
+                .header("content-type", "application/json")
+                .body(Body::from(test_pipeline_json("overwrite-me").to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let created = body_json(resp.into_body()).await;
+    let id = created["id"].as_str().unwrap();
+
+    // Import with overwrite — same ID should be preserved.
+    let app = test_router(state.clone());
+    let req = json!({
+        "pipeline": test_pipeline_json("overwrite-me"),
+        "on_conflict": "overwrite",
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines/import")
+                .header("content-type", "application/json")
+                .body(Body::from(req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["id"], id, "overwrite should preserve the same ID");
+}
+
+#[tokio::test]
+async fn import_invalid_pipeline_returns_400() {
+    let app = test_router(test_state());
+    let req = json!({
+        "pipeline": { "name": "", "nodes": [], "edges": [] },
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines/import")
+                .header("content-type", "application/json")
+                .body(Body::from(req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn bulk_export_pipelines() {
+    let state = test_state();
+
+    // Create two pipelines.
+    for name in ["alpha", "beta"] {
+        let app = test_router(state.clone());
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines")
+                .header("content-type", "application/json")
+                .body(Body::from(test_pipeline_json(name).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Bulk export.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines/export")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert!(body["alpha"].is_object());
+    assert!(body["beta"].is_object());
+    assert_eq!(body["alpha"]["name"], "alpha");
+    assert_eq!(body["beta"]["name"], "beta");
+}

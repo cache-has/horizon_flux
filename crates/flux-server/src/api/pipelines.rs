@@ -9,6 +9,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use flux_datafusion::{
     ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, compute_column_stats,
@@ -25,12 +26,15 @@ use tracing::error;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_pipelines).post(create_pipeline))
+        .route("/import", post(import_pipeline))
+        .route("/export", post(bulk_export))
         .route(
             "/{id}",
             get(get_pipeline)
                 .put(update_pipeline)
                 .delete(delete_pipeline),
         )
+        .route("/{id}/export", get(export_pipeline))
         .route("/{id}/run", post(run_pipeline))
         .route("/{id}/preview", post(preview_pipeline))
         .route("/{id}/runs", get(list_runs))
@@ -63,6 +67,42 @@ impl From<flux_engine::PipelineRecord> for PipelineResponse {
             run_count: r.run_count,
         }
     }
+}
+
+/// How to handle name conflicts during import.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ImportConflict {
+    /// Reject the import if the name already exists (default).
+    #[default]
+    Reject,
+    /// Rename the imported pipeline by appending a suffix.
+    Rename,
+    /// Overwrite the existing pipeline with the imported definition.
+    Overwrite,
+}
+
+/// Request body for pipeline import.
+#[derive(Debug, Deserialize)]
+struct ImportRequest {
+    /// The pipeline definition JSON (as an object, not a string).
+    pipeline: serde_json::Value,
+    /// How to handle name conflicts.
+    #[serde(default)]
+    on_conflict: ImportConflict,
+}
+
+/// Response from pipeline import.
+#[derive(Debug, Serialize)]
+struct ImportResponse {
+    #[serde(flatten)]
+    pipeline: PipelineResponse,
+    /// Non-fatal warnings (e.g. undefined variable references).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
+    /// Connector compatibility warnings.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    connector_warnings: Vec<String>,
 }
 
 /// Request body for triggering a pipeline run.
@@ -416,6 +456,185 @@ async fn get_run(
 }
 
 // ---------------------------------------------------------------------------
+// Import / Export handlers
+// ---------------------------------------------------------------------------
+
+/// `GET /api/pipelines/:id/export` — download pipeline definition as a JSON file.
+async fn export_pipeline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let json = record
+        .pipeline
+        .to_json()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let filename = sanitize_filename(&record.pipeline.name);
+    Ok((
+        StatusCode::OK,
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json".to_string(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}.json\""),
+            ),
+        ],
+        json,
+    )
+        .into_response())
+}
+
+/// `POST /api/pipelines/import` — import a pipeline from JSON.
+async fn import_pipeline(
+    State(state): State<AppState>,
+    Json(req): Json<ImportRequest>,
+) -> Result<(StatusCode, Json<ImportResponse>), (StatusCode, Json<ApiError>)> {
+    // Parse and validate the pipeline definition.
+    let json_str = serde_json::to_string(&req.pipeline)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let (mut pipeline, import_warnings) =
+        Pipeline::from_json_with_warnings(&json_str).map_err(|e| match e {
+            flux_engine::ImportError::Json(je) => {
+                ApiError::bad_request(format!("invalid pipeline JSON: {je}"))
+            }
+            flux_engine::ImportError::Validation(errors) => ApiError::bad_request(format!(
+                "pipeline validation failed: {}",
+                errors
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )),
+        })?;
+
+    // Collect non-fatal warnings.
+    let warnings: Vec<String> = import_warnings
+        .undefined_variables
+        .iter()
+        .map(|w| w.to_string())
+        .collect();
+
+    // Check connector compatibility (non-fatal warnings).
+    let connector_warnings = match state.connector_registry.validate_pipeline(&pipeline) {
+        Ok(()) => vec![],
+        Err(errors) => errors,
+    };
+
+    // Handle name conflicts.
+    let existing = state
+        .pipeline_store
+        .get_by_name(&pipeline.name)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let record = if let Some(existing_record) = existing {
+        match req.on_conflict {
+            ImportConflict::Reject => {
+                return Err(ApiError::conflict(format!(
+                    "pipeline `{}` already exists (use on_conflict: \"rename\" or \"overwrite\")",
+                    pipeline.name
+                )));
+            }
+            ImportConflict::Rename => {
+                // Find a unique name by appending a counter.
+                let base_name = pipeline.name.clone();
+                let mut counter = 2u32;
+                loop {
+                    let candidate = format!("{base_name} ({counter})");
+                    let conflict = state
+                        .pipeline_store
+                        .get_by_name(&candidate)
+                        .map_err(|e| ApiError::internal(e.to_string()))?;
+                    if conflict.is_none() {
+                        pipeline.name = candidate;
+                        break;
+                    }
+                    counter += 1;
+                    if counter > 100 {
+                        return Err(ApiError::internal(
+                            "could not find a unique name after 100 attempts",
+                        ));
+                    }
+                }
+                state
+                    .pipeline_store
+                    .create(pipeline)
+                    .map_err(|e| ApiError::internal(e.to_string()))?
+            }
+            ImportConflict::Overwrite => state
+                .pipeline_store
+                .update(&existing_record.id, pipeline)
+                .map_err(|e| ApiError::internal(e.to_string()))?,
+        }
+    } else {
+        state
+            .pipeline_store
+            .create(pipeline)
+            .map_err(|e| ApiError::internal(e.to_string()))?
+    };
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ImportResponse {
+            pipeline: PipelineResponse::from(record),
+            warnings,
+            connector_warnings,
+        }),
+    ))
+}
+
+/// `POST /api/pipelines/export` — bulk export all pipelines as a JSON object.
+async fn bulk_export(
+    State(state): State<AppState>,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    let total = state
+        .pipeline_store
+        .count()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let records = state
+        .pipeline_store
+        .list(total, 0)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    // Build a map of pipeline name -> definition.
+    let mut export: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    for record in &records {
+        let value = serde_json::to_value(&record.pipeline)
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        export.insert(record.pipeline.name.clone(), value);
+    }
+
+    let json = serde_json::to_string_pretty(&export)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    Ok((
+        StatusCode::OK,
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json".to_string(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"horizon-flux-pipelines.json\"".to_string(),
+            ),
+        ],
+        json,
+    )
+        .into_response())
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -436,6 +655,13 @@ fn system_time_to_ms(t: std::time::SystemTime) -> u64 {
     t.duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// Sanitize a pipeline name for use as a filename.
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
 }
 
 /// Convert Arrow RecordBatches to JSON row objects.

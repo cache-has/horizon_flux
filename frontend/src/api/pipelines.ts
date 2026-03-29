@@ -130,6 +130,78 @@ export async function updatePipeline(
 }
 
 // ---------------------------------------------------------------------------
+// Import / Export
+// ---------------------------------------------------------------------------
+
+/** Export a single pipeline as a JSON file download. */
+export async function exportPipeline(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/${id}/export`);
+  if (!res.ok) {
+    throw new Error(`Failed to export pipeline: ${res.status} ${res.statusText}`);
+  }
+  // Trigger browser download from the response.
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const match = disposition.match(/filename="(.+?)"/);
+  const filename = match?.[1] ?? 'pipeline.json';
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** How to handle name conflicts during import. */
+export type ImportConflict = 'reject' | 'rename' | 'overwrite';
+
+/** Response from importing a pipeline. */
+export interface ImportPipelineResponse {
+  id: string;
+  pipeline: ApiPipeline;
+  created_at: number;
+  updated_at: number;
+  warnings: string[];
+  connector_warnings: string[];
+}
+
+/** Import a pipeline from a JSON definition. */
+export async function importPipeline(
+  pipeline: unknown,
+  onConflict: ImportConflict = 'reject',
+): Promise<ImportPipelineResponse> {
+  const res = await fetch(`${BASE}/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipeline, on_conflict: onConflict }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Import failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Bulk export all pipelines as a JSON file download. */
+export async function bulkExportPipelines(): Promise<void> {
+  const res = await fetch(`${BASE}/export`, { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Failed to export pipelines: ${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'horizon-flux-pipelines.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
 // Preview & run history
 // ---------------------------------------------------------------------------
 

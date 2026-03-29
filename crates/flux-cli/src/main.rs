@@ -39,6 +39,22 @@ enum Command {
         #[command(subcommand)]
         action: secret::SecretAction,
     },
+    /// Export a pipeline definition to a JSON file.
+    Export {
+        /// Pipeline name or UUID.
+        pipeline: String,
+        /// Output file path (defaults to `{pipeline_name}.json` in the current directory).
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Import a pipeline definition from a JSON file.
+    Import {
+        /// Path to the JSON pipeline file.
+        file: std::path::PathBuf,
+        /// How to handle name conflicts: reject, rename, or overwrite.
+        #[arg(long, default_value = "reject")]
+        on_conflict: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -51,6 +67,115 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Command::Secret { action }) => {
             secret::handle(action).context("secret command failed")?;
+        }
+        Some(Command::Export { pipeline, output }) => {
+            let data_dir = dirs::home_dir()
+                .context("could not determine home directory")?
+                .join(".horizon-flux");
+            let pipelines_dir = data_dir.join("pipelines");
+            let pipeline_store = flux_engine::PipelineStore::open(
+                &data_dir.join("pipelines.db"),
+                &pipelines_dir,
+            )
+            .context("failed to open pipeline store")?;
+
+            // Try UUID first, then name.
+            let record = if let Ok(id) = pipeline.parse::<flux_engine::PipelineId>() {
+                pipeline_store
+                    .get(&id)
+                    .context("failed to read pipeline")?
+            } else {
+                pipeline_store
+                    .get_by_name(&pipeline)
+                    .context("failed to read pipeline")?
+            }
+            .ok_or_else(|| anyhow::anyhow!("pipeline `{pipeline}` not found"))?;
+
+            let json = record.pipeline.to_json().context("failed to serialize pipeline")?;
+            let out_path = output.unwrap_or_else(|| {
+                let name: String = record
+                    .pipeline
+                    .name
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                std::path::PathBuf::from(format!("{name}.json"))
+            });
+            std::fs::write(&out_path, &json)
+                .with_context(|| format!("failed to write {}", out_path.display()))?;
+            println!("Exported `{}` → {}", record.pipeline.name, out_path.display());
+        }
+        Some(Command::Import { file, on_conflict }) => {
+            let data_dir = dirs::home_dir()
+                .context("could not determine home directory")?
+                .join(".horizon-flux");
+            let pipelines_dir = data_dir.join("pipelines");
+            std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
+            let pipeline_store = flux_engine::PipelineStore::open(
+                &data_dir.join("pipelines.db"),
+                &pipelines_dir,
+            )
+            .context("failed to open pipeline store")?;
+
+            let json = std::fs::read_to_string(&file)
+                .with_context(|| format!("failed to read {}", file.display()))?;
+
+            let (mut pipeline, warnings) = flux_engine::Pipeline::from_json_with_warnings(&json)
+                .context("failed to parse pipeline")?;
+
+            for w in &warnings.undefined_variables {
+                eprintln!("warning: {w}");
+            }
+
+            // Handle name conflicts.
+            let existing = pipeline_store
+                .get_by_name(&pipeline.name)
+                .context("failed to check for name conflict")?;
+
+            let record = if let Some(existing_record) = existing {
+                match on_conflict.as_str() {
+                    "rename" => {
+                        let base_name = pipeline.name.clone();
+                        let mut counter = 2u32;
+                        loop {
+                            let candidate = format!("{base_name} ({counter})");
+                            if pipeline_store.get_by_name(&candidate)?.is_none() {
+                                pipeline.name = candidate;
+                                break;
+                            }
+                            counter += 1;
+                            anyhow::ensure!(counter <= 100, "could not find a unique name");
+                        }
+                        pipeline_store
+                            .create(pipeline)
+                            .context("failed to create pipeline")?
+                    }
+                    "overwrite" => pipeline_store
+                        .update(&existing_record.id, pipeline)
+                        .context("failed to overwrite pipeline")?,
+                    _ => {
+                        anyhow::bail!(
+                            "pipeline `{}` already exists (use --on-conflict rename or overwrite)",
+                            pipeline.name
+                        );
+                    }
+                }
+            } else {
+                pipeline_store
+                    .create(pipeline)
+                    .context("failed to create pipeline")?
+            };
+
+            println!(
+                "Imported `{}` (id: {})",
+                record.pipeline.name, record.id
+            );
         }
         None => {
             let config = flux_server::ServerConfig {
