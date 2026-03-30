@@ -1,0 +1,321 @@
+{
+  "name": "Cross-Source Analytics: Rentals + Earthquakes + Country Data",
+  "version": 1,
+  "default_environment": "dev",
+  "variables": {
+    "min_magnitude": {
+      "type": "float",
+      "default": 2.5
+    }
+  },
+  "environment_overrides": {},
+  "nodes": [
+    {
+      "id": "customers",
+      "name": "Pagila Customers",
+      "type": "source",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "query": "SELECT c.customer_id, c.first_name, c.last_name, c.email, c.active, c.create_date, ci.city, co.country FROM customer c JOIN address a ON c.address_id = a.address_id JOIN city ci ON a.city_id = ci.city_id JOIN country co ON ci.country_id = co.country_id"
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "rentals_payments",
+      "name": "Pagila Rentals + Payments",
+      "type": "source",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "query": "SELECT r.customer_id, COUNT(r.rental_id) AS rental_count, COALESCE(SUM(p.amount), 0) AS total_spent, MIN(r.rental_date) AS first_rental, MAX(r.rental_date) AS last_rental FROM rental r LEFT JOIN payment_p2022_01 p ON r.rental_id = p.rental_id GROUP BY r.customer_id"
+      },
+      "position": {
+        "x": 0,
+        "y": 200
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "earthquakes",
+      "name": "USGS Earthquakes (Month)",
+      "type": "source",
+      "connector": "rest",
+      "config": {
+        "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_month.geojson",
+        "method": "GET",
+        "response_format": "json",
+        "data_path": "features"
+      },
+      "position": {
+        "x": 0,
+        "y": 450
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "country_econ",
+      "name": "Country Economics (CSV)",
+      "type": "source",
+      "connector": "csv",
+      "config": {
+        "path": "test-pipelines/data/country_economics.csv",
+        "format": "csv"
+      },
+      "position": {
+        "x": 0,
+        "y": 700
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "rest_countries",
+      "name": "REST Countries API",
+      "type": "source",
+      "connector": "rest",
+      "config": {
+        "url": "https://restcountries.com/v3.1/all?fields=name,population,region,subregion,area,latlng",
+        "method": "GET",
+        "response_format": "json"
+      },
+      "position": {
+        "x": 0,
+        "y": 950
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "customer_profiles",
+      "name": "Customer Profiles (SQL)",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  c.customer_id,\n  c.first_name || ' ' || c.last_name AS full_name,\n  c.email,\n  c.country,\n  c.city,\n  c.active,\n  c.create_date,\n  COALESCE(rp.rental_count, 0) AS rental_count,\n  COALESCE(rp.total_spent, 0) AS total_spent,\n  rp.first_rental,\n  rp.last_rental,\n  CASE\n    WHEN rp.rental_count >= 40 THEN 'platinum'\n    WHEN rp.rental_count >= 30 THEN 'gold'\n    WHEN rp.rental_count >= 15 THEN 'silver'\n    ELSE 'bronze'\n  END AS tier\nFROM customers c\nLEFT JOIN rentals_payments rp ON c.customer_id = rp.customer_id",
+      "materialized": true,
+      "position": {
+        "x": 400,
+        "y": 100
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "parse_earthquakes",
+      "name": "Parse Earthquake Data (Python)",
+      "type": "transform",
+      "mode": "python",
+      "code": "import polars as pl\nimport json\n\n\ndef transform(inputs, params):\n    df = inputs[\"earthquakes\"]\n\n    # The REST connector serializes nested JSON objects as strings.\n    # Parse properties and geometry from JSON strings.\n    rows = df.to_dicts()\n    parsed = []\n    for row in rows:\n        props = json.loads(row[\"properties\"]) if isinstance(row[\"properties\"], str) else row[\"properties\"]\n        geom = json.loads(row[\"geometry\"]) if isinstance(row[\"geometry\"], str) else row[\"geometry\"]\n        coords = geom.get(\"coordinates\", [0, 0, 0])\n        parsed.append({\n            \"eq_id\": str(row.get(\"id\", \"\")),\n            \"magnitude\": float(props.get(\"mag\", 0)),\n            \"place\": str(props.get(\"place\", \"unknown\")),\n            \"event_type\": str(props.get(\"type\", \"earthquake\")),\n            \"tsunami\": int(props.get(\"tsunami\", 0)),\n            \"longitude\": float(coords[0]) if len(coords) > 0 else 0.0,\n            \"latitude\": float(coords[1]) if len(coords) > 1 else 0.0,\n            \"depth_km\": float(coords[2]) if len(coords) > 2 else 0.0,\n        })\n\n    result = pl.DataFrame(parsed)\n\n    # Filter by minimum magnitude from pipeline variables\n    min_mag = float(params.get(\"min_magnitude\", 2.5))\n    result = result.filter(pl.col(\"magnitude\") >= min_mag)\n\n    return result\n",
+      "materialized": true,
+      "position": {
+        "x": 400,
+        "y": 450
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "parse_countries",
+      "name": "Parse Country API (Python)",
+      "type": "transform",
+      "mode": "python",
+      "code": "import polars as pl\nimport json\n\n\ndef transform(inputs, params):\n    df = inputs[\"rest_countries\"]\n\n    # The REST connector serializes nested JSON objects as strings.\n    # Parse each row's nested fields.\n    rows = df.to_dicts()\n    parsed = []\n    for row in rows:\n        name = row.get(\"name\", \"\")\n        if isinstance(name, str):\n            try:\n                name = json.loads(name)\n            except (json.JSONDecodeError, TypeError):\n                pass\n        country_name = name.get(\"common\", str(name)) if isinstance(name, dict) else str(name)\n\n        latlng = row.get(\"latlng\", \"[]\")\n        if isinstance(latlng, str):\n            try:\n                latlng = json.loads(latlng)\n            except (json.JSONDecodeError, TypeError):\n                latlng = [0, 0]\n        if not isinstance(latlng, list):\n            latlng = [0, 0]\n\n        area = float(row.get(\"area\", 0) or 0)\n        pop = int(row.get(\"population\", 0) or 0)\n\n        parsed.append({\n            \"country_name\": country_name,\n            \"region\": str(row.get(\"region\", \"Unknown\")),\n            \"subregion\": str(row.get(\"subregion\", \"Unknown\")),\n            \"population\": pop,\n            \"area\": area,\n            \"lat\": float(latlng[0]) if len(latlng) > 0 else 0.0,\n            \"lng\": float(latlng[1]) if len(latlng) > 1 else 0.0,\n        })\n\n    result = pl.DataFrame(parsed)\n\n    # Population density\n    result = result.with_columns(\n        (pl.col(\"population\") / pl.col(\"area\")).round(2).alias(\"pop_density_per_km2\")\n    ).filter(pl.col(\"area\") > 0)\n\n    return result\n",
+      "materialized": false,
+      "position": {
+        "x": 400,
+        "y": 950
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "enrich_customers",
+      "name": "Enrich with Economics (SQL)",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  cp.*,\n  ce.region_code AS econ_region,\n  ce.gdp_per_capita_usd,\n  ce.ecommerce_adoption_pct,\n  ce.usd_exchange_rate,\n  ROUND(cp.total_spent * ce.usd_exchange_rate, 2) AS total_spent_local_currency,\n  ce.currency\nFROM customer_profiles cp\nLEFT JOIN country_econ ce ON cp.country = ce.country",
+      "materialized": true,
+      "position": {
+        "x": 800,
+        "y": 200
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "earthquake_country_join",
+      "name": "Earthquakes Near Countries (SQL)",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  eq.eq_id,\n  eq.magnitude,\n  eq.place,\n  eq.depth_km,\n  eq.tsunami,\n  eq.latitude AS eq_lat,\n  eq.longitude AS eq_lng,\n  pc.country_name AS nearest_country,\n  pc.region AS world_region,\n  pc.population AS country_population\nFROM parse_earthquakes eq\nCROSS JOIN parse_countries pc\nWHERE ABS(eq.latitude - pc.lat) < 5.0 AND ABS(eq.longitude - pc.lng) < 5.0",
+      "materialized": true,
+      "position": {
+        "x": 800,
+        "y": 650
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "customer_rfm",
+      "name": "RFM Scoring (Python)",
+      "type": "transform",
+      "mode": "python",
+      "code": "import polars as pl\n\n\ndef transform(inputs, params):\n    df = inputs[\"enrich_customers\"]\n\n    # Compute RFM scores (Frequency + Monetary \u2014 Recency omitted since\n    # we don't have a reference \"now\" date in the dataset).\n    df = df.with_columns([\n        pl.col(\"rental_count\").cast(pl.Float64).alias(\"frequency\"),\n        pl.col(\"total_spent\").cast(pl.Float64).alias(\"monetary\"),\n    ])\n\n    # Rank into quintiles (1-5)\n    df = df.with_columns([\n        (pl.col(\"frequency\").rank(\"ordinal\") / pl.col(\"frequency\").count() * 5)\n            .cast(pl.Int32).clip(1, 5).alias(\"f_score\"),\n        (pl.col(\"monetary\").rank(\"ordinal\") / pl.col(\"monetary\").count() * 5)\n            .cast(pl.Int32).clip(1, 5).alias(\"m_score\"),\n    ])\n\n    # Combined score and segment label\n    df = df.with_columns(\n        (pl.col(\"f_score\") + pl.col(\"m_score\")).alias(\"rfm_score\")\n    )\n\n    df = df.with_columns(\n        pl.when(pl.col(\"rfm_score\") >= 9)\n            .then(pl.lit(\"Champion\"))\n            .when(pl.col(\"rfm_score\") >= 7)\n            .then(pl.lit(\"Loyal\"))\n            .when(pl.col(\"rfm_score\") >= 5)\n            .then(pl.lit(\"Potential\"))\n            .when(pl.col(\"rfm_score\") >= 3)\n            .then(pl.lit(\"At Risk\"))\n            .otherwise(pl.lit(\"Dormant\"))\n            .alias(\"segment\")\n    )\n\n    return df\n",
+      "materialized": true,
+      "position": {
+        "x": 1200,
+        "y": 200
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "seismic_summary",
+      "name": "Seismic Region Summary (SQL)",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  world_region,\n  COUNT(DISTINCT eq_id) AS earthquake_count,\n  ROUND(AVG(magnitude), 2) AS avg_magnitude,\n  ROUND(MAX(magnitude), 2) AS max_magnitude,\n  ROUND(AVG(depth_km), 1) AS avg_depth_km,\n  SUM(tsunami) AS tsunami_alerts,\n  COUNT(DISTINCT nearest_country) AS countries_affected\nFROM earthquake_country_join\nGROUP BY world_region\nORDER BY earthquake_count DESC",
+      "materialized": true,
+      "position": {
+        "x": 1200,
+        "y": 650
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "segment_summary",
+      "name": "Segment Summary (SQL)",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  segment,\n  tier,\n  COUNT(*) AS customer_count,\n  ROUND(AVG(total_spent), 2) AS avg_spent,\n  ROUND(AVG(rental_count), 1) AS avg_rentals,\n  ROUND(AVG(gdp_per_capita_usd), 0) AS avg_country_gdp\nFROM customer_rfm\nGROUP BY segment, tier\nORDER BY segment, tier",
+      "materialized": true,
+      "position": {
+        "x": 1600,
+        "y": 100
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_profiles_csv",
+      "name": "Export Profiles (CSV)",
+      "type": "sink",
+      "connector": "csv",
+      "config": {
+        "path": "output/customer_rfm_profiles.csv",
+        "format": "csv"
+      },
+      "position": {
+        "x": 1600,
+        "y": 300
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_segments_parquet",
+      "name": "Export Segments (Parquet)",
+      "type": "sink",
+      "connector": "file",
+      "config": {
+        "path": "output/segment_summary.parquet",
+        "format": "parquet",
+        "options": {
+          "compression": "snappy"
+        }
+      },
+      "position": {
+        "x": 2000,
+        "y": 100
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_seismic_stdout",
+      "name": "Seismic Summary (stdout)",
+      "type": "sink",
+      "connector": "stdout",
+      "config": {
+        "format": "table",
+        "max_rows": 50
+      },
+      "position": {
+        "x": 1600,
+        "y": 650
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_earthquakes_csv",
+      "name": "Export Earthquakes (CSV)",
+      "type": "sink",
+      "connector": "csv",
+      "config": {
+        "path": "output/earthquakes_near_countries.csv",
+        "format": "csv"
+      },
+      "position": {
+        "x": 1200,
+        "y": 900
+      },
+      "pinned_position": false
+    }
+  ],
+  "edges": [
+    {
+      "from": "customers",
+      "to": "customer_profiles"
+    },
+    {
+      "from": "rentals_payments",
+      "to": "customer_profiles"
+    },
+    {
+      "from": "earthquakes",
+      "to": "parse_earthquakes"
+    },
+    {
+      "from": "rest_countries",
+      "to": "parse_countries"
+    },
+    {
+      "from": "customer_profiles",
+      "to": "enrich_customers"
+    },
+    {
+      "from": "country_econ",
+      "to": "enrich_customers"
+    },
+    {
+      "from": "parse_earthquakes",
+      "to": "earthquake_country_join"
+    },
+    {
+      "from": "parse_countries",
+      "to": "earthquake_country_join"
+    },
+    {
+      "from": "enrich_customers",
+      "to": "customer_rfm"
+    },
+    {
+      "from": "earthquake_country_join",
+      "to": "seismic_summary"
+    },
+    {
+      "from": "customer_rfm",
+      "to": "segment_summary"
+    },
+    {
+      "from": "customer_rfm",
+      "to": "sink_profiles_csv"
+    },
+    {
+      "from": "segment_summary",
+      "to": "sink_segments_parquet"
+    },
+    {
+      "from": "seismic_summary",
+      "to": "sink_seismic_stdout"
+    },
+    {
+      "from": "earthquake_country_join",
+      "to": "sink_earthquakes_csv"
+    }
+  ]
+}
