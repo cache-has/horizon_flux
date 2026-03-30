@@ -85,8 +85,15 @@ pub fn spawn(
     let handle = thread::Builder::new()
         .name("horizon-tray".into())
         .spawn(move || {
-            if let Err(e) = run_tray_loop(config, event_rx, cmd_rx) {
-                warn!("Tray thread exited with error: {e}");
+            // On macOS, muda::Menu requires the main thread. Catch panics
+            // so we degrade gracefully instead of crashing.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_tray_loop(config, event_rx, cmd_rx)
+            }));
+            match result {
+                Ok(Err(e)) => warn!("Tray thread exited with error: {e}"),
+                Err(_) => warn!("Tray thread panicked (likely macOS main-thread requirement) — continuing without tray"),
+                Ok(Ok(())) => {}
             }
         });
 

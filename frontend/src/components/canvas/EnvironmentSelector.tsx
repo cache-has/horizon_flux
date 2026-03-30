@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEnvironmentStore } from '../../stores/environmentStore';
+import { IconChevronDown, IconChevronUp } from '../icons';
 import './EnvironmentSelector.css';
 
 /** Color mapping for well-known environments. */
@@ -69,7 +70,7 @@ export function EnvironmentSelector() {
           style={{ background: color }}
         />
         <span className="env-selector__name">{activeEnvironment}</span>
-        <span className="env-selector__chevron">{open ? '\u25B2' : '\u25BC'}</span>
+        <span className="env-selector__chevron">{open ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}</span>
       </button>
 
       {open && (

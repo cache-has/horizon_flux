@@ -294,11 +294,19 @@ export interface ApiPreviewResponse {
   sample_method?: string;
 }
 
+/** Timestamp as returned by the backend (serde SystemTime). */
+interface ApiTimestamp {
+  secs_since_epoch: number;
+  nanos_since_epoch: number;
+}
+
 /** Node-level run statistics. */
 export interface ApiNodeRunStats {
   node_id: string;
   rows_in: number;
   rows_out: number;
+  start_time?: ApiTimestamp;
+  end_time?: ApiTimestamp;
   duration_ms: number;
   error?: string;
 }
@@ -382,15 +390,53 @@ export async function previewNode(
   return res.json();
 }
 
-/** Fetch run history for a pipeline. */
+/** Response from running a pipeline. */
+export interface ApiRunResponse {
+  run_id: string;
+}
+
+/** Trigger a full pipeline execution. */
+export async function runPipeline(
+  id: string,
+  environment?: string,
+  variables?: Record<string, unknown>,
+): Promise<ApiRunResponse> {
+  const res = await fetch(`${BASE}/${id}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ environment, variables }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Run failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Compute duration in ms from backend timestamps. */
+function timestampDurationMs(start?: ApiTimestamp, end?: ApiTimestamp): number {
+  if (!start || !end) return 0;
+  const startMs = start.secs_since_epoch * 1000 + start.nanos_since_epoch / 1_000_000;
+  const endMs = end.secs_since_epoch * 1000 + end.nanos_since_epoch / 1_000_000;
+  return Math.round(endMs - startMs);
+}
+
+/** Fetch run history for a pipeline. Returns a plain array of runs. */
 export async function fetchPipelineRuns(
   id: string,
   limit = 10,
   offset = 0,
-): Promise<ApiPaginatedResponse<ApiPipelineRun>> {
+): Promise<ApiPipelineRun[]> {
   const res = await fetch(`${BASE}/${id}/runs?limit=${limit}&offset=${offset}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch runs: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  const runs: ApiPipelineRun[] = await res.json();
+  // Compute duration_ms from start/end timestamps for each node stat.
+  for (const run of runs) {
+    for (const stat of run.node_stats) {
+      stat.duration_ms = timestampDurationMs(stat.start_time, stat.end_time);
+    }
+  }
+  return runs;
 }

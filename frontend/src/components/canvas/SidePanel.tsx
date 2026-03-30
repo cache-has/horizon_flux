@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { PipelineNode } from '../../types/pipeline';
+import { roleIcon } from '../icons';
 import type { ApiNode, ApiColumnInfo, ApiSampleConfig } from '../../api/pipelines';
 import {
   previewPipeline,
@@ -22,11 +23,7 @@ import './SidePanel.css';
 // Helpers
 // ---------------------------------------------------------------------------
 
-const roleIcons: Record<string, string> = {
-  source: '\u{1F4E5}',
-  transform: '\u{2699}\u{FE0F}',
-  sink: '\u{1F4E4}',
-};
+// roleIcon imported from ../icons
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -483,6 +480,7 @@ export function SidePanel() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sampleMethod, setSampleMethod] = useState<string | undefined>(undefined);
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
+  const lastRunCompletedAt = usePipelineStore((s) => s.lastRunCompletedAt);
 
   // Cache key: pipeline version — invalidate when pipeline config changes
   const previewCacheRef = useRef<{
@@ -553,10 +551,10 @@ export function SidePanel() {
 
     async function loadRuns() {
       try {
-        const res = await fetchPipelineRuns(pipelineId!, 1, 0);
+        const runs = await fetchPipelineRuns(pipelineId!, 1, 0);
         if (controller.signal.aborted) return;
-        if (res.data.length > 0) {
-          const run = res.data[0];
+        if (runs.length > 0) {
+          const run = runs[0];
           const map = new Map<string, ApiNodeRunStats>();
           for (const stat of run.node_stats) {
             map.set(stat.node_id, stat);
@@ -574,7 +572,7 @@ export function SidePanel() {
     return () => {
       controller.abort();
     };
-  }, [pipelineId, selectedNodeId, pipelineVersion]);
+  }, [pipelineId, selectedNodeId, pipelineVersion, lastRunCompletedAt]);
 
   // Rename handler — updates the node label in store and marks dirty
   const handleRename = useCallback(
@@ -677,7 +675,7 @@ export function SidePanel() {
           {/* Header */}
           <div className="side-panel__header">
             <span className="side-panel__role-icon">
-              {roleIcons[selectedNode.data.role] ?? '?'}
+              {roleIcon[selectedNode.data.role] ?? null}
             </span>
             <div className="side-panel__name">
               <InlineName name={selectedNode.data.label} onRename={handleRename} />

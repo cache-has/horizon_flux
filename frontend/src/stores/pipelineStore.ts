@@ -136,6 +136,8 @@ export interface PipelineStoreState {
   _undoStack: PipelineSnapshot[];
   /** Redo stack of pipeline snapshots. */
   _redoStack: PipelineSnapshot[];
+  /** Bumped when a run completes, so dependent effects re-fetch run data. */
+  lastRunCompletedAt: number;
 }
 
 export interface PipelineStoreActions {
@@ -188,6 +190,12 @@ export interface PipelineStoreActions {
   canUndo: () => boolean;
   /** Whether redo is available. */
   canRedo: () => boolean;
+  /** Update a single node's execution status (with optional error message). */
+  setNodeStatus: (nodeId: string, status: import('../types/pipeline').NodeStatus, errorMessage?: string) => void;
+  /** Reset all nodes to idle status. */
+  resetNodeStatuses: () => void;
+  /** Signal that a run completed (triggers re-fetch of run stats). */
+  notifyRunCompleted: () => void;
 }
 
 export type PipelineStore = PipelineStoreState & PipelineStoreActions;
@@ -221,6 +229,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   editingNodeId: null,
   _undoStack: [],
   _redoStack: [],
+  lastRunCompletedAt: 0,
 
   // Actions
   loadPipeline: async (id: string) => {
@@ -255,6 +264,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
       simulationHasRun: hasPositions,
       _undoStack: [],
       _redoStack: [],
+      lastRunCompletedAt: 0,
     });
   },
 
@@ -506,4 +516,27 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
 
   canUndo: () => get()._undoStack.length > 0,
   canRedo: () => get()._redoStack.length > 0,
+
+  setNodeStatus: (nodeId, status, errorMessage?) => {
+    set({
+      nodes: get().nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, data: { ...n.data, status, errorMessage: errorMessage ?? undefined } }
+          : n,
+      ),
+    });
+  },
+
+  resetNodeStatuses: () => {
+    set({
+      nodes: get().nodes.map((n) => ({
+        ...n,
+        data: { ...n.data, status: 'idle' as const },
+      })),
+    });
+  },
+
+  notifyRunCompleted: () => {
+    set({ lastRunCompletedAt: Date.now() });
+  },
 }));

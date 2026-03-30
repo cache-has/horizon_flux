@@ -5,13 +5,8 @@ import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { PipelineNode } from '../../types/pipeline';
 import { useEnvironmentStore } from '../../stores/environmentStore';
+import { roleIcon } from '../icons';
 import './PipelineNode.css';
-
-const roleIcons: Record<string, string> = {
-  source: '\u{1F4E5}',
-  transform: '\u{2699}\u{FE0F}',
-  sink: '\u{1F4E4}',
-};
 
 interface StatusMeta {
   className: string;
@@ -47,14 +42,15 @@ function formatDuration(ms: number): string {
 export const PipelineNodeComponent = memo(function PipelineNodeComponent({
   data,
 }: NodeProps<PipelineNode>) {
-  const icon = roleIcons[data.role] ?? '?';
+  const icon = roleIcon[data.role] ?? null;
   const status = statusIndicators[data.status] ?? statusIndicators.idle;
   const [hovered, setHovered] = useState(false);
 
   const hasStats =
     data.rowCount != null ||
     data.schemaSummary != null ||
-    data.lastRunDurationMs != null;
+    data.lastRunDurationMs != null ||
+    data.errorMessage != null;
 
   return (
     <div
@@ -70,13 +66,18 @@ export const PipelineNodeComponent = memo(function PipelineNodeComponent({
         <span className="pipeline-node__label">{data.label}</span>
         <span
           className={`pipeline-node__status ${status.className}`}
-          title={status.label}
+          title={data.errorMessage ?? status.label}
         >
           {status.icon}
         </span>
       </div>
       {hovered && hasStats && (
         <div className="pipeline-node__tooltip">
+          {data.errorMessage != null && (
+            <div className="pipeline-node__tooltip-error">
+              {data.errorMessage}
+            </div>
+          )}
           {data.rowCount != null && (
             <div className="pipeline-node__tooltip-row">
               <span className="pipeline-node__tooltip-key">Rows</span>

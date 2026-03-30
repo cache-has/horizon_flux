@@ -1,0 +1,137 @@
+{
+  "name": "Openboard: Order Summary by Region",
+  "version": 1,
+  "default_environment": "dev",
+  "variables": {},
+  "environment_overrides": {},
+  "nodes": [
+    {
+      "id": "orders",
+      "name": "Orders",
+      "type": "source",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "postgresql://cachemcclure@localhost:5432/openboard_examples",
+        "table": "orders"
+      },
+      "position": { "x": 0, "y": 0 },
+      "pinned_position": false
+    },
+    {
+      "id": "order_lines",
+      "name": "Order Lines",
+      "type": "source",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "postgresql://cachemcclure@localhost:5432/openboard_examples",
+        "table": "order_lines"
+      },
+      "position": { "x": 0, "y": 200 },
+      "pinned_position": false
+    },
+    {
+      "id": "products",
+      "name": "Products",
+      "type": "source",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "postgresql://cachemcclure@localhost:5432/openboard_examples",
+        "table": "products"
+      },
+      "position": { "x": 0, "y": 400 },
+      "pinned_position": false
+    },
+    {
+      "id": "customers",
+      "name": "Customers",
+      "type": "source",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "postgresql://cachemcclure@localhost:5432/openboard_examples",
+        "table": "customers"
+      },
+      "position": { "x": 0, "y": 600 },
+      "pinned_position": false
+    },
+    {
+      "id": "enrich_lines",
+      "name": "Enrich Line Items",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  ol.id AS line_id,\n  ol.order_id,\n  ol.quantity,\n  p.name AS product_name,\n  p.category,\n  p.unit_cost,\n  ol.quantity * p.unit_cost AS line_cost\nFROM order_lines ol\nINNER JOIN products p ON ol.sku = p.sku",
+      "materialized": false,
+      "position": { "x": 400, "y": 300 },
+      "pinned_position": false
+    },
+    {
+      "id": "join_orders",
+      "name": "Join with Orders",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  o.id AS order_id,\n  o.customer_id,\n  o.region,\n  o.status,\n  o.order_date,\n  o.amount AS order_amount,\n  el.product_name,\n  el.category,\n  el.quantity,\n  el.line_cost\nFROM orders o\nINNER JOIN enrich_lines el ON o.id = el.order_id",
+      "materialized": false,
+      "position": { "x": 700, "y": 100 },
+      "pinned_position": false
+    },
+    {
+      "id": "add_customer",
+      "name": "Add Customer Info",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  jo.*,\n  c.name AS customer_name\nFROM join_orders jo\nINNER JOIN customers c ON jo.customer_id = c.id",
+      "materialized": false,
+      "position": { "x": 1000, "y": 300 },
+      "pinned_position": false
+    },
+    {
+      "id": "region_summary",
+      "name": "Summary by Region",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  region,\n  COUNT(DISTINCT order_id) AS total_orders,\n  SUM(quantity) AS total_units,\n  ROUND(SUM(line_cost), 2) AS total_cost,\n  ROUND(AVG(line_cost), 2) AS avg_line_cost,\n  COUNT(DISTINCT customer_name) AS unique_customers\nFROM add_customer\nGROUP BY region\nORDER BY total_cost DESC",
+      "materialized": false,
+      "position": { "x": 1300, "y": 200 },
+      "pinned_position": false
+    },
+    {
+      "id": "category_summary",
+      "name": "Summary by Category",
+      "type": "transform",
+      "mode": "sql",
+      "code": "SELECT\n  category,\n  COUNT(DISTINCT order_id) AS total_orders,\n  SUM(quantity) AS total_units,\n  ROUND(SUM(line_cost), 2) AS total_cost\nFROM add_customer\nGROUP BY category\nORDER BY total_cost DESC",
+      "materialized": false,
+      "position": { "x": 1300, "y": 500 },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_region",
+      "name": "Region Output",
+      "type": "sink",
+      "connector": "stdout",
+      "config": {},
+      "position": { "x": 1600, "y": 200 },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_category",
+      "name": "Category Output",
+      "type": "sink",
+      "connector": "stdout",
+      "config": {},
+      "position": { "x": 1600, "y": 500 },
+      "pinned_position": false
+    }
+  ],
+  "edges": [
+    { "from": "order_lines", "to": "enrich_lines" },
+    { "from": "products", "to": "enrich_lines" },
+    { "from": "orders", "to": "join_orders" },
+    { "from": "enrich_lines", "to": "join_orders" },
+    { "from": "join_orders", "to": "add_customer" },
+    { "from": "customers", "to": "add_customer" },
+    { "from": "add_customer", "to": "region_summary" },
+    { "from": "add_customer", "to": "category_summary" },
+    { "from": "region_summary", "to": "sink_region" },
+    { "from": "category_summary", "to": "sink_category" }
+  ]
+}

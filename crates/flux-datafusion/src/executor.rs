@@ -14,6 +14,7 @@ use crate::result::PipelineResult;
 use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus};
 use crate::run_store::RunStore;
 use crate::stats::NodeStats;
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
@@ -451,14 +452,16 @@ impl PipelineExecutor {
         }
 
         // Build schema map for the friendly SQL preprocessor and register tables.
+        // Empty result sets must still be registered so downstream transforms
+        // can reference them (e.g. joins that return zero rows in preview).
         let mut table_schemas = HashMap::new();
         for (node_id, batches) in &upstream_data {
             if batches.is_empty() {
                 continue;
             }
-            let schema = batches[0].schema();
+            let (schema, data) = (batches[0].schema(), vec![batches.to_vec()]);
             table_schemas.insert(node_id.to_string(), schema.clone());
-            let mem_table = MemTable::try_new(schema, vec![batches.to_vec()])?;
+            let mem_table = MemTable::try_new(schema, data)?;
             ctx.register_table(node_id.to_string().as_str(), Arc::new(mem_table))?;
         }
 
@@ -467,8 +470,16 @@ impl PipelineExecutor {
         let processed_sql = crate::friendly_sql::preprocess_sql(sql, &table_schemas)?;
 
         let df = ctx.sql(&processed_sql).await?;
+        let df_schema = df.schema();
+        let schema: Arc<Schema> = Arc::new(df_schema.as_arrow().clone());
         let batches = df.collect().await?;
-        Ok(batches)
+        // Ensure we always return at least one batch so the schema is preserved
+        // for downstream nodes that reference this table (e.g. 0-row join results).
+        if batches.is_empty() {
+            Ok(vec![RecordBatch::new_empty(schema)])
+        } else {
+            Ok(batches)
+        }
     }
 
     /// Write data through the sink connector, returning the batches and write stats.

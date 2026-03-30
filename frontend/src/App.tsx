@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { PipelineCanvas } from './components/canvas';
 import { usePipelineStore } from './stores/pipelineStore';
 import { useEnvironmentStore } from './stores/environmentStore';
+import { useExecutionEvents } from './hooks/useExecutionEvents';
 import { listPipelines } from './api/pipelines';
 import type { ApiPipelineResponse } from './api/pipelines';
 
@@ -61,6 +62,9 @@ function App() {
   const loadPipeline = usePipelineStore((s) => s.loadPipeline);
   const setActiveEnvironment = useEnvironmentStore((s) => s.setActiveEnvironment);
   const initRef = useRef(false);
+
+  // Connect to backend WebSocket for real-time execution status updates.
+  useExecutionEvents();
 
   useEffect(() => {
     if (initRef.current) return;

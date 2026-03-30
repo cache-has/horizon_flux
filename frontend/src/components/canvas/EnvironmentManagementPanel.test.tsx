@@ -5,7 +5,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 import { useEnvironmentStore } from '../../stores/environmentStore';
-import { usePipelineStore } from '../../stores/pipelineStore';
 
 // Mock pipeline store to provide node labels
 vi.mock('../../stores/pipelineStore', () => ({

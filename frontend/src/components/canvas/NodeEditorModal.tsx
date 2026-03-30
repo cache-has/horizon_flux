@@ -116,13 +116,14 @@ export function NodeEditorModal() {
         for (const uid of upstreamIds) {
           const upstreamNode = result.nodes.find((n) => n.node_id === uid);
           const rfUpstream = nodes.find((n) => n.id === uid);
-          const name = rfUpstream?.data.label ?? uid;
+          const displayName = rfUpstream?.data.label ?? uid;
           if (upstreamNode) {
             schemas.push({
-              nodeName: name,
+              nodeName: displayName,
               columns: upstreamNode.columns,
             });
-            data[name] = upstreamNode.rows;
+            // Key by node ID — SQL references node IDs, not display names.
+            data[uid] = upstreamNode.rows;
           }
         }
         setInputSchemas(schemas);
@@ -268,6 +269,7 @@ export function NodeEditorModal() {
         ref={dialogRef}
         className="node-editor"
         onClick={(e) => {
+          // Click on the transparent dialog (outside the panel) = close.
           if (e.target === dialogRef.current) requestClose();
         }}
         onKeyDown={(e) => {
@@ -276,7 +278,7 @@ export function NodeEditorModal() {
         }}
       >
         {apiNode && rfNode && (
-          <>
+          <div className="node-editor__panel">
             {/* Header */}
             <div className="node-editor__header">
               <input
@@ -388,7 +390,7 @@ export function NodeEditorModal() {
                 {saving ? 'Saving...' : 'Save'}
               </button>
             </div>
-          </>
+          </div>
         )}
       </dialog>
 

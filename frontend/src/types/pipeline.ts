@@ -30,6 +30,8 @@ export interface PipelineNodeData extends Record<string, unknown> {
   schemaSummary?: SchemaColumn[];
   /** Duration of last execution in milliseconds. */
   lastRunDurationMs?: number;
+  /** Error message from the last execution (set when status is 'error'). */
+  errorMessage?: string;
 }
 
 /** A pipeline node is a React Flow Node carrying our custom data. */

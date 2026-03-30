@@ -3,7 +3,7 @@
 
 .env-selector {
   position: relative;
-  z-index: 10;
+  z-index: 20;
 }
 
 .env-selector__trigger {

@@ -37,8 +37,8 @@ import { NodePalette, PALETTE_DRAG_TYPE } from './NodePalette';
 import type { PaletteItem } from './NodePalette';
 import { SidePanel } from './SidePanel';
 import { NodeEditorModal } from './NodeEditorModal';
-import { EnvironmentSelector } from './EnvironmentSelector';
 import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
+import { CanvasToolbar } from './CanvasToolbar';
 import { useEnvironmentStore } from '../../stores/environmentStore';
 import './PipelineCanvas.css';
 
@@ -78,8 +78,6 @@ function PipelineCanvasInner() {
   const selectedNodeId = usePipelineStore((s) => s.selectedNodeId);
   const undo = usePipelineStore((s) => s.undo);
   const redo = usePipelineStore((s) => s.redo);
-  const pushSnapshot = usePipelineStore((s) => s.pushSnapshot);
-
   const { screenToFlowPosition } = useReactFlow();
 
   const isValidConnection = useConnectionValidation(edges);
@@ -561,9 +559,6 @@ function PipelineCanvasInner() {
         deleteKeyCode="Delete"
         multiSelectionKeyCode="Shift"
       >
-        <Panel position="top-left" className="env-selector-panel">
-          <EnvironmentSelector />
-        </Panel>
         <EdgeMarkerDefs />
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
         <Controls />
@@ -585,22 +580,25 @@ function PipelineCanvasInner() {
           pannable
           zoomable
         />
-        <Panel position="top-right" className="relayout-panel">
-          <label className="relayout-checkbox">
-            <input
-              type="checkbox"
-              checked={unpinOnRelayout}
-              onChange={(e) => setUnpinOnRelayout(e.target.checked)}
-            />
-            Unpin all
-          </label>
-          <button
-            className="relayout-button"
-            onClick={handleRelayout}
-            title="Re-run force-directed layout"
-          >
-            Re-layout
-          </button>
+        <Panel position="top-right" className="toolbar-panel">
+          <CanvasToolbar />
+          <div className="relayout-panel">
+            <label className="relayout-checkbox">
+              <input
+                type="checkbox"
+                checked={unpinOnRelayout}
+                onChange={(e) => setUnpinOnRelayout(e.target.checked)}
+              />
+              Unpin all
+            </label>
+            <button
+              className="relayout-button"
+              onClick={handleRelayout}
+              title="Re-run force-directed layout"
+            >
+              Re-layout
+            </button>
+          </div>
         </Panel>
       </ReactFlow>
 

@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, type ReactNode } from 'react';
 import type { NodeRole } from '../../types/pipeline';
+import { roleIcon, paletteIcon, IconChevronLeft, IconChevronRight } from '../icons';
 import './NodePalette.css';
 
 // ---------------------------------------------------------------------------
@@ -14,8 +15,8 @@ export interface PaletteItem {
   id: string;
   /** Display label. */
   label: string;
-  /** Emoji icon shown alongside the label. */
-  icon: string;
+  /** Icon shown alongside the label. */
+  icon: ReactNode;
   /** Node role created when dropped. */
   role: NodeRole;
   /** Connector type for source/sink, or mode for transform. */
@@ -26,22 +27,22 @@ export interface PaletteItem {
 
 const PALETTE_ITEMS: PaletteItem[] = [
   // Sources
-  { id: 'source-csv', label: 'CSV', icon: '📄', role: 'source', subtype: 'csv', subtypeField: 'connector' },
-  { id: 'source-postgresql', label: 'PostgreSQL', icon: '🐘', role: 'source', subtype: 'postgresql', subtypeField: 'connector' },
-  { id: 'source-rest', label: 'REST API', icon: '🌐', role: 'source', subtype: 'rest', subtypeField: 'connector' },
+  { id: 'source-csv', label: 'CSV', icon: paletteIcon.csv, role: 'source', subtype: 'csv', subtypeField: 'connector' },
+  { id: 'source-postgresql', label: 'PostgreSQL', icon: paletteIcon.postgresql, role: 'source', subtype: 'postgresql', subtypeField: 'connector' },
+  { id: 'source-rest', label: 'REST API', icon: paletteIcon.rest, role: 'source', subtype: 'rest', subtypeField: 'connector' },
   // Transforms
-  { id: 'transform-sql', label: 'SQL', icon: '🔍', role: 'transform', subtype: 'sql', subtypeField: 'mode' },
-  { id: 'transform-python', label: 'Python', icon: '🐍', role: 'transform', subtype: 'python', subtypeField: 'mode' },
+  { id: 'transform-sql', label: 'SQL', icon: paletteIcon.sql, role: 'transform', subtype: 'sql', subtypeField: 'mode' },
+  { id: 'transform-python', label: 'Python', icon: paletteIcon.python, role: 'transform', subtype: 'python', subtypeField: 'mode' },
   // Sinks
-  { id: 'sink-csv', label: 'CSV', icon: '📄', role: 'sink', subtype: 'csv', subtypeField: 'connector' },
-  { id: 'sink-postgresql', label: 'PostgreSQL', icon: '🐘', role: 'sink', subtype: 'postgresql', subtypeField: 'connector' },
-  { id: 'sink-stdout', label: 'stdout', icon: '🖥️', role: 'sink', subtype: 'stdout', subtypeField: 'connector' },
+  { id: 'sink-csv', label: 'CSV', icon: paletteIcon.csv, role: 'sink', subtype: 'csv', subtypeField: 'connector' },
+  { id: 'sink-postgresql', label: 'PostgreSQL', icon: paletteIcon.postgresql, role: 'sink', subtype: 'postgresql', subtypeField: 'connector' },
+  { id: 'sink-stdout', label: 'stdout', icon: paletteIcon.stdout, role: 'sink', subtype: 'stdout', subtypeField: 'connector' },
 ];
 
-const SECTIONS: { role: NodeRole; label: string; icon: string }[] = [
-  { role: 'source', label: 'Sources', icon: '📥' },
-  { role: 'transform', label: 'Transforms', icon: '⚙️' },
-  { role: 'sink', label: 'Sinks', icon: '📤' },
+const SECTIONS: { role: NodeRole; label: string; icon: ReactNode }[] = [
+  { role: 'source', label: 'Sources', icon: roleIcon.source },
+  { role: 'transform', label: 'Transforms', icon: roleIcon.transform },
+  { role: 'sink', label: 'Sinks', icon: roleIcon.sink },
 ];
 
 // ---------------------------------------------------------------------------
@@ -88,7 +89,7 @@ export function NodePalette({ collapsed, onToggle }: NodePaletteProps) {
         title={collapsed ? 'Open node palette' : 'Close node palette'}
         aria-label={collapsed ? 'Open node palette' : 'Close node palette'}
       >
-        {collapsed ? '▶' : '◀'}
+        {collapsed ? <IconChevronRight size={12} /> : <IconChevronLeft size={12} />}
       </button>
 
       {!collapsed && (

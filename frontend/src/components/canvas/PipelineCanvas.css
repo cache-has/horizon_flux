@@ -35,7 +35,19 @@
   border: 1px solid rgba(168, 85, 247, 0.4);
 }
 
-/* Re-layout panel */
+/* Environment selector panel — must sit above NodePalette (z-index: 10) */
+.env-selector-panel {
+  z-index: 20 !important;
+}
+
+/* Top-right toolbar panel */
+.toolbar-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Re-layout controls */
 .relayout-panel {
   display: flex;
   align-items: center;
