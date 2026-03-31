@@ -12,8 +12,8 @@ use anyhow::{Context, Result};
 use clap::Subcommand;
 use flux_datafusion::storage::EnvironmentStorage;
 
-use crate::config::{self, MetadataBackend};
 use crate::OutputFormat;
+use crate::config::{self, MetadataBackend};
 
 #[derive(Subcommand)]
 pub enum MetadataAction {
@@ -154,24 +154,16 @@ fn handle_export(to_url: &str, format: OutputFormat, metadata_url: Option<&str>)
         .context("failed to list environments")?;
     let mut env_count = 0u32;
     for env in &environments {
-        rt.block_on(flux_postgres::bulk::insert_environment(
-            &target_pool,
-            env,
-        ))
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .with_context(|| format!("failed to export environment '{}'", env.name))?;
+        rt.block_on(flux_postgres::bulk::insert_environment(&target_pool, env))
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .with_context(|| format!("failed to export environment '{}'", env.name))?;
         env_count += 1;
 
         // Export table overrides for this environment.
         let overrides = source
             .environment_store
             .list_table_overrides(&env.name)
-            .with_context(|| {
-                format!(
-                    "failed to list table overrides for '{}'",
-                    env.name
-                )
-            })?;
+            .with_context(|| format!("failed to list table overrides for '{}'", env.name))?;
         for ovr in &overrides {
             rt.block_on(flux_postgres::bulk::insert_table_override(
                 &target_pool,
@@ -193,12 +185,9 @@ fn handle_export(to_url: &str, format: OutputFormat, metadata_url: Option<&str>)
     let mut exported_pipelines = 0u32;
     let mut exported_versions = 0u32;
     for record in &pipelines {
-        rt.block_on(flux_postgres::bulk::insert_pipeline(
-            &target_pool,
-            record,
-        ))
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .with_context(|| format!("failed to export pipeline '{}'", record.pipeline.name))?;
+        rt.block_on(flux_postgres::bulk::insert_pipeline(&target_pool, record))
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .with_context(|| format!("failed to export pipeline '{}'", record.pipeline.name))?;
         exported_pipelines += 1;
 
         // Export version history.
@@ -319,11 +308,9 @@ fn import_to_sqlite(
     format: OutputFormat,
 ) -> Result<()> {
     let pipelines_dir = data_dir.join("pipelines");
-    let target_pipeline_store = flux_engine::SqlitePipelineStore::open(
-        &data_dir.join("pipelines.db"),
-        &pipelines_dir,
-    )
-    .context("failed to open local pipeline store")?;
+    let target_pipeline_store =
+        flux_engine::SqlitePipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
+            .context("failed to open local pipeline store")?;
     let target_run_store = flux_datafusion::SqliteRunStore::open(&data_dir.join("runs.db"))
         .context("failed to open local run store")?;
     let target_env_store =
@@ -331,7 +318,9 @@ fn import_to_sqlite(
             .context("failed to open local environment store")?;
 
     // Import environments.
-    let environments = source_envs.list().context("failed to list source environments")?;
+    let environments = source_envs
+        .list()
+        .context("failed to list source environments")?;
     let mut env_count = 0u32;
     for env in &environments {
         // Skip defaults that already exist.
@@ -430,7 +419,9 @@ fn import_via_traits(
     let target = config::open_stores(backend, data_dir)?;
 
     // Import environments.
-    let environments = source_envs.list().context("failed to list source environments")?;
+    let environments = source_envs
+        .list()
+        .context("failed to list source environments")?;
     let mut env_count = 0u32;
     for env in &environments {
         if target.environment_store.get(&env.name)?.is_none() {

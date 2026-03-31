@@ -263,6 +263,22 @@ impl SecretResolver for SessionSecretResolver {
         flux_secrets::resolve_json_secrets(value, store, environment)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
+
+    fn resolve_json_collecting(
+        &self,
+        value: &Value,
+        environment: Option<&str>,
+    ) -> Result<(Value, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|e| format!("secret session mutex poisoned: {e}"))?;
+        let store = session.get_store().ok_or(
+            "secret store is locked — unlock it before running pipelines with secret references",
+        )?;
+        flux_secrets::resolve_json_secrets_collecting(value, store, environment)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
 }
 
 #[cfg(test)]

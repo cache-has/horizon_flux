@@ -55,10 +55,7 @@ impl EnvironmentStorage for PostgresEnvironmentStore {
 
             if let Some(fb) = fallback {
                 let row = client
-                    .query_opt(
-                        "SELECT 1 FROM environments WHERE name = $1",
-                        &[&fb],
-                    )
+                    .query_opt("SELECT 1 FROM environments WHERE name = $1", &[&fb])
                     .await
                     .map_err(pg_err)?;
                 if row.is_none() {
@@ -168,10 +165,7 @@ impl EnvironmentStorage for PostgresEnvironmentStore {
         block_on(async {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
             let rows = client
-                .query(
-                    "SELECT name, fallback FROM environments ORDER BY name",
-                    &[],
-                )
+                .query("SELECT name, fallback FROM environments ORDER BY name", &[])
                 .await
                 .map_err(pg_err)?;
 
@@ -198,10 +192,7 @@ impl EnvironmentStorage for PostgresEnvironmentStore {
                     return Err(EnvironmentError::CyclicFallback);
                 }
                 let exists = client
-                    .query_opt(
-                        "SELECT 1 FROM environments WHERE name = $1",
-                        &[&fb],
-                    )
+                    .query_opt("SELECT 1 FROM environments WHERE name = $1", &[&fb])
                     .await
                     .map_err(pg_err)?;
                 if exists.is_none() {

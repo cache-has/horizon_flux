@@ -45,6 +45,21 @@ pub trait SecretResolver: Send + Sync {
         value: &Value,
         environment: Option<&str>,
     ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Resolve all `{{ secret:... }}` references and also return the plaintext
+    /// secret values that were substituted. The returned values are used by
+    /// [`flux_secrets::scrub_secrets`] to redact secrets from error messages.
+    ///
+    /// The default implementation delegates to [`resolve_json`] and returns an
+    /// empty list (no scrubbing support).
+    fn resolve_json_collecting(
+        &self,
+        value: &Value,
+        environment: Option<&str>,
+    ) -> Result<(Value, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+        self.resolve_json(value, environment)
+            .map(|v| (v, Vec::new()))
+    }
 }
 
 /// Options controlling a pipeline execution.
@@ -194,6 +209,8 @@ impl PipelineExecutor {
             let node_start = Instant::now();
             let node_start_wall = SystemTime::now();
             let mut rows_in: u64 = 0;
+            // Secret values resolved for this node, used to scrub error messages.
+            let mut node_secret_values: Vec<String> = Vec::new();
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
                 NodeKind::Source(src_cfg) => {
@@ -210,12 +227,16 @@ impl PipelineExecutor {
                     // Interpolate variables in source connector config.
                     interpolated_cfg.config =
                         resolved_vars.interpolate_json(&interpolated_cfg.config);
-                    // Resolve secret references.
+                    // Resolve secret references (collecting values for scrubbing).
                     if let Some(resolver) = &options.secret_resolver {
-                        match resolver
-                            .resolve_json(&interpolated_cfg.config, Some(&options.environment))
-                        {
-                            Ok(resolved) => interpolated_cfg.config = resolved,
+                        match resolver.resolve_json_collecting(
+                            &interpolated_cfg.config,
+                            Some(&options.environment),
+                        ) {
+                            Ok((resolved, values)) => {
+                                interpolated_cfg.config = resolved;
+                                node_secret_values = values;
+                            }
                             Err(e) => {
                                 return Err(ExecutorError::Node {
                                     node_id: node_id.clone(),
@@ -303,13 +324,16 @@ impl PipelineExecutor {
                             // Interpolate variables in sink connector config.
                             interpolated_cfg.config =
                                 resolved_vars.interpolate_json(&interpolated_cfg.config);
-                            // Resolve secret references.
+                            // Resolve secret references (collecting values for scrubbing).
                             if let Some(resolver) = &options.secret_resolver {
-                                match resolver.resolve_json(
+                                match resolver.resolve_json_collecting(
                                     &interpolated_cfg.config,
                                     Some(&options.environment),
                                 ) {
-                                    Ok(resolved) => interpolated_cfg.config = resolved,
+                                    Ok((resolved, values)) => {
+                                        interpolated_cfg.config = resolved;
+                                        node_secret_values = values;
+                                    }
                                     Err(e) => {
                                         return Err(ExecutorError::Node {
                                             node_id: node_id.clone(),
@@ -370,7 +394,11 @@ impl PipelineExecutor {
                     outputs.insert(node_id.clone(), batches);
                 }
                 Err(kind) => {
-                    let error_msg = kind.to_string();
+                    // Scrub resolved secret values from the error message so
+                    // they never reach logs, the database, WebSocket consumers,
+                    // or API responses.
+                    let error_msg =
+                        flux_secrets::scrub_secrets(&kind.to_string(), &node_secret_values);
 
                     stats.push(NodeStats {
                         node_id: node_id.clone(),

@@ -9,7 +9,9 @@
 use crate::block_on;
 use deadpool_postgres::Pool;
 use flux_engine::pipeline::Pipeline;
-use flux_engine::pipeline_store::{PipelineId, PipelineRecord, PipelineStoreError, PipelineVersion};
+use flux_engine::pipeline_store::{
+    PipelineId, PipelineRecord, PipelineStoreError, PipelineVersion,
+};
 use flux_engine::storage::PipelineStorage;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -39,10 +41,7 @@ impl PipelineStorage for PostgresPipelineStore {
 
             // Check for name conflict.
             let row = client
-                .query_opt(
-                    "SELECT 1 FROM pipelines WHERE name = $1",
-                    &[&pipeline.name],
-                )
+                .query_opt("SELECT 1 FROM pipelines WHERE name = $1", &[&pipeline.name])
                 .await
                 .map_err(pg_err)?;
             if row.is_some() {
@@ -55,8 +54,7 @@ impl PipelineStorage for PostgresPipelineStore {
 
             pipeline.version = 1;
 
-            let definition =
-                serde_json::to_value(&pipeline).map_err(PipelineStoreError::Json)?;
+            let definition = serde_json::to_value(&pipeline).map_err(PipelineStoreError::Json)?;
 
             client
                 .execute(
@@ -200,8 +198,7 @@ impl PipelineStorage for PostgresPipelineStore {
 
             let now = SystemTime::now();
             let now_ms = system_time_to_ms(now);
-            let definition =
-                serde_json::to_value(&pipeline).map_err(PipelineStoreError::Json)?;
+            let definition = serde_json::to_value(&pipeline).map_err(PipelineStoreError::Json)?;
 
             let rows_affected = client
                 .execute(
@@ -350,8 +347,7 @@ fn row_to_record(row: &tokio_postgres::Row) -> Result<PipelineRecord, PipelineSt
     let last_run_ms: Option<i64> = row.get(5);
     let run_count: i32 = row.get(6);
 
-    let id =
-        Uuid::parse_str(&id_str).map_err(|e| PipelineStoreError::InvalidId(format!("{e}")))?;
+    let id = Uuid::parse_str(&id_str).map_err(|e| PipelineStoreError::InvalidId(format!("{e}")))?;
     let pipeline: Pipeline =
         serde_json::from_value(definition).map_err(PipelineStoreError::Json)?;
 
@@ -371,8 +367,7 @@ fn row_to_version(row: &tokio_postgres::Row) -> Result<PipelineVersion, Pipeline
     let saved_ms: i64 = row.get(2);
     let snapshot_val: serde_json::Value = row.get(3);
 
-    let id =
-        Uuid::parse_str(&id_str).map_err(|e| PipelineStoreError::InvalidId(format!("{e}")))?;
+    let id = Uuid::parse_str(&id_str).map_err(|e| PipelineStoreError::InvalidId(format!("{e}")))?;
     let snapshot: Pipeline =
         serde_json::from_value(snapshot_val).map_err(PipelineStoreError::Json)?;
 

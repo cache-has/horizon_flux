@@ -104,9 +104,9 @@ pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -
         },
         data_dir: data_dir.clone(),
         connection_string: match &backend {
-            crate::config::MetadataBackend::Postgresql { connection_string } => {
-                Some(flux_server::state::redact_connection_string(connection_string))
-            }
+            crate::config::MetadataBackend::Postgresql { connection_string } => Some(
+                flux_server::state::redact_connection_string(connection_string),
+            ),
             _ => None,
         },
         config_source: backend.display_source(metadata_url, &data_dir).to_string(),

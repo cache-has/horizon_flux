@@ -13,9 +13,9 @@
 use deadpool_postgres::{Config, Pool, Runtime};
 use flux_datafusion::run::{NodeRunStats, RunStatus};
 use flux_datafusion::storage::{EnvironmentStorage, RunStorage};
+use flux_engine::NodeId;
 use flux_engine::pipeline::Pipeline;
 use flux_engine::storage::PipelineStorage;
-use flux_engine::NodeId;
 use flux_postgres::{PostgresEnvironmentStore, PostgresPipelineStore, PostgresRunStore};
 use std::time::{Duration, SystemTime};
 use tokio_postgres::NoTls;
@@ -304,8 +304,12 @@ async fn pipeline_version_history() {
     let record = store.create(test_pipeline("versioned")).unwrap();
     assert_eq!(store.count_versions(&record.id).unwrap(), 1);
 
-    store.update(&record.id, test_pipeline("versioned")).unwrap();
-    store.update(&record.id, test_pipeline("versioned")).unwrap();
+    store
+        .update(&record.id, test_pipeline("versioned"))
+        .unwrap();
+    store
+        .update(&record.id, test_pipeline("versioned"))
+        .unwrap();
     assert_eq!(store.count_versions(&record.id).unwrap(), 3);
 
     let versions = store.list_versions(&record.id, 100, 0).unwrap();
@@ -516,7 +520,10 @@ async fn environment_create_and_delete() {
     // Duplicate.
     let err = store.create("staging", None).unwrap_err();
     assert!(
-        matches!(err, flux_datafusion::error::EnvironmentError::AlreadyExists(_)),
+        matches!(
+            err,
+            flux_datafusion::error::EnvironmentError::AlreadyExists(_)
+        ),
         "expected AlreadyExists, got: {err:?}"
     );
 
@@ -569,7 +576,9 @@ async fn environment_update_fallback() {
     assert_eq!(updated.fallback.as_deref(), Some("dev"));
 
     // Self-referential fallback.
-    let err = store.update_fallback("staging", Some("staging")).unwrap_err();
+    let err = store
+        .update_fallback("staging", Some("staging"))
+        .unwrap_err();
     assert!(matches!(
         err,
         flux_datafusion::error::EnvironmentError::CyclicFallback

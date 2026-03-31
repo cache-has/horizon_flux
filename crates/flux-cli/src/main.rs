@@ -232,7 +232,14 @@ fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()>
             env,
             var,
             dry_run,
-        }) => pipeline::run(&pipeline, env.as_deref(), var, dry_run, format, metadata_url),
+        }) => pipeline::run(
+            &pipeline,
+            env.as_deref(),
+            var,
+            dry_run,
+            format,
+            metadata_url,
+        ),
 
         Some(Command::List) => pipeline::list(format, metadata_url),
 

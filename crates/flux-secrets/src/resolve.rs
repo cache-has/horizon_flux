@@ -60,6 +60,53 @@ pub fn resolve_secrets(
     Ok(result)
 }
 
+/// Resolve all `{{ secret:... }}` references in a string, also returning the
+/// plaintext secret values that were substituted (for use with [`scrub_secrets`]).
+pub fn resolve_secrets_collecting(
+    input: &str,
+    store: &SecretStore,
+    environment: Option<&str>,
+) -> Result<(String, Vec<String>), SecretError> {
+    let mut result = String::with_capacity(input.len());
+    let mut secret_values = Vec::new();
+    let mut remaining = input;
+
+    while let Some(start) = remaining.find("{{") {
+        result.push_str(&remaining[..start]);
+
+        let after_open = &remaining[start + 2..];
+        let Some(end) = after_open.find("}}") else {
+            result.push_str(&remaining[start..]);
+            return Ok((result, secret_values));
+        };
+
+        let inner = after_open[..end].trim();
+
+        if let Some(secret_name) = inner.strip_prefix("secret:") {
+            let secret_name = secret_name.trim();
+            if secret_name.is_empty() {
+                return Err(SecretError::InvalidReference(
+                    "empty secret name in {{ secret: }}".to_string(),
+                ));
+            }
+
+            let value = store.resolve(secret_name, environment)?;
+            let value_str = String::from_utf8(value).map_err(|_| {
+                SecretError::Decryption(format!("secret '{secret_name}' is not valid UTF-8"))
+            })?;
+            secret_values.push(value_str.clone());
+            result.push_str(&value_str);
+        } else {
+            result.push_str(&remaining[start..start + 2 + end + 2]);
+        }
+
+        remaining = &after_open[end + 2..];
+    }
+
+    result.push_str(remaining);
+    Ok((result, secret_values))
+}
+
 /// Check whether a string contains any `{{ secret:... }}` references.
 pub fn has_secret_refs(input: &str) -> bool {
     let mut remaining = input;
@@ -111,6 +158,60 @@ pub fn resolve_json_secrets(
                 .map(|v| resolve_json_secrets(v, store, environment))
                 .collect();
             Ok(serde_json::Value::Array(resolved?))
+        }
+        _ => Ok(value.clone()),
+    }
+}
+
+/// Resolve all `{{ secret:... }}` references in a JSON value, also returning
+/// the plaintext secret values that were substituted (for use with [`scrub_secrets`]).
+pub fn resolve_json_secrets_collecting(
+    value: &serde_json::Value,
+    store: &SecretStore,
+    environment: Option<&str>,
+) -> Result<(serde_json::Value, Vec<String>), SecretError> {
+    let mut all_values = Vec::new();
+    let resolved = resolve_json_collecting_inner(value, store, environment, &mut all_values)?;
+    Ok((resolved, all_values))
+}
+
+fn resolve_json_collecting_inner(
+    value: &serde_json::Value,
+    store: &SecretStore,
+    environment: Option<&str>,
+    collected: &mut Vec<String>,
+) -> Result<serde_json::Value, SecretError> {
+    match value {
+        serde_json::Value::String(s) => {
+            if has_secret_refs(s) {
+                let (resolved, values) = resolve_secrets_collecting(s, store, environment)?;
+                collected.extend(values);
+                Ok(serde_json::Value::String(resolved))
+            } else {
+                Ok(value.clone())
+            }
+        }
+        serde_json::Value::Object(map) => {
+            let mut resolved = serde_json::Map::new();
+            for (k, v) in map {
+                resolved.insert(
+                    k.clone(),
+                    resolve_json_collecting_inner(v, store, environment, collected)?,
+                );
+            }
+            Ok(serde_json::Value::Object(resolved))
+        }
+        serde_json::Value::Array(arr) => {
+            let mut resolved = Vec::with_capacity(arr.len());
+            for v in arr {
+                resolved.push(resolve_json_collecting_inner(
+                    v,
+                    store,
+                    environment,
+                    collected,
+                )?);
+            }
+            Ok(serde_json::Value::Array(resolved))
         }
         _ => Ok(value.clone()),
     }

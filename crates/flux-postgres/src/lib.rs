@@ -10,8 +10,8 @@
 pub mod bulk;
 pub mod environment;
 pub mod pipeline_store;
-pub mod run_store;
 pub(crate) mod retry;
+pub mod run_store;
 mod schema;
 
 pub use environment::PostgresEnvironmentStore;

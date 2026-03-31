@@ -307,10 +307,12 @@ backend = "postgresql"
         .unwrap();
         let result = MetadataBackend::resolve(None, tmp.path());
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("no connection_string"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no connection_string")
+        );
     }
 
     #[test]

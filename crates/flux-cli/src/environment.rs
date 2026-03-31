@@ -3,9 +3,9 @@
 
 //! CLI commands for managing environments.
 
+use crate::OutputFormat;
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use crate::OutputFormat;
 
 #[derive(Subcommand)]
 pub enum EnvAction {

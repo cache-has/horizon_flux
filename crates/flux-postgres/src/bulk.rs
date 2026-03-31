@@ -46,10 +46,7 @@ pub async fn insert_pipeline(pool: &Pool, record: &PipelineRecord) -> Result<(),
 }
 
 /// Insert a pipeline version snapshot preserving the original version number and timestamp.
-pub async fn insert_pipeline_version(
-    pool: &Pool,
-    version: &PipelineVersion,
-) -> Result<(), String> {
+pub async fn insert_pipeline_version(pool: &Pool, version: &PipelineVersion) -> Result<(), String> {
     let client = crate::retry::get_client(pool)
         .await
         .map_err(|e| format!("pool error: {e}"))?;
