@@ -6,8 +6,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { usePipelineStore } from '../../stores/pipelineStore';
 
-// Mock Monaco DiffEditor
+// Mock Monaco editors
 vi.mock('@monaco-editor/react', () => ({
+  default: ({ value }: { value: string }) => (
+    <pre data-testid="mock-editor">{value?.slice(0, 50)}</pre>
+  ),
   DiffEditor: () => <div data-testid="mock-diff-editor" />,
 }));
 
@@ -161,5 +164,62 @@ describe('VersionHistoryPanel', () => {
     // Should have restore buttons for v2 and v1, but not v3
     const restoreButtons = screen.getAllByText('Restore');
     expect(restoreButtons).toHaveLength(2);
+  });
+
+  it('shows view buttons for all versions', async () => {
+    render(<VersionHistoryPanel open={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('v1')).toBeDefined();
+    });
+
+    // Every version row should have a View button
+    const viewButtons = screen.getAllByText('View');
+    expect(viewButtons).toHaveLength(3);
+  });
+
+  it('opens view modal when View is clicked', async () => {
+    mockFetchVersion.mockResolvedValue({
+      version: 2,
+      saved_at: 1711800000000,
+      snapshot: { ...SAMPLE_PIPELINE, version: 2 },
+    });
+
+    render(<VersionHistoryPanel open={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('v2')).toBeDefined();
+    });
+
+    // Click View on version 2
+    const viewButtons = screen.getAllByText('View');
+    fireEvent.click(viewButtons[1]); // v2 is second in the list (newest first)
+
+    await waitFor(() => {
+      expect(mockFetchVersion).toHaveBeenCalledWith('test-id', 2);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-editor')).toBeDefined();
+    });
+  });
+
+  it('uses in-memory pipeline for current version view', async () => {
+    render(<VersionHistoryPanel open={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('v3')).toBeDefined();
+    });
+
+    // Click View on version 3 (current)
+    const viewButtons = screen.getAllByText('View');
+    fireEvent.click(viewButtons[0]); // v3 is first (newest)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-editor')).toBeDefined();
+    });
+
+    // Should NOT have called fetchVersion since v3 is current
+    expect(mockFetchVersion).not.toHaveBeenCalled();
   });
 });

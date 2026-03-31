@@ -172,6 +172,30 @@
   color: var(--text, #6b6375);
 }
 
+.version-panel__view-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--sans);
+  font-weight: 500;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text, #6b6375);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.version-panel__view-btn:hover:not(:disabled) {
+  border-color: var(--accent, #7c3aed);
+  color: var(--accent, #7c3aed);
+}
+
+.version-panel__view-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .version-panel__restore-btn {
   flex-shrink: 0;
   padding: 4px 10px;

@@ -1,0 +1,64 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.version-view-modal {
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 10px;
+  padding: 0;
+  background: var(--bg, #fff);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  width: 80vw;
+  max-width: 900px;
+  height: 80vh;
+  font-family: var(--sans, system-ui, sans-serif);
+  overflow: hidden;
+}
+
+.version-view-modal::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.version-view-modal__content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Header */
+.version-view-modal__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  flex-shrink: 0;
+}
+
+.version-view-modal__title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-h, #08060d);
+  margin: 0;
+}
+
+.version-view-modal__close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text, #6b6375);
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.version-view-modal__close:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+}
+
+/* Editor area */
+.version-view-modal__editor {
+  flex: 1;
+  min-height: 0;
+}

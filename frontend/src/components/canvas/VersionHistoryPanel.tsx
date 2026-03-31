@@ -11,6 +11,7 @@ import {
   type ApiPipeline,
 } from '../../api/pipelines';
 import { VersionDiffModal } from './VersionDiffModal';
+import { VersionViewModal } from './VersionViewModal';
 import './VersionHistoryPanel.css';
 
 interface VersionHistoryPanelProps {
@@ -56,6 +57,10 @@ export function VersionHistoryPanel({ open, onClose }: VersionHistoryPanelProps)
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [diffState, setDiffState] = useState<DiffState | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+
+  // Single-version view state
+  const [viewState, setViewState] = useState<{ label: string; json: string } | null>(null);
+  const [viewLoading, setViewLoading] = useState<number | null>(null);
 
   // Load versions when panel opens
   useEffect(() => {
@@ -152,7 +157,29 @@ export function VersionHistoryPanel({ open, onClose }: VersionHistoryPanelProps)
     [pipelineId, loadPipeline],
   );
 
+  const handleView = useCallback(
+    async (version: number) => {
+      if (!pipelineId) return;
+      setViewLoading(version);
+      try {
+        // For the current version, use the in-memory pipeline; otherwise fetch
+        if (version === apiPipeline?.version && apiPipeline) {
+          setViewState({ label: `v${version} (current)`, json: snapshotToJson(apiPipeline) });
+        } else {
+          const res = await fetchVersion(pipelineId, version);
+          setViewState({ label: `v${version}`, json: snapshotToJson(res.snapshot) });
+        }
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setViewLoading(null);
+      }
+    },
+    [pipelineId, apiPipeline],
+  );
+
   const closeDiff = useCallback(() => setDiffState(null), []);
+  const closeView = useCallback(() => setViewState(null), []);
 
   const currentVersion = apiPipeline?.version;
 
@@ -223,6 +250,13 @@ export function VersionHistoryPanel({ open, onClose }: VersionHistoryPanelProps)
                       {formatTimestamp(v.saved_at)}
                     </span>
                   </div>
+                  <button
+                    className="version-panel__view-btn"
+                    onClick={() => handleView(v.version)}
+                    disabled={viewLoading !== null}
+                  >
+                    {viewLoading === v.version ? '...' : 'View'}
+                  </button>
                   {!isCurrent && (
                     <button
                       className="version-panel__restore-btn"
@@ -245,6 +279,14 @@ export function VersionHistoryPanel({ open, onClose }: VersionHistoryPanelProps)
           leftJson={diffState.leftJson}
           rightJson={diffState.rightJson}
           onClose={closeDiff}
+        />
+      )}
+
+      {viewState && (
+        <VersionViewModal
+          versionLabel={viewState.label}
+          json={viewState.json}
+          onClose={closeView}
         />
       )}
     </>

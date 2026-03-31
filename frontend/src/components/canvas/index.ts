@@ -10,3 +10,4 @@ export { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 export { NodeEditorModal } from './NodeEditorModal';
 export { VersionHistoryPanel } from './VersionHistoryPanel';
 export { VersionDiffModal } from './VersionDiffModal';
+export { VersionViewModal } from './VersionViewModal';
