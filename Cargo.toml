@@ -75,7 +75,7 @@ argon2 = "0.5"
 rand = "0.9"
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 owo-colors = { version = "4", features = ["supports-colors"] }
 rpassword = "7"
 

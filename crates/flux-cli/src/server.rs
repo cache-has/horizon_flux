@@ -3,6 +3,7 @@
 
 //! CLI commands for managing the Horizon Flux server process.
 
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -18,6 +19,10 @@ pub enum ServerAction {
         /// Port number for the web server.
         #[arg(long, short, default_value_t = 8080)]
         port: u16,
+
+        /// Address to bind to (default: 127.0.0.1, use 0.0.0.0 for Docker).
+        #[arg(long, default_value = "127.0.0.1", env = "HORIZON_FLUX_HOST")]
+        host: IpAddr,
 
         /// Start without opening the browser.
         #[arg(long)]
@@ -46,17 +51,25 @@ pub fn handle(action: ServerAction, format: OutputFormat) -> Result<()> {
     match action {
         ServerAction::Start {
             port,
+            host,
             headless,
             dev,
-        } => start(port, headless, dev, None),
+        } => start(port, host, headless, dev, None),
         ServerAction::Stop => stop(format),
         ServerAction::Status => status(format),
     }
 }
 
 /// Start the server — extracted from the previous default path in main.
-pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -> Result<()> {
+pub fn start(
+    port: u16,
+    host: IpAddr,
+    headless: bool,
+    dev: bool,
+    metadata_url: Option<&str>,
+) -> Result<()> {
     let config = flux_server::ServerConfig {
+        host,
         port_start: port,
         open_browser: !headless,
         dev_mode: dev,
@@ -88,6 +101,7 @@ pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -
 
     let event_tx = flux_server::AppState::new_event_channel();
 
+    #[cfg(feature = "tray")]
     let tray_handle = flux_tray::spawn(
         flux_tray::TrayConfig {
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -124,6 +138,7 @@ pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -
         metadata_info,
     };
 
+    #[cfg(feature = "tray")]
     let on_ready: Option<Box<dyn FnOnce(u16) + Send>> = match &tray_handle {
         Some(handle) => {
             let cmd_tx = handle.cmd_sender();
@@ -134,11 +149,14 @@ pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -
         }
         None => None,
     };
+    #[cfg(not(feature = "tray"))]
+    let on_ready: Option<Box<dyn FnOnce(u16) + Send>> = None;
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     rt.block_on(flux_server::serve(config, app_state, on_ready))
         .context("server failed")?;
 
+    #[cfg(feature = "tray")]
     if let Some(handle) = tray_handle {
         handle.shutdown();
     }

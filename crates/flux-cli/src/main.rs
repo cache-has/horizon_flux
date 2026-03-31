@@ -55,6 +55,10 @@ enum Command {
         #[arg(long, short, default_value_t = 8080)]
         port: u16,
 
+        /// Address to bind to (default: 127.0.0.1, use 0.0.0.0 for Docker).
+        #[arg(long, default_value = "127.0.0.1", env = "HORIZON_FLUX_HOST")]
+        host: std::net::IpAddr,
+
         /// Start without opening the browser.
         #[arg(long)]
         headless: bool,
@@ -186,13 +190,20 @@ fn main() -> ExitCode {
 fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     match cli.command {
         // Default (no subcommand) = start the server.
-        None => server::start(8080, false, false, metadata_url),
+        None => server::start(
+            8080,
+            flux_server::port::DEFAULT_HOST,
+            false,
+            false,
+            metadata_url,
+        ),
 
         Some(Command::Start {
             port,
+            host,
             headless,
             dev,
-        }) => server::start(port, headless, dev, metadata_url),
+        }) => server::start(port, host, headless, dev, metadata_url),
 
         Some(Command::Stop) => server::handle(server::ServerAction::Stop, format),
 
@@ -709,10 +720,12 @@ mod tests {
         match cli.command {
             Some(Command::Start {
                 port,
+                host,
                 headless,
                 dev,
             }) => {
                 assert_eq!(port, 8080);
+                assert_eq!(host, std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
                 assert!(!headless);
                 assert!(!dev);
             }

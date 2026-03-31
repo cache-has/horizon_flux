@@ -20,6 +20,7 @@ pub mod ws;
 pub use error::ServerError;
 pub use state::AppState;
 
+use std::net::IpAddr;
 use std::process;
 
 use axum::Router;
@@ -31,6 +32,8 @@ use tracing::info;
 /// Configuration for the web server.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
+    /// Address to bind to (default: 127.0.0.1).
+    pub host: IpAddr,
     /// Starting port number (default: 8080).
     pub port_start: u16,
     /// Ceiling for port scanning, exclusive (default: 8180).
@@ -45,6 +48,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
+            host: port::DEFAULT_HOST,
             port_start: port::DEFAULT_PORT,
             port_ceiling: port::DEFAULT_PORT_CEILING,
             open_browser: true,
@@ -122,7 +126,8 @@ pub async fn serve(
     }
 
     // --- Port selection + bind ---
-    let (listener, port) = port::find_and_bind(config.port_start, config.port_ceiling).await?;
+    let (listener, port) =
+        port::find_and_bind(config.host, config.port_start, config.port_ceiling).await?;
 
     // --- Lockfile ---
     let info = lockfile::InstanceInfo {
@@ -135,8 +140,17 @@ pub async fn serve(
     // --- Build router ---
     let app = build_router(&config, app_state);
 
-    let url = format!("http://localhost:{port}");
-    info!("Horizon Flux listening on {url}");
+    let display_host = if config.host.is_unspecified() {
+        "localhost"
+    } else {
+        ""
+    };
+    let url = if display_host.is_empty() {
+        format!("http://{}:{port}", config.host)
+    } else {
+        format!("http://{display_host}:{port}")
+    };
+    info!("Horizon Flux listening on {}:{port}", config.host);
     println!("Horizon Flux is running at {url}");
 
     if let Some(cb) = on_ready {

@@ -41,6 +41,19 @@ release:
 release-size: release
     ls -lh target/release/horizon-flux
 
+# Package a release archive for the current platform
+release-dist: release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(cargo metadata --format-version=1 --no-deps | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")
+    TARGET=$(rustc -vV | awk '/^host:/ { print $2 }')
+    BINARY="target/release/horizon-flux"
+    ARCHIVE="horizon-flux-v${VERSION}-${TARGET}.tar.gz"
+    tar -czf "$ARCHIVE" -C target/release horizon-flux
+    shasum -a 256 "$ARCHIVE"
+    echo "Created $ARCHIVE"
+    ls -lh "$ARCHIVE"
+
 # Format all code
 fmt:
     cargo fmt --all

@@ -1,0 +1,190 @@
+# Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+            archive: tar.gz
+            cargo_flags: "--features tray"
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            os: macos
+            archive: tar.gz
+            cargo_flags: "--features tray"
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            os: linux
+            archive: tar.gz
+            cargo_flags: "--features tray"
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            os: linux-musl
+            archive: tar.gz
+            cargo_flags: "--no-default-features"
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            os: windows
+            archive: zip
+            cargo_flags: "--features tray"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # Linux glibc: install system deps for tray icon / GTK
+      - name: Install Linux system dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+
+      # Linux musl: install musl toolchain
+      - name: Install musl toolchain
+        if: matrix.os == 'linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Run tests
+        run: cargo test --workspace --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
+
+      - name: Build release binary
+        run: >
+          cargo build --release --bin horizon-flux
+          --target ${{ matrix.target }}
+          ${{ matrix.cargo_flags }}
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          BINARY="target/${{ matrix.target }}/release/horizon-flux"
+          ARCHIVE="horizon-flux-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE" -C "$(dirname "$BINARY")" "$(basename "$BINARY")"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "BINARY_SIZE=$(wc -c < "$BINARY" | tr -d ' ')" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $binary = "target/${{ matrix.target }}/release/horizon-flux.exe"
+          $archive = "horizon-flux-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          Compress-Archive -Path $binary -DestinationPath $archive
+          "ARCHIVE=$archive" | Out-File -Append $env:GITHUB_ENV
+          $size = (Get-Item $binary).Length
+          "BINARY_SIZE=$size" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Report binary size
+        run: echo "::notice title=Binary size (${{ matrix.target }})::${{ env.BINARY_SIZE }} bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum horizon-flux-* > ../checksums-sha256.txt
+          mv ../checksums-sha256.txt .
+          cat checksums-sha256.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          files: |
+            artifacts/horizon-flux-*
+            artifacts/checksums-sha256.txt
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            horizonanalytic/flux:latest
+            horizonanalytic/flux:${{ steps.version.outputs.version }}
+            ghcr.io/horizonanalytic/flux:latest
+            ghcr.io/horizonanalytic/flux:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

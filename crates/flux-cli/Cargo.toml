@@ -14,7 +14,7 @@ flux-datafusion = { workspace = true }
 flux-connectors = { workspace = true }
 flux-secrets = { workspace = true }
 flux-server = { workspace = true }
-flux-tray = { workspace = true }
+flux-tray = { workspace = true, optional = true }
 flux-postgres = { workspace = true }
 clap = { workspace = true }
 toml = { workspace = true }
@@ -31,6 +31,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 arrow = { workspace = true }
+
+[features]
+default = ["tray"]
+tray = ["dep:flux-tray"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

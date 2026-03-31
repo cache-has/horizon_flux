@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+services:
+  flux:
+    image: horizonanalytic/flux:latest
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - flux-data:/data
+    environment:
+      # Uncomment to auto-unlock the secret store on startup:
+      # HORIZON_FLUX_SECRET_PASSWORD: "changeme"
+      #
+      # Uncomment to use PostgreSQL for pipeline metadata:
+      # HORIZON_FLUX_METADATA_URL: "postgresql://user:pass@host:5432/flux"
+      RUST_LOG: "info"
+
+volumes:
+  flux-data:
