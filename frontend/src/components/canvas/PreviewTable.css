@@ -297,3 +297,40 @@
   color: var(--text, #6b6375);
   font-style: italic;
 }
+
+/* ---- Status message (no_cache / skipped) ---- */
+
+.preview-table__status-message {
+  font-size: 12px;
+  color: var(--text, #6b6375);
+  padding: 12px 8px;
+  border: 1px dashed var(--border, #e5e4e7);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.preview-table__status-icon {
+  margin-right: 4px;
+}
+
+/* ---- Status badge in stats bar ---- */
+
+.preview-table__status-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-right: 4px;
+}
+
+.preview-table__status-badge--cached {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.preview-table__status-badge--re_executed {
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.1);
+}

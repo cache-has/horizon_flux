@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { ApiNode, ApiColumnInfo } from '../../api/pipelines';
 import { previewPipeline } from '../../api/pipelines';
@@ -78,8 +78,10 @@ export function NodeEditorModal() {
     }
   }, [editingNodeId]);
 
-  // Populate local state when opening
-  useEffect(() => {
+  // Populate local state when opening.
+  // useLayoutEffect so state is set BEFORE the browser paints — prevents a
+  // flash where the editor shows stale connector/config from a previous node.
+  useLayoutEffect(() => {
     if (!apiNode) return;
     setLocalName(apiNode.name);
     setLocalMode(apiNode.mode ?? 'sql');
@@ -292,30 +294,50 @@ export function NodeEditorModal() {
               </span>
 
               {role === 'transform' && (
-                <div className="node-editor__mode-tabs">
-                  <button
-                    className={`node-editor__mode-tab${localMode === 'sql' ? ' node-editor__mode-tab--active' : ''}`}
-                    onClick={() => handleModeChange('sql')}
+                <>
+                  <div className="node-editor__mode-tabs">
+                    <button
+                      className={`node-editor__mode-tab${localMode === 'sql' ? ' node-editor__mode-tab--active' : ''}`}
+                      onClick={() => handleModeChange('sql')}
+                    >
+                      SQL
+                    </button>
+                    <button
+                      className={`node-editor__mode-tab${localMode === 'python' ? ' node-editor__mode-tab--active' : ''}`}
+                      onClick={() => handleModeChange('python')}
+                    >
+                      Python
+                    </button>
+                    <button
+                      className="node-editor__mode-tab node-editor__mode-tab--disabled"
+                      disabled
+                      title="Expression mode coming in v1.1"
+                    >
+                      Expression
+                    </button>
+                  </div>
+                  <label
+                    className="node-editor__materialized-toggle"
+                    title="When enabled, this node's output is cached for preview and downstream use"
                   >
-                    SQL
-                  </button>
-                  <button
-                    className={`node-editor__mode-tab${localMode === 'python' ? ' node-editor__mode-tab--active' : ''}`}
-                    onClick={() => handleModeChange('python')}
-                  >
-                    Python
-                  </button>
-                  <button
-                    className="node-editor__mode-tab node-editor__mode-tab--disabled"
-                    disabled
-                    title="Expression mode coming in v1.1"
-                  >
-                    Expression
-                  </button>
-                </div>
+                    <input
+                      type="checkbox"
+                      checked={apiNode?.materialized ?? false}
+                      onChange={(e) => {
+                        updateNodeConfig(editingNodeId!, { materialized: e.target.checked });
+                      }}
+                    />
+                    Materialized
+                  </label>
+                </>
               )}
 
               <div className="node-editor__spacer" />
+              {apiNode.code_path && (
+                <span className="node-editor__code-path" title={apiNode.code_path}>
+                  {apiNode.code_path}
+                </span>
+              )}
               {dirty && (
                 <span style={{ fontSize: 11, color: 'var(--text)', fontStyle: 'italic' }}>
                   unsaved
@@ -348,8 +370,8 @@ export function NodeEditorModal() {
               {role === 'source' && (
                 <SourceEditor
                   apiNode={apiNode}
-                  config={localConfig}
-                  connector={localConnector}
+                  config={Object.keys(localConfig).length > 0 ? localConfig : (apiNode.config as Record<string, unknown>) ?? {}}
+                  connector={localConnector || apiNode.connector || ''}
                   onConfigChange={handleConfigChange}
                   onConnectorChange={handleConnectorChange}
                 />
@@ -357,8 +379,8 @@ export function NodeEditorModal() {
               {role === 'sink' && (
                 <SinkEditor
                   apiNode={apiNode}
-                  config={localConfig}
-                  connector={localConnector}
+                  config={Object.keys(localConfig).length > 0 ? localConfig : (apiNode.config as Record<string, unknown>) ?? {}}
+                  connector={localConnector || apiNode.connector || ''}
                   onConfigChange={handleConfigChange}
                   onConnectorChange={handleConnectorChange}
                 />

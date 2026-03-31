@@ -6,6 +6,7 @@ pub mod environment;
 pub mod error;
 pub mod executor;
 pub mod friendly_sql;
+pub mod output_cache;
 pub mod preview;
 pub mod provider;
 pub mod python_env;
@@ -19,12 +20,13 @@ pub mod stats;
 pub use environment::{Environment, EnvironmentStore, TableOverride};
 pub use executor::{ExecutionOptions, PipelineExecutor};
 pub use friendly_sql::{PreprocessError, preprocess_sql};
-pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult};
+pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult, PreviewStatus};
 pub use provider::{
     OnConflict, PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions,
     WriteStats,
 };
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
+pub use output_cache::OutputCache;
 pub use result::PipelineResult;
 pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};
 pub use run_store::RunStore;

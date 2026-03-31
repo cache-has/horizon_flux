@@ -47,6 +47,7 @@ struct Stores {
     pipeline_store: flux_engine::PipelineStore,
     run_store: Arc<flux_datafusion::RunStore>,
     connector_registry: flux_connectors::ConnectorRegistry,
+    output_cache: flux_datafusion::OutputCache,
 }
 
 fn open_stores() -> Result<Stores> {
@@ -66,11 +67,13 @@ fn open_stores() -> Result<Stores> {
     );
 
     let connector_registry = flux_connectors::default_registry();
+    let output_cache = flux_datafusion::OutputCache::new(&data_dir);
 
     Ok(Stores {
         pipeline_store,
         run_store,
         connector_registry,
+        output_cache,
     })
 }
 
@@ -229,7 +232,15 @@ async fn execute_pipeline(
     }
 
     match result {
-        Ok((_pipeline_result, run)) => {
+        Ok((pipeline_result, run)) => {
+            // Cache node outputs for preview — best-effort.
+            if let Err(e) = stores
+                .output_cache
+                .cache_pipeline_outputs(&record.pipeline, &pipeline_result.node_outputs)
+            {
+                tracing::warn!("failed to cache node outputs: {e}");
+            }
+
             match format {
                 OutputFormat::Human => {
                     let status = run.status.as_str();
@@ -544,12 +555,17 @@ async fn execute_preview(
         cancel: Arc::new(AtomicBool::new(false)),
         progress: None,
         variable_overrides,
+        re_execute_node: None,
     };
 
-    let preview =
-        flux_datafusion::PipelineExecutor::preview(&record.pipeline, &provider_registry, &options)
-            .await
-            .context("preview failed")?;
+    let preview = flux_datafusion::PipelineExecutor::preview(
+        &record.pipeline,
+        &stores.output_cache,
+        &provider_registry,
+        &options,
+    )
+    .await
+    .context("preview failed")?;
 
     match format {
         OutputFormat::Human => {
@@ -560,6 +576,19 @@ async fn execute_preview(
                         .node(node_id)
                         .map(|n| n.name.as_str())
                         .unwrap_or(&node_id.0);
+
+                    match &nr.status {
+                        flux_datafusion::PreviewStatus::Skipped => {
+                            eprintln!("--- {} (skipped) ---", node_name);
+                            continue;
+                        }
+                        flux_datafusion::PreviewStatus::NoCache => {
+                            eprintln!("--- {} (no cached data — run the pipeline first) ---", node_name);
+                            continue;
+                        }
+                        _ => {}
+                    }
+
                     eprintln!(
                         "--- {} ({} rows, {}) ---",
                         node_name,
@@ -605,6 +634,7 @@ async fn execute_preview(
                             "row_count": nr.row_count,
                             "duration_ms": nr.duration.as_millis() as u64,
                             "rows": rows,
+                            "status": nr.status,
                         })
                     })
                 })

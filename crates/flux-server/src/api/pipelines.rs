@@ -15,7 +15,7 @@ use flux_datafusion::{
     ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, compute_column_stats,
 };
 use flux_engine::pipeline_store::PipelineId;
-use flux_engine::{Pipeline, SampleConfig};
+use flux_engine::{NodeId, Pipeline, SampleConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -63,9 +63,13 @@ struct PipelineResponse {
 
 impl From<flux_engine::PipelineRecord> for PipelineResponse {
     fn from(r: flux_engine::PipelineRecord) -> Self {
+        // Populate inline code from code_path so the frontend editor always has
+        // the code content. Preserves code_path so the frontend knows to write
+        // changes back to the file. Falls back to raw pipeline on read errors.
+        let pipeline = r.pipeline.with_code_populated().unwrap_or(r.pipeline);
         Self {
             id: r.id,
-            pipeline: r.pipeline,
+            pipeline,
             created_at: system_time_to_ms(r.created_at),
             updated_at: system_time_to_ms(r.updated_at),
             last_run_at: r.last_run_at.map(system_time_to_ms),
@@ -132,6 +136,9 @@ struct PreviewRequest {
     /// Runtime variable overrides for preview.
     #[serde(default)]
     variables: std::collections::HashMap<String, serde_json::Value>,
+    /// Optional: re-execute a single node against cached upstream data.
+    #[serde(default)]
+    re_execute_node: Option<String>,
 }
 
 /// Serializable preview node result (Arrow schemas/batches → JSON).
@@ -143,6 +150,8 @@ pub struct PreviewNodeResponse {
     pub duration_ms: u64,
     pub rows: Vec<serde_json::Value>,
     pub column_stats: Vec<ColumnStats>,
+    /// Status of this node: "cached", "no_cache", "skipped", or "re_executed".
+    pub status: flux_datafusion::PreviewStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -228,12 +237,37 @@ async fn create_pipeline(
 async fn update_pipeline(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(pipeline): Json<Pipeline>,
+    Json(mut pipeline): Json<Pipeline>,
 ) -> Result<Json<PipelineResponse>, (StatusCode, Json<ApiError>)> {
     let pipeline_id = parse_pipeline_id(&id)?;
 
     if pipeline.name.trim().is_empty() {
         return Err(ApiError::bad_request("pipeline name must not be empty"));
+    }
+
+    // For file-backed transforms (code_path is set), write the inline code
+    // back to the file and clear the inline code so the file stays the source
+    // of truth.
+    for node in &mut pipeline.nodes {
+        if let flux_engine::node::NodeKind::Transform(ref mut xform) = node.kind {
+            if let Some(ref rel_path) = xform.code_path {
+                if !xform.code.is_empty() {
+                    let base = pipeline.code_dir.as_deref().unwrap_or(".");
+                    let full_path = std::path::Path::new(base).join(rel_path);
+                    if let Some(parent) = full_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::write(&full_path, &xform.code) {
+                        tracing::warn!(
+                            path = %full_path.display(),
+                            error = %e,
+                            "failed to write code_path file"
+                        );
+                    }
+                    xform.code.clear();
+                }
+            }
+        }
     }
 
     let record = state
@@ -250,6 +284,11 @@ async fn update_pipeline(
             }
         })?;
 
+    // Invalidate cached outputs for nodes that changed — best-effort.
+    if let Err(e) = state.output_cache.invalidate_changed(&record.pipeline) {
+        tracing::warn!(pipeline = %record.pipeline.name, error = %e, "cache invalidation failed");
+    }
+
     Ok(Json(PipelineResponse::from(record)))
 }
 
@@ -259,6 +298,15 @@ async fn delete_pipeline(
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let pipeline_id = parse_pipeline_id(&id)?;
+
+    // Fetch the pipeline name before deleting so we can clean up its cache.
+    let pipeline_name = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .ok()
+        .flatten()
+        .map(|r| r.pipeline.name.clone());
+
     state.pipeline_store.delete(&pipeline_id).map_err(|e| {
         use flux_engine::PipelineStoreError;
         match &e {
@@ -266,6 +314,14 @@ async fn delete_pipeline(
             _ => ApiError::internal(e.to_string()),
         }
     })?;
+
+    // Clean up cached outputs — best-effort.
+    if let Some(name) = pipeline_name {
+        if let Err(e) = state.output_cache.delete_pipeline(&name) {
+            tracing::warn!(pipeline = %name, error = %e, "failed to delete pipeline cache");
+        }
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -310,12 +366,25 @@ async fn run_pipeline(
         variable_overrides: req.variables,
     };
 
-    let (_result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
+    let (result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
         .await
         .map_err(|e| {
             error!(pipeline = %record.pipeline.name, error = %e, "pipeline execution failed");
             ApiError::internal(e.to_string())
         })?;
+
+    // Cache node outputs for preview — best-effort.
+    match state
+        .output_cache
+        .cache_pipeline_outputs(&record.pipeline, &result.node_outputs)
+    {
+        Ok(count) => {
+            tracing::debug!(pipeline = %record.pipeline.name, count, "cached node outputs");
+        }
+        Err(e) => {
+            error!(pipeline = %record.pipeline.name, error = %e, "failed to cache node outputs");
+        }
+    }
 
     // Update run metadata (last_run_at, run_count) — best-effort.
     if let Err(e) = state.pipeline_store.record_run(&pipeline_id) {
@@ -328,7 +397,7 @@ async fn run_pipeline(
     ))
 }
 
-/// `POST /api/pipelines/:id/preview` — run preview on sample data.
+/// `POST /api/pipelines/:id/preview` — load cached preview data.
 async fn preview_pipeline(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -352,11 +421,17 @@ async fn preview_pipeline(
         cancel: Arc::new(AtomicBool::new(false)),
         progress: None,
         variable_overrides: req.variables,
+        re_execute_node: req.re_execute_node.map(NodeId::new),
     };
 
     let preview = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        PipelineExecutor::preview(&record.pipeline, &provider_registry, &options),
+        PipelineExecutor::preview(
+            &record.pipeline,
+            &state.output_cache,
+            &provider_registry,
+            &options,
+        ),
     )
     .await
     .map_err(|_| {
@@ -395,6 +470,7 @@ async fn preview_pipeline(
                     duration_ms: nr.duration.as_millis() as u64,
                     rows,
                     column_stats,
+                    status: nr.status.clone(),
                 }
             })
         })

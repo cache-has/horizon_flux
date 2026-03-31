@@ -87,6 +87,7 @@ async fn preview_node(
             let src_cfg = SourceConfig {
                 connector: connector.clone(),
                 config,
+                cache_row_limit: None,
             };
             let node_id = NodeId::new("preview");
 
@@ -199,6 +200,7 @@ fn build_preview_response(
         duration_ms: start.elapsed().as_millis() as u64,
         rows,
         column_stats,
+        status: flux_datafusion::PreviewStatus::ReExecuted,
     }))
 }
 

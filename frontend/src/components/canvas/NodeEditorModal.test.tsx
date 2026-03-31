@@ -288,6 +288,18 @@ describe('NodeEditorModal', () => {
     expect(usePipelineStore.getState().editingNodeId).toBeNull();
   });
 
+  it('shows materialized toggle for transform nodes', () => {
+    setupStore('transform-1');
+    render(<NodeEditorModal />);
+    expect(screen.getByText('Materialized')).toBeInTheDocument();
+  });
+
+  it('does not show materialized toggle for source nodes', () => {
+    setupStore('source-1');
+    render(<NodeEditorModal />);
+    expect(screen.queryByText('Materialized')).not.toBeInTheDocument();
+  });
+
   it('switches between source/transform/sink editors', () => {
     // Transform shows Monaco
     setupStore('transform-1');

@@ -279,17 +279,21 @@ const CONNECTOR_LABELS: Record<string, string> = {
 
 /** Normalize connector aliases to canonical names. */
 function normalizeConnector(c: string): string {
-  if (c === 'postgres') return 'postgresql';
-  if (c === 'file') return 'csv'; // file connector defaults to csv
+  const lc = c.toLowerCase();
+  if (lc === 'postgres' || lc === 'postgresql') return 'postgresql';
+  if (lc === 'file') return 'csv';
+  if (lc === 'csv' || lc === 'parquet' || lc === 'stdout') return lc;
   return c;
 }
 
 function isPostgres(c: string): boolean {
-  return c === 'postgresql' || c === 'postgres';
+  const lc = c.toLowerCase();
+  return lc === 'postgresql' || lc === 'postgres';
 }
 
 function isFile(c: string): boolean {
-  return c === 'csv' || c === 'parquet' || c === 'file';
+  const lc = c.toLowerCase();
+  return lc === 'csv' || lc === 'parquet' || lc === 'file';
 }
 
 export function SinkEditor({
@@ -325,7 +329,7 @@ export function SinkEditor({
       {isFile(connector) && (
         <FileSinkForm config={config} connector={effectiveFileType} onChange={onConfigChange} />
       )}
-      {connector === 'stdout' && <StdoutSinkForm config={config} onChange={onConfigChange} />}
+      {connector.toLowerCase() === 'stdout' && <StdoutSinkForm config={config} onChange={onConfigChange} />}
 
       <EnvironmentOverrides config={config} onChange={onConfigChange} />
     </div>

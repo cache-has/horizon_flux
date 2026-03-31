@@ -320,16 +320,26 @@ const CONNECTOR_LABELS: Record<string, string> = {
 };
 
 function isPostgres(c: string): boolean {
-  return c === 'postgresql' || c === 'postgres';
+  const lc = c.toLowerCase();
+  return lc === 'postgresql' || lc === 'postgres';
 }
 
 function isFile(c: string): boolean {
-  return c === 'csv' || c === 'parquet' || c === 'file';
+  const lc = c.toLowerCase();
+  return lc === 'csv' || lc === 'parquet' || lc === 'file';
+}
+
+function isRest(c: string): boolean {
+  const lc = c.toLowerCase();
+  return lc === 'rest' || lc === 'rest_api' || lc === 'http';
 }
 
 function normalizeConnector(c: string): string {
-  if (c === 'postgres') return 'postgresql';
-  if (c === 'file') return 'csv';
+  const lc = c.toLowerCase();
+  if (lc === 'postgres' || lc === 'postgresql') return 'postgresql';
+  if (lc === 'file') return 'csv';
+  if (lc === 'rest_api' || lc === 'http') return 'rest';
+  if (lc === 'csv' || lc === 'parquet' || lc === 'rest') return lc;
   return c;
 }
 
@@ -366,7 +376,7 @@ export function SourceEditor({
       {isFile(connector) && (
         <FileSourceForm config={config} connector={effectiveFileType} onChange={onConfigChange} />
       )}
-      {(connector === 'rest' || connector === 'rest_api' || connector === 'http') && (
+      {isRest(connector) && (
         <RestSourceForm config={config} onChange={onConfigChange} />
       )}
 

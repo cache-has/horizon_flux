@@ -106,6 +106,8 @@ pub fn start(port: u16, headless: bool, dev: bool) -> Result<()> {
         event_tx.subscribe(),
     );
 
+    let output_cache = Arc::new(flux_datafusion::OutputCache::new(&data_dir));
+
     let app_state = flux_server::AppState {
         pipeline_store,
         run_store,
@@ -113,6 +115,7 @@ pub fn start(port: u16, headless: bool, dev: bool) -> Result<()> {
         environment_store,
         secret_store,
         event_tx,
+        output_cache,
     };
 
     let on_ready: Option<Box<dyn FnOnce(u16) + Send>> = match &tray_handle {

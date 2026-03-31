@@ -30,6 +30,7 @@ fn test_state_with_secrets() -> AppState {
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: Some(Arc::new(Mutex::new(store))),
         event_tx: AppState::new_event_channel(),
+        output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
     }
 }
 
@@ -42,6 +43,7 @@ fn test_state_without_secrets() -> AppState {
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: None,
         event_tx: AppState::new_event_channel(),
+        output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
     }
 }
 

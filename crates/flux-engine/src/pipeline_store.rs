@@ -576,6 +576,8 @@ mod tests {
             variables: Default::default(),
             environment_overrides: Default::default(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![],
             edges: vec![],
         }

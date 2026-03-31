@@ -421,3 +421,50 @@
 .side-panel__action-btn--danger:hover {
   background: rgba(239, 68, 68, 0.1);
 }
+
+/* Re-execute / inline toggle */
+.side-panel__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-family: var(--sans);
+  color: var(--text, #6b6375);
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 6px;
+}
+
+.side-panel__toggle input[type="checkbox"] {
+  accent-color: var(--accent, #a855f7);
+}
+
+.side-panel__toggle--inline {
+  margin-bottom: 0;
+}
+
+/* Cache row limit inline input */
+.side-panel__cache-limit-input {
+  width: 72px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-family: var(--mono);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 3px;
+  background: var(--bg, #fff);
+  color: var(--text-h, #08060d);
+}
+
+.side-panel__cache-limit-input:focus {
+  outline: none;
+  border-color: var(--accent, #a855f7);
+}
+
+/* Suggestion hint */
+.side-panel__hint {
+  font-size: 11px;
+  color: var(--text, #6b6375);
+  font-style: italic;
+  margin-top: 4px;
+  padding: 4px 0;
+}

@@ -96,6 +96,20 @@
   flex: 1;
 }
 
+.node-editor__code-path {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text, #6b6375);
+  background: var(--code-bg, #f4f3ec);
+  border-radius: 3px;
+  padding: 2px 8px;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+
 .node-editor__close {
   width: 32px;
   height: 32px;
@@ -216,4 +230,21 @@
 .node-editor__mode-tab--disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Materialized toggle in header */
+.node-editor__materialized-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-family: var(--sans);
+  color: var(--text, #6b6375);
+  cursor: pointer;
+  user-select: none;
+  margin-left: 8px;
+}
+
+.node-editor__materialized-toggle input[type="checkbox"] {
+  accent-color: var(--accent, #a855f7);
 }

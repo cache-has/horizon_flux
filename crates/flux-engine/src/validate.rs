@@ -105,6 +105,7 @@ mod tests {
             kind: NodeKind::Source(SourceConfig {
                 connector: "csv".into(),
                 config: serde_json::Value::Null,
+                cache_row_limit: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -132,6 +133,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![source_node("src"), sink_node("sink")],
             edges: vec![Edge::new("src", "sink")],
         }

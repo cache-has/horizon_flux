@@ -101,6 +101,7 @@ async fn test_connector(
             let source_config = SourceConfig {
                 connector: req.connector.clone(),
                 config: req.config,
+                cache_row_limit: None,
             };
 
             debug!(connector = %req.connector, "testing source connector");

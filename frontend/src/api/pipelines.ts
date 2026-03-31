@@ -28,7 +28,12 @@ export interface ApiNode {
   /** Transform fields */
   mode?: 'sql' | 'python';
   code?: string;
+  /** Path to external code file. When set, `code` contains the file contents
+   *  (populated by the server) and edits are written back to this file on save. */
+  code_path?: string;
   materialized?: boolean;
+  /** Max rows to cache for preview. Overrides pipeline-level default when set. */
+  cache_row_limit?: number;
 }
 
 /** A backend pipeline edge. */
@@ -297,6 +302,9 @@ export type ApiColumnStats =
   | { kind: 'boolean'; true_count: number; false_count: number; null_count: number }
   | { kind: 'other'; null_count: number };
 
+/** Preview status for a node result. */
+export type PreviewStatus = 'cached' | 'no_cache' | 'skipped' | 're_executed';
+
 /** Single node result from a preview run. */
 export interface ApiPreviewNodeResponse {
   node_id: string;
@@ -305,6 +313,7 @@ export interface ApiPreviewNodeResponse {
   duration_ms: number;
   rows: Record<string, unknown>[];
   column_stats?: ApiColumnStats[];
+  status: PreviewStatus;
 }
 
 /** Full pipeline preview response. */
@@ -378,11 +387,15 @@ export async function previewPipeline(
   id: string,
   sample?: ApiSampleConfig,
   signal?: AbortSignal,
+  reExecuteNode?: string,
 ): Promise<ApiPreviewResponse> {
+  const payload: Record<string, unknown> = {};
+  if (sample) payload.sample = sample;
+  if (reExecuteNode) payload.re_execute_node = reExecuteNode;
   const res = await fetch(`${BASE}/${id}/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sample }),
+    body: JSON.stringify(payload),
     signal,
   });
   if (!res.ok) {

@@ -142,6 +142,7 @@ fn source_node(id: &str) -> Node {
         kind: NodeKind::Source(SourceConfig {
             connector: "mock".into(),
             config: serde_json::Value::Null,
+            cache_row_limit: None,
         }),
         position: Position::default(),
         pinned_position: false,
@@ -155,7 +156,9 @@ fn sql_transform_node(id: &str, sql: &str) -> Node {
         kind: NodeKind::Transform(TransformConfig {
             mode: TransformMode::Sql,
             code: sql.to_string(),
+            code_path: None,
             materialized: false,
+            cache_row_limit: None,
         }),
         position: Position::default(),
         pinned_position: false,
@@ -169,7 +172,9 @@ fn python_transform_node(id: &str, code: &str) -> Node {
         kind: NodeKind::Transform(TransformConfig {
             mode: TransformMode::Python,
             code: code.to_string(),
+            code_path: None,
             materialized: false,
+            cache_row_limit: None,
         }),
         position: Position::default(),
         pinned_position: false,
@@ -197,6 +202,8 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
         variables: BTreeMap::new(),
         environment_overrides: BTreeMap::new(),
         sample_config: None,
+        cache_row_limit: None,
+        code_dir: None,
         nodes,
         edges,
     }

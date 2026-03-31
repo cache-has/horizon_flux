@@ -340,6 +340,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![
                 Node {
                     id: NodeId::new("src"),
@@ -347,6 +349,7 @@ mod tests {
                     kind: NodeKind::Source(SourceConfig {
                         connector: "csv".into(),
                         config: serde_json::json!({"path": "/data/{{ run_date }}.csv"}),
+                        cache_row_limit: None,
                     }),
                     position: Position::default(),
                     pinned_position: false,
@@ -518,7 +521,9 @@ mod tests {
             kind: NodeKind::Transform(TransformConfig {
                 mode: TransformMode::Sql,
                 code: "SELECT * WHERE x = '{{ undefined_var }}' AND d = '{{ run_date }}'".into(),
+                code_path: None,
                 materialized: false,
+                cache_row_limit: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -559,6 +564,7 @@ mod tests {
             kind: NodeKind::Source(SourceConfig {
                 connector: "csv".into(),
                 config: serde_json::json!({"path": "/data/{{ my_var }}/{{ run_date }}.csv"}),
+                cache_row_limit: None,
             }),
             position: Position::default(),
             pinned_position: false,

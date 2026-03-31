@@ -4,7 +4,7 @@
 //! Shared application state for all API handlers.
 
 use flux_connectors::ConnectorRegistry;
-use flux_datafusion::{EnvironmentStore, ExecutionEvent, RunStore};
+use flux_datafusion::{EnvironmentStore, ExecutionEvent, OutputCache, RunStore};
 use flux_engine::PipelineStore;
 use flux_secrets::SecretStore;
 use std::sync::{Arc, Mutex};
@@ -26,6 +26,8 @@ pub struct AppState {
     /// Broadcast channel for real-time execution events (WebSocket consumers
     /// subscribe via `event_tx.subscribe()`).
     pub event_tx: broadcast::Sender<ExecutionEvent>,
+    /// On-disk cache for materialized node outputs (preview reads from here).
+    pub output_cache: Arc<OutputCache>,
 }
 
 impl AppState {

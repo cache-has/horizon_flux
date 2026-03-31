@@ -178,7 +178,7 @@ export interface PipelineStoreActions {
   /** Update a node's backend config (code, mode, connector, config) and save. */
   updateNodeConfig: (
     nodeId: string,
-    patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config'>>,
+    patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config' | 'materialized' | 'cache_row_limit'>>,
   ) => Promise<void>;
   /** Push the current state onto the undo stack (call before external mutations). */
   pushSnapshot: () => void;

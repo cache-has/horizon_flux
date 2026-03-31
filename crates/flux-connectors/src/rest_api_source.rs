@@ -763,6 +763,7 @@ mod tests {
         let config = SourceConfig {
             connector: "rest_api".to_string(),
             config: serde_json::json!({ "url": "" }),
+            cache_row_limit: None,
         };
         let result = source.create_table_provider(&config);
         assert!(result.is_err());
@@ -778,6 +779,7 @@ mod tests {
                 "url": "http://example.com/api",
                 "method": "INVALID"
             }),
+            cache_row_limit: None,
         };
         let result = source.create_table_provider(&config);
         assert!(result.is_err());

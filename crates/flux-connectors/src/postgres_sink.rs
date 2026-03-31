@@ -560,7 +560,16 @@ mod tests {
 
     #[test]
     fn unsupported_arrow_type_fails() {
-        assert!(arrow_type_to_pg(&DataType::Decimal128(10, 2)).is_err());
+        // FixedSizeBinary is not mapped to any PG type.
+        assert!(arrow_type_to_pg(&DataType::FixedSizeBinary(16)).is_err());
+    }
+
+    #[test]
+    fn decimal_type_maps_to_numeric() {
+        assert_eq!(
+            arrow_type_to_pg(&DataType::Decimal128(10, 2)).unwrap(),
+            "NUMERIC"
+        );
     }
 
     #[test]
@@ -571,10 +580,11 @@ mod tests {
             Field::new("score", DataType::Float64, true),
         ]);
 
+        // All columns allow NULLs in auto-created tables (no NOT NULL constraint).
         let sql = build_create_table_sql("users", &schema).unwrap();
         assert_eq!(
             sql,
-            "CREATE TABLE IF NOT EXISTS \"users\" (\"id\" BIGINT NOT NULL, \"name\" TEXT, \"score\" DOUBLE PRECISION)"
+            "CREATE TABLE IF NOT EXISTS \"users\" (\"id\" BIGINT, \"name\" TEXT, \"score\" DOUBLE PRECISION)"
         );
     }
 
@@ -706,7 +716,7 @@ mod tests {
 
     #[test]
     fn schema_compatibility_rejects_unsupported_types() {
-        let schema = Schema::new(vec![Field::new("val", DataType::Decimal128(10, 2), true)]);
+        let schema = Schema::new(vec![Field::new("val", DataType::FixedSizeBinary(16), true)]);
         assert!(validate_schema_compatibility(&schema).is_err());
     }
 

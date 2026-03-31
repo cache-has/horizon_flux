@@ -771,6 +771,7 @@ mod tests {
             write_mode: None,
             batch_size: None,
             conflict_keys: Vec::new(),
+            indexes: Vec::new(),
         };
 
         let sql = build_query(&config, &schema, &pg_types, None, &[], None);
@@ -792,6 +793,7 @@ mod tests {
             write_mode: None,
             batch_size: None,
             conflict_keys: Vec::new(),
+            indexes: Vec::new(),
         };
 
         let projection = vec![0, 2];
@@ -813,6 +815,7 @@ mod tests {
             write_mode: None,
             batch_size: None,
             conflict_keys: Vec::new(),
+            indexes: Vec::new(),
         };
 
         let filters = vec![Expr::BinaryExpr(BinaryExpr {
@@ -844,6 +847,7 @@ mod tests {
             write_mode: None,
             batch_size: None,
             conflict_keys: Vec::new(),
+            indexes: Vec::new(),
         };
 
         let sql = build_query(&config, &schema, &pg_types, None, &[], None);
@@ -861,6 +865,7 @@ mod tests {
             write_mode: None,
             batch_size: None,
             conflict_keys: Vec::new(),
+            indexes: Vec::new(),
         };
 
         let filters = vec![Expr::BinaryExpr(BinaryExpr {
@@ -889,6 +894,7 @@ mod tests {
             config: serde_json::json!({
                 "connection_string": "host=localhost dbname=test"
             }),
+            cache_row_limit: None,
         };
         let result = source.create_table_provider(&config);
         assert!(result.is_err());
@@ -905,6 +911,7 @@ mod tests {
                 "table": "users",
                 "query": "SELECT * FROM users"
             }),
+            cache_row_limit: None,
         };
         let result = source.create_table_provider(&config);
         assert!(result.is_err());

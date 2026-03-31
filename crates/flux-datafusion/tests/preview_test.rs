@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Integration tests for preview execution.
+//! Integration tests for cache-based preview.
 
 use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -10,10 +10,11 @@ use async_trait::async_trait;
 use datafusion::datasource::MemTable;
 use datafusion::datasource::TableProvider;
 use flux_datafusion::error::ExecutorError;
+use flux_datafusion::output_cache::OutputCache;
 use flux_datafusion::provider::{
     PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions, WriteStats,
 };
-use flux_datafusion::{PipelineExecutor, PreviewOptions};
+use flux_datafusion::{PipelineExecutor, PreviewOptions, PreviewStatus};
 use flux_engine::edge::Edge;
 use flux_engine::node::*;
 use flux_engine::pipeline::Pipeline;
@@ -24,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
-// Test helpers (shared patterns from executor_test.rs)
+// Test helpers
 // ---------------------------------------------------------------------------
 
 fn test_schema() -> Arc<Schema> {
@@ -112,6 +113,7 @@ fn source_node(id: &str) -> Node {
         kind: NodeKind::Source(SourceConfig {
             connector: "mock".into(),
             config: serde_json::Value::Null,
+            cache_row_limit: None,
         }),
         position: Position::default(),
         pinned_position: false,
@@ -125,7 +127,9 @@ fn sql_transform_node(id: &str, sql: &str) -> Node {
         kind: NodeKind::Transform(TransformConfig {
             mode: TransformMode::Sql,
             code: sql.to_string(),
+            code_path: None,
             materialized: false,
+            cache_row_limit: None,
         }),
         position: Position::default(),
         pinned_position: false,
@@ -153,9 +157,34 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
         variables: BTreeMap::new(),
         environment_overrides: BTreeMap::new(),
         sample_config: None,
+        cache_row_limit: None,
+        code_dir: None,
         nodes,
         edges,
     }
+}
+
+fn test_cache() -> (tempfile::TempDir, OutputCache) {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = OutputCache::new(dir.path());
+    (dir, cache)
+}
+
+fn mock_registry() -> ProviderRegistry {
+    let mut registry = ProviderRegistry::new();
+    registry.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
+    registry.register_sink(
+        "mock",
+        Arc::new(SpySink {
+            called: Arc::new(AtomicBool::new(false)),
+        }),
+    );
+    registry
 }
 
 // ---------------------------------------------------------------------------
@@ -163,24 +192,12 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn preview_returns_per_node_outputs() {
-    let mut registry = ProviderRegistry::new();
-    registry.register_source(
-        "mock",
-        Arc::new(MockSourceConnector {
-            batches: vec![test_batch()],
-        }),
-    );
-    let sink_called = Arc::new(AtomicBool::new(false));
-    registry.register_sink(
-        "mock",
-        Arc::new(SpySink {
-            called: Arc::clone(&sink_called),
-        }),
-    );
+async fn preview_loads_cached_data() {
+    let (_dir, cache) = test_cache();
+    let registry = mock_registry();
 
     let pipeline = make_pipeline(
-        "preview_basic",
+        "cached_preview",
         vec![
             source_node("src"),
             sql_transform_node("xform", "SELECT id, value FROM src"),
@@ -189,179 +206,170 @@ async fn preview_returns_per_node_outputs() {
         vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
     );
 
-    let opts = PreviewOptions::default();
-    let result = PipelineExecutor::preview(&pipeline, &registry, &opts)
+    // Populate cache for src and xform.
+    cache
+        .write_node("cached_preview", "src", &[test_batch()], 10_000)
+        .unwrap();
+    cache
+        .write_node("cached_preview", "xform", &[test_batch()], 10_000)
+        .unwrap();
+
+    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
         .await
         .expect("preview should succeed");
 
     // All 3 nodes should have results.
     assert_eq!(result.nodes.len(), 3);
 
-    // Source: 3 rows.
+    // Source: cached with 3 rows.
     let src = result.node_output(&"src".into()).unwrap();
     assert_eq!(src.row_count, 3);
-    assert_eq!(src.schema.fields().len(), 2);
+    assert_eq!(src.status, PreviewStatus::Cached);
 
-    // Transform: 3 rows.
+    // Transform: cached with 3 rows.
     let xform = result.node_output(&"xform".into()).unwrap();
     assert_eq!(xform.row_count, 3);
+    assert_eq!(xform.status, PreviewStatus::Cached);
 
-    // Sink: shows what would be written (3 rows), but sink was NOT called.
+    // Sink: always skipped.
     let out = result.node_output(&"out".into()).unwrap();
-    assert_eq!(out.row_count, 3);
-    assert!(
-        !sink_called.load(Ordering::Relaxed),
-        "sink should not be invoked during preview"
-    );
+    assert_eq!(out.status, PreviewStatus::Skipped);
+    assert_eq!(out.row_count, 0);
 }
 
 #[tokio::test]
-async fn preview_samples_source_with_first_n() {
-    let mut registry = ProviderRegistry::new();
-    registry.register_source(
-        "mock",
-        Arc::new(MockSourceConnector {
-            batches: vec![large_batch()],
-        }),
-    );
-    registry.register_sink(
-        "mock",
-        Arc::new(SpySink {
-            called: Arc::new(AtomicBool::new(false)),
-        }),
-    );
+async fn preview_reports_no_cache_for_uncached_nodes() {
+    let (_dir, cache) = test_cache();
+    let registry = mock_registry();
 
     let pipeline = make_pipeline(
-        "preview_sample",
+        "no_cache",
         vec![
             source_node("src"),
-            sql_transform_node("xform", "SELECT id, value FROM src"),
+            sql_transform_node("xform", "SELECT id FROM src"),
             sink_node("out"),
         ],
         vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
     );
+
+    // Don't populate cache — all nodes should report NoCache.
+    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
+        .await
+        .expect("preview should succeed");
+
+    let src = result.node_output(&"src".into()).unwrap();
+    assert_eq!(src.status, PreviewStatus::NoCache);
+    assert_eq!(src.row_count, 0);
+
+    let xform = result.node_output(&"xform".into()).unwrap();
+    assert_eq!(xform.status, PreviewStatus::NoCache);
+}
+
+#[tokio::test]
+async fn preview_samples_cached_data() {
+    let (_dir, cache) = test_cache();
+    let registry = mock_registry();
+
+    let pipeline = make_pipeline(
+        "sample_cache",
+        vec![source_node("src"), sink_node("out")],
+        vec![Edge::new("src", "out")],
+    );
+
+    // Cache 200 rows.
+    cache
+        .write_node("sample_cache", "src", &[large_batch()], 10_000)
+        .unwrap();
 
     let opts = PreviewOptions {
         sample: SampleConfig::FirstN { count: 10 },
         ..PreviewOptions::default()
     };
 
-    let result = PipelineExecutor::preview(&pipeline, &registry, &opts)
+    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &opts)
         .await
         .expect("preview should succeed");
 
-    // Source should be sampled to 10 rows.
     let src = result.node_output(&"src".into()).unwrap();
     assert_eq!(src.row_count, 10);
-
-    // Transform operates on sampled data.
-    let xform = result.node_output(&"xform".into()).unwrap();
-    assert_eq!(xform.row_count, 10);
+    assert_eq!(src.status, PreviewStatus::Cached);
 }
 
 #[tokio::test]
-async fn preview_full_sample_passes_all_rows() {
-    let mut registry = ProviderRegistry::new();
-    registry.register_source(
-        "mock",
-        Arc::new(MockSourceConnector {
-            batches: vec![large_batch()],
-        }),
-    );
-    registry.register_sink(
-        "mock",
-        Arc::new(SpySink {
-            called: Arc::new(AtomicBool::new(false)),
-        }),
-    );
+async fn preview_re_execute_transform() {
+    let (_dir, cache) = test_cache();
+    let registry = mock_registry();
 
     let pipeline = make_pipeline(
-        "preview_full",
+        "re_exec",
         vec![
             source_node("src"),
-            sql_transform_node("xform", "SELECT id, value FROM src"),
+            sql_transform_node("xform", "SELECT id * 2 AS doubled FROM src"),
             sink_node("out"),
         ],
         vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
     );
 
+    // Cache upstream (src) data.
+    cache
+        .write_node("re_exec", "src", &[test_batch()], 10_000)
+        .unwrap();
+
     let opts = PreviewOptions {
-        sample: SampleConfig::Full,
+        re_execute_node: Some(NodeId::new("xform")),
         ..PreviewOptions::default()
     };
 
-    let result = PipelineExecutor::preview(&pipeline, &registry, &opts)
+    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &opts)
         .await
         .expect("preview should succeed");
 
-    let src = result.node_output(&"src".into()).unwrap();
-    assert_eq!(src.row_count, 200);
+    let xform = result.node_output(&"xform".into()).unwrap();
+    assert_eq!(xform.status, PreviewStatus::ReExecuted);
+    assert_eq!(xform.row_count, 3);
+    // Verify schema has the "doubled" column from the SQL.
+    assert_eq!(xform.schema.field(0).name(), "doubled");
 }
 
 #[tokio::test]
-async fn preview_random_sample_is_deterministic() {
-    let mut registry = ProviderRegistry::new();
-    registry.register_source(
-        "mock",
-        Arc::new(MockSourceConnector {
-            batches: vec![large_batch()],
-        }),
-    );
-    registry.register_sink(
-        "mock",
-        Arc::new(SpySink {
-            called: Arc::new(AtomicBool::new(false)),
-        }),
-    );
+async fn preview_re_execute_without_upstream_cache_returns_no_cache() {
+    let (_dir, cache) = test_cache();
+    let registry = mock_registry();
 
     let pipeline = make_pipeline(
-        "preview_random",
-        vec![source_node("src"), sink_node("out")],
-        vec![Edge::new("src", "out")],
+        "re_exec_no_upstream",
+        vec![
+            source_node("src"),
+            sql_transform_node("xform", "SELECT id FROM src"),
+            sink_node("out"),
+        ],
+        vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
     );
 
+    // Don't cache src — re-execute should fail gracefully.
     let opts = PreviewOptions {
-        sample: SampleConfig::Random {
-            count: 15,
-            seed: 42,
-        },
+        re_execute_node: Some(NodeId::new("xform")),
         ..PreviewOptions::default()
     };
 
-    let r1 = PipelineExecutor::preview(&pipeline, &registry, &opts)
+    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &opts)
         .await
-        .unwrap();
-    let r2 = PipelineExecutor::preview(&pipeline, &registry, &opts)
-        .await
-        .unwrap();
+        .expect("preview should succeed");
 
-    let src1 = r1.node_output(&"src".into()).unwrap();
-    let src2 = r2.node_output(&"src".into()).unwrap();
-    assert_eq!(src1.row_count, 15);
-    assert_eq!(src2.row_count, 15);
+    let xform = result.node_output(&"xform".into()).unwrap();
+    assert_eq!(xform.status, PreviewStatus::NoCache);
 }
 
 #[tokio::test]
 async fn preview_cancellation() {
-    let mut registry = ProviderRegistry::new();
-    registry.register_source(
-        "mock",
-        Arc::new(MockSourceConnector {
-            batches: vec![test_batch()],
-        }),
-    );
-    registry.register_sink(
-        "mock",
-        Arc::new(SpySink {
-            called: Arc::new(AtomicBool::new(false)),
-        }),
-    );
+    let (_dir, cache) = test_cache();
+    let registry = mock_registry();
 
     let pipeline = make_pipeline(
-        "preview_cancel",
+        "cancel",
         vec![
             source_node("src"),
-            sql_transform_node("xform", "SELECT id, value FROM src"),
+            sql_transform_node("xform", "SELECT id FROM src"),
             sink_node("out"),
         ],
         vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
@@ -373,9 +381,10 @@ async fn preview_cancellation() {
         cancel,
         progress: None,
         variable_overrides: std::collections::HashMap::new(),
+        re_execute_node: None,
     };
 
-    let err = PipelineExecutor::preview(&pipeline, &registry, &opts)
+    let err = PipelineExecutor::preview(&pipeline, &cache, &registry, &opts)
         .await
         .unwrap_err();
 
@@ -383,44 +392,13 @@ async fn preview_cancellation() {
 }
 
 #[tokio::test]
-async fn preview_invalid_sql_reports_error() {
-    let mut registry = ProviderRegistry::new();
-    registry.register_source(
-        "mock",
-        Arc::new(MockSourceConnector {
-            batches: vec![test_batch()],
-        }),
-    );
-    registry.register_sink(
-        "mock",
-        Arc::new(SpySink {
-            called: Arc::new(AtomicBool::new(false)),
-        }),
-    );
-
-    let pipeline = make_pipeline(
-        "preview_bad_sql",
-        vec![
-            source_node("src"),
-            sql_transform_node("xform", "SELECTTTTT broken"),
-            sink_node("out"),
-        ],
-        vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
-    );
-
-    let err = PipelineExecutor::preview(&pipeline, &registry, &PreviewOptions::default())
-        .await
-        .unwrap_err();
-
-    assert!(matches!(err, ExecutorError::Node { .. }));
-}
-
-#[tokio::test]
 async fn preview_empty_pipeline_returns_validation_error() {
-    let pipeline = make_pipeline("empty", vec![], vec![]);
+    let (_dir, cache) = test_cache();
     let registry = ProviderRegistry::new();
 
-    let err = PipelineExecutor::preview(&pipeline, &registry, &PreviewOptions::default())
+    let pipeline = make_pipeline("empty", vec![], vec![]);
+
+    let err = PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
         .await
         .unwrap_err();
 
@@ -428,42 +406,26 @@ async fn preview_empty_pipeline_returns_validation_error() {
 }
 
 #[tokio::test]
-async fn preview_schema_includes_column_info() {
-    let mut registry = ProviderRegistry::new();
-    registry.register_source(
-        "mock",
-        Arc::new(MockSourceConnector {
-            batches: vec![test_batch()],
-        }),
-    );
-    registry.register_sink(
-        "mock",
-        Arc::new(SpySink {
-            called: Arc::new(AtomicBool::new(false)),
-        }),
-    );
+async fn preview_schema_from_cached_data() {
+    let (_dir, cache) = test_cache();
+    let registry = mock_registry();
 
     let pipeline = make_pipeline(
-        "preview_schema",
-        vec![
-            source_node("src"),
-            sql_transform_node("xform", "SELECT id AS renamed_id FROM src"),
-            sink_node("out"),
-        ],
-        vec![Edge::new("src", "xform"), Edge::new("xform", "out")],
+        "schema_test",
+        vec![source_node("src"), sink_node("out")],
+        vec![Edge::new("src", "out")],
     );
 
-    let result = PipelineExecutor::preview(&pipeline, &registry, &PreviewOptions::default())
+    cache
+        .write_node("schema_test", "src", &[test_batch()], 10_000)
+        .unwrap();
+
+    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
         .await
         .unwrap();
 
-    // Source schema: id (Int32), value (Utf8)
     let src_schema = &result.node_output(&"src".into()).unwrap().schema;
     assert_eq!(src_schema.fields().len(), 2);
     assert_eq!(src_schema.field(0).name(), "id");
-
-    // Transform schema: renamed_id (Int32)
-    let xform_schema = &result.node_output(&"xform".into()).unwrap().schema;
-    assert_eq!(xform_schema.fields().len(), 1);
-    assert_eq!(xform_schema.field(0).name(), "renamed_id");
+    assert_eq!(src_schema.field(1).name(), "value");
 }

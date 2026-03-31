@@ -24,6 +24,7 @@ fn test_state() -> AppState {
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: None,
         event_tx: AppState::new_event_channel(),
+        output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
     }
 }
 
@@ -81,6 +82,7 @@ async fn list_connectors_empty_registry() {
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
         secret_store: None,
         event_tx: AppState::new_event_channel(),
+        output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
     };
     let app = test_router(state);
     let resp = app

@@ -26,6 +26,10 @@ pub struct Pipeline {
     /// When `None`, previews use `SampleConfig::default()` (first 100 rows).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_config: Option<SampleConfig>,
+    /// Maximum number of rows to cache per node for preview. Individual nodes
+    /// can override this with their own `cache_row_limit`. Default: 10 000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_row_limit: Option<usize>,
     /// Base directory for resolving `code_path` references on transform nodes.
     /// Paths in `code_path` are joined to this directory. When `None`, paths
     /// are resolved relative to the current working directory.
@@ -102,6 +106,24 @@ impl Pipeline {
         }
     }
 
+    /// Return a copy with `code_path` references resolved to inline `code`
+    /// while keeping the `code_path` field intact. Used when serving the
+    /// pipeline to the frontend so the editor has the code content and still
+    /// knows which file to write back to.
+    pub fn with_code_populated(&self) -> Result<Self, std::io::Error> {
+        use crate::node::NodeKind;
+
+        let mut resolved = self.clone();
+        for node in &mut resolved.nodes {
+            if let NodeKind::Transform(ref mut xform) = node.kind {
+                if xform.code_path.is_some() && xform.code.is_empty() {
+                    xform.code = self.resolve_code(xform)?;
+                }
+            }
+        }
+        Ok(resolved)
+    }
+
     /// Return a copy of this pipeline with all `code_path` references resolved
     /// to inline `code` and `code_path`/`code_dir` cleared. Used for export so
     /// the resulting JSON is self-contained and importable without external files.
@@ -130,13 +152,45 @@ impl Pipeline {
             .collect()
     }
 
-    /// Return the downstream node IDs for a given node.
+    /// Default cache row limit when neither node nor pipeline specifies one.
+    pub const DEFAULT_CACHE_ROW_LIMIT: usize = 10_000;
+
+    /// Resolve the effective cache row limit for a node.
+    ///
+    /// Precedence: node-level > pipeline-level > global default (10 000).
+    pub fn effective_cache_row_limit(&self, node: &Node) -> usize {
+        let node_limit = match &node.kind {
+            crate::node::NodeKind::Source(cfg) => cfg.cache_row_limit,
+            crate::node::NodeKind::Transform(cfg) => cfg.cache_row_limit,
+            crate::node::NodeKind::Sink(_) => None,
+        };
+        node_limit
+            .or(self.cache_row_limit)
+            .unwrap_or(Self::DEFAULT_CACHE_ROW_LIMIT)
+    }
+
+    /// Return the immediate downstream node IDs for a given node.
     pub fn downstream_of(&self, id: &NodeId) -> Vec<&NodeId> {
         self.edges
             .iter()
             .filter(|e| e.from == *id)
             .map(|e| &e.to)
             .collect()
+    }
+
+    /// Return all transitive downstream node IDs (the full forward closure).
+    pub fn all_downstream_of(&self, id: &NodeId) -> Vec<NodeId> {
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(id.clone());
+        while let Some(current) = queue.pop_front() {
+            for downstream in self.downstream_of(&current) {
+                if visited.insert(downstream.clone()) {
+                    queue.push_back(downstream.clone());
+                }
+            }
+        }
+        visited.into_iter().collect()
     }
 }
 

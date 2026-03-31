@@ -259,6 +259,24 @@ export function PreviewTable({ preview, loading, error, sampleMethod, columnDiff
     );
   }
 
+  // Status-aware empty states
+  if (preview?.status === 'no_cache') {
+    return (
+      <div className="preview-table__status-message" data-testid="preview-table-no-cache">
+        <span className="preview-table__status-icon">&#x1f4e6;</span>
+        Run the pipeline to enable preview
+      </div>
+    );
+  }
+
+  if (preview?.status === 'skipped') {
+    return (
+      <div className="preview-table__status-message" data-testid="preview-table-skipped">
+        Sinks do not produce preview data
+      </div>
+    );
+  }
+
   // Empty state
   if (!preview || preview.rows.length === 0) {
     return (
@@ -400,7 +418,15 @@ export function PreviewTable({ preview, loading, error, sampleMethod, columnDiff
 
       {/* Stats bar */}
       <div className="preview-table__stats" data-testid="preview-table-stats">
-        {preview.row_count.toLocaleString()} rows &middot; {columns.length} columns
+        {preview.status && (
+          <span
+            className={`preview-table__status-badge preview-table__status-badge--${preview.status}`}
+            data-testid="preview-status-badge"
+          >
+            {preview.status === 'cached' ? 'cached' : 're-executed'}
+          </span>
+        )}
+        {' '}{preview.row_count.toLocaleString()} rows &middot; {columns.length} columns
         &middot; {preview.duration_ms}ms
         {sampleMethod && (
           <>

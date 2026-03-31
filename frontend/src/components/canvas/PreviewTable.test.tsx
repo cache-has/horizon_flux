@@ -26,6 +26,7 @@ const samplePreview: ApiPreviewNodeResponse = {
     { id: 2, name: 'Bob', score: null, active: false, created_at: '2026-02-20T14:00:00' },
     { id: 3, name: null, score: 72.123, active: true, created_at: null },
   ],
+  status: 'cached',
 };
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,46 @@ describe('PreviewTable', () => {
     };
     render(<PreviewTable preview={emptyPreview} loading={false} />);
     expect(screen.getByTestId('preview-table-empty')).toBeInTheDocument();
+  });
+
+  it('shows "Run the pipeline" message for no_cache status', () => {
+    const noCachePreview: ApiPreviewNodeResponse = {
+      ...samplePreview,
+      rows: [],
+      status: 'no_cache',
+    };
+    render(<PreviewTable preview={noCachePreview} loading={false} />);
+    expect(screen.getByTestId('preview-table-no-cache')).toBeInTheDocument();
+    expect(screen.getByText('Run the pipeline to enable preview')).toBeInTheDocument();
+  });
+
+  it('shows sink message for skipped status', () => {
+    const skippedPreview: ApiPreviewNodeResponse = {
+      ...samplePreview,
+      rows: [],
+      status: 'skipped',
+    };
+    render(<PreviewTable preview={skippedPreview} loading={false} />);
+    expect(screen.getByTestId('preview-table-skipped')).toBeInTheDocument();
+    expect(screen.getByText('Sinks do not produce preview data')).toBeInTheDocument();
+  });
+
+  it('shows status badge in stats bar for cached data', () => {
+    render(<PreviewTable preview={samplePreview} loading={false} />);
+    const badge = screen.getByTestId('preview-status-badge');
+    expect(badge).toHaveTextContent('cached');
+    expect(badge.className).toContain('--cached');
+  });
+
+  it('shows re-executed badge in stats bar', () => {
+    const reExecPreview: ApiPreviewNodeResponse = {
+      ...samplePreview,
+      status: 're_executed',
+    };
+    render(<PreviewTable preview={reExecPreview} loading={false} />);
+    const badge = screen.getByTestId('preview-status-badge');
+    expect(badge).toHaveTextContent('re-executed');
+    expect(badge.className).toContain('--re_executed');
   });
 
   it('renders column headers with type badges', () => {

@@ -215,6 +215,7 @@ mod tests {
             kind: NodeKind::Source(SourceConfig {
                 connector: "csv".into(),
                 config: serde_json::Value::Null,
+                cache_row_limit: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -228,7 +229,9 @@ mod tests {
             kind: NodeKind::Transform(TransformConfig {
                 mode: TransformMode::Sql,
                 code: "SELECT * FROM upstream".into(),
+                code_path: None,
                 materialized: false,
+                cache_row_limit: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -256,6 +259,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![
                 source_node("src"),
                 transform_node("xform"),
@@ -288,6 +293,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![
                 source_node("src_a"),
                 source_node("src_b"),
@@ -318,6 +325,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![
                 source_node("a"),
                 transform_node("b"),
@@ -344,6 +353,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![
                 source_node("src"),
                 transform_node("xform"),
@@ -365,6 +376,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![source_node("a"), source_node("b"), sink_node("out")],
             edges: vec![
                 Edge::new("a", "b"), // b is a source but has upstream
@@ -387,6 +400,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![],
             edges: vec![],
         };
@@ -403,6 +418,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![source_node("a"), source_node("a"), sink_node("out")],
             edges: vec![Edge::new("a", "out")],
         };
@@ -422,6 +439,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![source_node("src"), sink_node("sink")],
             edges: vec![
                 Edge::new("src", "ghost"), // ghost doesn't exist
@@ -442,6 +461,8 @@ mod tests {
             variables: BTreeMap::new(),
             environment_overrides: BTreeMap::new(),
             sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
             nodes: vec![
                 source_node("src"),
                 transform_node("a"),

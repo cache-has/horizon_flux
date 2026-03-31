@@ -28,6 +28,7 @@ import { PipelineEdgeComponent, EdgeMarkerDefs } from './PipelineEdge';
 import { useForceLayout } from '../../hooks/useForceLayout';
 import { useConnectionValidation } from '../../hooks/useConnectionValidation';
 import { usePipelineStore } from '../../stores/pipelineStore';
+import type { ApiNode } from '../../api/pipelines';
 import {
   CanvasContextMenu,
   type ContextMenuState,
@@ -368,9 +369,32 @@ function PipelineCanvasInner() {
           envOverridden: false,
         },
       };
-      usePipelineStore.getState().pushSnapshot();
-      usePipelineStore.getState().setNodes((current) => [...current, newNode]);
-      usePipelineStore.getState().markDirty();
+
+      // Seed the API node with the palette item's connector/mode so the
+      // editor shows the correct form immediately after drop.
+      const store = usePipelineStore.getState();
+      store.pushSnapshot();
+      store.setNodes((current) => [...current, newNode]);
+
+      if (store.apiPipeline) {
+        const apiNode: ApiNode = {
+          id: newId,
+          name: `New ${label}`,
+          type: item.role,
+          position: { x: position.x, y: position.y },
+          pinned_position: false,
+          ...(item.subtypeField === 'connector'
+            ? { connector: item.subtype, config: {} }
+            : { mode: item.subtype as 'sql' | 'python', code: '' }),
+        };
+        usePipelineStore.setState((s) => ({
+          apiPipeline: s.apiPipeline
+            ? { ...s.apiPipeline, nodes: [...s.apiPipeline.nodes, apiNode] }
+            : s.apiPipeline,
+        }));
+      }
+
+      store.markDirty();
     },
     [screenToFlowPosition],
   );

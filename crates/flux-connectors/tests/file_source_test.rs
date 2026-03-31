@@ -19,6 +19,7 @@ fn source_config(connector: &str, config: serde_json::Value) -> SourceConfig {
     SourceConfig {
         connector: connector.to_string(),
         config,
+        cache_row_limit: None,
     }
 }
 

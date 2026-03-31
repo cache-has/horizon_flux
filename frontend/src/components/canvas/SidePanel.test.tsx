@@ -244,4 +244,31 @@ describe('SidePanel', () => {
       container.querySelector('.side-panel__role-badge--transform'),
     ).toBeInTheDocument();
   });
+
+  it('shows materialized toggle for transform nodes', () => {
+    setupStore('transform-1');
+    render(<SidePanel />);
+    expect(screen.getByText('Materialized')).toBeInTheDocument();
+    // Default is false
+    expect(screen.getByText('No')).toBeInTheDocument();
+  });
+
+  it('does not show materialized toggle for source nodes', () => {
+    setupStore('source-1');
+    render(<SidePanel />);
+    expect(screen.queryByText('Materialized')).not.toBeInTheDocument();
+  });
+
+  it('does not show materialized toggle for sink nodes', () => {
+    setupStore('sink-1');
+    render(<SidePanel />);
+    expect(screen.queryByText('Materialized')).not.toBeInTheDocument();
+  });
+
+  it('shows materialization hint for transforms feeding a sink', () => {
+    setupStore('transform-1');
+    render(<SidePanel />);
+    // transform-1 feeds sink-1 and materialized is false
+    expect(screen.getByText(/consider enabling materialization/)).toBeInTheDocument();
+  });
 });

@@ -202,6 +202,68 @@ function RunStats({ stats, role }: RunStatsProps) {
 // Source node content
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Cache row limit inline editor
+// ---------------------------------------------------------------------------
+
+interface CacheRowLimitProps {
+  value: number | undefined;
+  onChange: (value: number | undefined) => void;
+}
+
+function CacheRowLimitInput({ value, onChange }: CacheRowLimitProps) {
+  const [draft, setDraft] = useState(value?.toString() ?? '');
+  const [editing, setEditing] = useState(false);
+
+  const commit = useCallback(() => {
+    setEditing(false);
+    const parsed = parseInt(draft, 10);
+    if (!draft.trim()) {
+      onChange(undefined); // Clear override → fall back to pipeline default
+    } else if (!Number.isNaN(parsed) && parsed > 0) {
+      onChange(parsed);
+    } else {
+      setDraft(value?.toString() ?? '');
+    }
+  }, [draft, value, onChange]);
+
+  const display = value != null ? value.toLocaleString() : 'default';
+
+  if (!editing) {
+    return (
+      <span
+        className="side-panel__kv-value"
+        style={{ cursor: 'pointer' }}
+        onClick={() => { setDraft(value?.toString() ?? ''); setEditing(true); }}
+        title="Click to edit cache row limit"
+      >
+        {display}
+      </span>
+    );
+  }
+
+  return (
+    <input
+      className="side-panel__cache-limit-input"
+      type="text"
+      inputMode="numeric"
+      value={draft}
+      placeholder="default"
+      autoFocus
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') { setDraft(value?.toString() ?? ''); setEditing(false); }
+      }}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Node content components
+// ---------------------------------------------------------------------------
+
 interface NodeContentProps {
   node: PipelineNode;
   apiNode: ApiNode | undefined;
@@ -214,9 +276,14 @@ interface NodeContentProps {
   schemaDiff?: SchemaDiff | null;
   sampleConfig?: ApiSampleConfig;
   onSampleConfigChange?: (config: ApiSampleConfig) => void;
+  reExecute: boolean;
+  onReExecuteChange?: (value: boolean) => void;
+  onCacheRowLimitChange?: (value: number | undefined) => void;
+  onMaterializedChange?: (value: boolean) => void;
+  feedsSink?: boolean;
 }
 
-function SourceContent({ apiNode, preview, previewLoading, previewError, sampleMethod, runStats, sampleConfig, onSampleConfigChange }: NodeContentProps) {
+function SourceContent({ apiNode, preview, previewLoading, previewError, sampleMethod, runStats, sampleConfig, onSampleConfigChange, onCacheRowLimitChange }: NodeContentProps) {
   const connector = apiNode?.connector ?? 'unknown';
   const config = apiNode?.config as Record<string, unknown> | undefined;
 
@@ -228,6 +295,15 @@ function SourceContent({ apiNode, preview, previewLoading, previewError, sampleM
           <span className="side-panel__kv-key">Connector</span>
           <span className="side-panel__kv-value">{connector}</span>
         </div>
+        {onCacheRowLimitChange && (
+          <div className="side-panel__kv">
+            <span className="side-panel__kv-key">Cache limit</span>
+            <CacheRowLimitInput
+              value={apiNode?.cache_row_limit}
+              onChange={onCacheRowLimitChange}
+            />
+          </div>
+        )}
         {config?.connection_string != null && (
           <div className="side-panel__kv">
             <span className="side-panel__kv-key">Connection</span>
@@ -287,9 +363,15 @@ function TransformContent({
   schemaDiff,
   sampleConfig,
   onSampleConfigChange,
+  reExecute,
+  onReExecuteChange,
+  onCacheRowLimitChange,
+  onMaterializedChange,
+  feedsSink,
 }: NodeContentProps) {
   const mode = apiNode?.mode ?? 'sql';
   const code = apiNode?.code ?? '';
+  const isMaterialized = apiNode?.materialized ?? false;
 
   return (
     <>
@@ -299,6 +381,33 @@ function TransformContent({
           <span className="side-panel__kv-key">Mode</span>
           <span className="side-panel__kv-value">{mode.toUpperCase()}</span>
         </div>
+        {onMaterializedChange && (
+          <div className="side-panel__kv">
+            <span className="side-panel__kv-key">Materialized</span>
+            <label className="side-panel__toggle side-panel__toggle--inline" title="When enabled, this node's output is cached for preview and downstream use">
+              <input
+                type="checkbox"
+                checked={isMaterialized}
+                onChange={(e) => onMaterializedChange(e.target.checked)}
+              />
+              {isMaterialized ? 'Yes' : 'No'}
+            </label>
+          </div>
+        )}
+        {feedsSink && !isMaterialized && (
+          <div className="side-panel__hint">
+            This transform feeds a sink — consider enabling materialization for preview
+          </div>
+        )}
+        {onCacheRowLimitChange && (
+          <div className="side-panel__kv">
+            <span className="side-panel__kv-key">Cache limit</span>
+            <CacheRowLimitInput
+              value={apiNode?.cache_row_limit}
+              onChange={onCacheRowLimitChange}
+            />
+          </div>
+        )}
         {code && (
           <div className="side-panel__code-preview">{truncateCode(code, 5)}</div>
         )}
@@ -327,6 +436,16 @@ function TransformContent({
             <SampleConfigDropdown value={sampleConfig} onChange={onSampleConfigChange} />
           )}
         </div>
+        {onReExecuteChange && (
+          <label className="side-panel__toggle" title="Re-execute this node against cached upstream data to preview code changes">
+            <input
+              type="checkbox"
+              checked={reExecute}
+              onChange={(e) => onReExecuteChange(e.target.checked)}
+            />
+            Re-execute
+          </label>
+        )}
         <PreviewTable
           preview={preview}
           loading={previewLoading}
@@ -390,6 +509,11 @@ function SinkContent({ node, apiNode, runStats }: NodeContentProps) {
       <div className="side-panel__section">
         <div className="side-panel__section-title">Last Run</div>
         <RunStats stats={runStats} role="sink" />
+      </div>
+
+      <div className="side-panel__section">
+        <div className="side-panel__section-title">Preview</div>
+        <span className="side-panel__empty">Sinks do not produce preview data</span>
       </div>
     </>
   );
@@ -474,12 +598,14 @@ export function SidePanel() {
   const duplicateNode = usePipelineStore((s) => s.duplicateNode);
   const setNodes = usePipelineStore((s) => s.setNodes);
   const markDirty = usePipelineStore((s) => s.markDirty);
+  const updateNodeConfig = usePipelineStore((s) => s.updateNodeConfig);
 
   const [preview, setPreview] = useState<Map<string, ApiPreviewNodeResponse>>(new Map());
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sampleMethod, setSampleMethod] = useState<string | undefined>(undefined);
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
+  const [reExecute, setReExecute] = useState(false);
   const lastRunCompletedAt = usePipelineStore((s) => s.lastRunCompletedAt);
 
   // Cache key: pipeline version — invalidate when pipeline config changes
@@ -503,13 +629,28 @@ export function SidePanel() {
         })
     : [];
 
+  // Check if this node feeds directly into a sink
+  const feedsSink = selectedNode
+    ? edges
+        .filter((e) => e.source === selectedNode.id)
+        .some((e) => {
+          const downstream = nodes.find((n) => n.id === e.target);
+          return downstream?.data.role === 'sink';
+        })
+    : false;
+
+  // Reset re-execute toggle when selecting a different node
+  useEffect(() => {
+    setReExecute(false);
+  }, [selectedNodeId]);
+
   // Fetch preview data when panel opens or selection changes
   useEffect(() => {
     if (!pipelineId || pipelineId === 'demo' || !selectedNodeId) return;
 
-    // Use cached preview if pipeline version hasn't changed
+    // Use cached preview if pipeline version hasn't changed and not re-executing
     const cached = previewCacheRef.current;
-    if (cached && cached.version === pipelineVersion && cached.data.has(selectedNodeId)) {
+    if (!reExecute && cached && cached.version === pipelineVersion && cached.data.has(selectedNodeId)) {
       setPreview(cached.data);
       setPreviewLoading(false);
       // Still load runs (cheap, important to be fresh)
@@ -521,8 +662,8 @@ export function SidePanel() {
     const controller = new AbortController();
 
     async function loadPreview() {
-      // Skip fetch if cache hit
-      if (cached && cached.version === pipelineVersion && cached.data.has(selectedNodeId!)) {
+      // Skip fetch if cache hit (but not when re-executing)
+      if (!reExecute && cached && cached.version === pipelineVersion && cached.data.has(selectedNodeId!)) {
         return;
       }
       setPreviewLoading(true);
@@ -532,13 +673,17 @@ export function SidePanel() {
           pipelineId!,
           undefined, // Use pipeline's sample_config (backend falls back to default)
           controller.signal,
+          reExecute ? selectedNodeId! : undefined,
         );
         if (controller.signal.aborted) return;
         const map = new Map<string, ApiPreviewNodeResponse>();
         for (const node of res.nodes) {
           map.set(node.node_id, node);
         }
-        previewCacheRef.current = { version: pipelineVersion, data: map };
+        // Only cache non-re-execute results
+        if (!reExecute) {
+          previewCacheRef.current = { version: pipelineVersion, data: map };
+        }
         setPreview(map);
         setSampleMethod(res.sample_method);
       } catch (err) {
@@ -572,7 +717,7 @@ export function SidePanel() {
     return () => {
       controller.abort();
     };
-  }, [pipelineId, selectedNodeId, pipelineVersion, lastRunCompletedAt]);
+  }, [pipelineId, selectedNodeId, pipelineVersion, lastRunCompletedAt, reExecute]);
 
   // Rename handler — updates the node label in store and marks dirty
   const handleRename = useCallback(
@@ -648,6 +793,26 @@ export function SidePanel() {
     return computeSchemaDiff(inputColumns, nodePreview.columns);
   })();
 
+  const handleReExecuteChange = useCallback((value: boolean) => {
+    setReExecute(value);
+  }, []);
+
+  const handleCacheRowLimitChange = useCallback(
+    (value: number | undefined) => {
+      if (!selectedNodeId) return;
+      updateNodeConfig(selectedNodeId, { cache_row_limit: value });
+    },
+    [selectedNodeId, updateNodeConfig],
+  );
+
+  const handleMaterializedChange = useCallback(
+    (value: boolean) => {
+      if (!selectedNodeId) return;
+      updateNodeConfig(selectedNodeId, { materialized: value });
+    },
+    [selectedNodeId, updateNodeConfig],
+  );
+
   // Build content props
   const contentProps: NodeContentProps | null = selectedNode
     ? {
@@ -662,6 +827,11 @@ export function SidePanel() {
         previewError,
         sampleConfig: apiPipeline?.sample_config,
         onSampleConfigChange: handleSampleConfigChange,
+        reExecute,
+        onReExecuteChange: handleReExecuteChange,
+        onCacheRowLimitChange: handleCacheRowLimitChange,
+        onMaterializedChange: handleMaterializedChange,
+        feedsSink,
       }
     : null;
 

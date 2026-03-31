@@ -73,6 +73,10 @@ pub struct SourceConfig {
     /// Connector-specific configuration (opaque JSON).
     #[serde(default)]
     pub config: serde_json::Value,
+    /// Maximum number of rows to cache for preview. Overrides the pipeline-level
+    /// `cache_row_limit`. When `None`, falls back to the pipeline default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_row_limit: Option<usize>,
 }
 
 /// The execution mode for a transform node.
@@ -99,6 +103,10 @@ pub struct TransformConfig {
     /// Whether this node's output should be materialized (cached).
     #[serde(default)]
     pub materialized: bool,
+    /// Maximum number of rows to cache for preview. Overrides the pipeline-level
+    /// `cache_row_limit`. When `None`, falls back to the pipeline default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_row_limit: Option<usize>,
 }
 
 /// Configuration for a sink node.
