@@ -6,6 +6,7 @@
 use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
+use datafusion::catalog::{CatalogProvider, CatalogProviderList, SchemaProvider};
 use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
 use flux_datafusion::EnvironmentStorage;
@@ -259,4 +260,278 @@ async fn resolver_three_level_chain() {
         .downcast_ref::<StringArray>()
         .unwrap();
     assert_eq!(names.value(0), "from_prod");
+}
+
+// ── Resolver unit-level coverage tests ──────────────────────────────────────
+
+#[test]
+fn resolver_accessors() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    assert_eq!(resolver.active_environment(), "dev");
+    assert_eq!(resolver.fallback_chain(), &["dev", "prod"]);
+}
+
+#[test]
+fn resolver_debug_format() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    let dbg = format!("{resolver:?}");
+    assert!(dbg.contains("dev"));
+    assert!(dbg.contains("EnvironmentResolver"));
+}
+
+#[test]
+fn resolver_environment_catalog_exists() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    assert!(resolver.environment_catalog("dev").is_some());
+    assert!(resolver.environment_catalog("prod").is_some());
+    assert!(resolver.environment_catalog("nonexistent").is_none());
+}
+
+#[test]
+fn resolver_register_table_unknown_env_fails() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    let batch = make_batch(&[1], &["a"]);
+    let table = MemTable::try_new(test_schema(), vec![vec![batch]]).unwrap();
+    let err = resolver
+        .register_table("unknown", "public", "t", Arc::new(table))
+        .unwrap_err();
+    assert!(err.to_string().contains("not found"));
+}
+
+#[test]
+fn resolver_catalog_names() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    let names = resolver.catalog_names();
+    assert!(names.contains(&"datafusion".to_string()));
+}
+
+#[test]
+fn resolver_catalog_returns_merged_for_datafusion() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    let catalog = resolver.catalog("datafusion");
+    assert!(catalog.is_some());
+}
+
+#[test]
+fn resolver_catalog_returns_specific_env() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    let catalog = resolver.catalog("dev");
+    assert!(catalog.is_some());
+    let catalog = resolver.catalog("nonexistent");
+    assert!(catalog.is_none());
+}
+
+#[test]
+fn resolver_register_catalog_non_env() {
+    use datafusion::catalog::MemoryCatalogProvider;
+
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    // Register a non-EnvironmentCatalog — should return None.
+    let mem_catalog = MemoryCatalogProvider::new();
+    let result = resolver.register_catalog(
+        "other".to_string(),
+        Arc::new(mem_catalog) as Arc<dyn CatalogProvider>,
+    );
+    assert!(result.is_none());
+}
+
+#[test]
+fn resolver_register_catalog_env() {
+    use flux_datafusion::resolver::EnvironmentCatalog;
+
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    let env_cat = EnvironmentCatalog::new("dev".into());
+    let result = resolver.register_catalog(
+        "dev".to_string(),
+        Arc::new(env_cat) as Arc<dyn CatalogProvider>,
+    );
+    // Replaces existing dev catalog, returns the old one.
+    assert!(result.is_some());
+}
+
+#[test]
+fn environment_catalog_schema_names() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    let cat = resolver.environment_catalog("dev").unwrap();
+    let names = cat.schema_names();
+    assert!(names.contains(&"public".to_string()));
+}
+
+#[test]
+fn environment_catalog_schema_lookup() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    let cat = resolver.environment_catalog("dev").unwrap();
+    assert!(cat.schema("public").is_some());
+    assert!(cat.schema("nonexistent").is_none());
+}
+
+#[test]
+fn environment_catalog_get_or_create_schema() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    let cat = resolver.environment_catalog("dev").unwrap();
+    let schema = cat.get_or_create_schema("custom");
+    assert_eq!(schema.table_names().len(), 0);
+    // Second call returns same schema.
+    let schema2 = cat.get_or_create_schema("custom");
+    assert_eq!(schema.table_names().len(), schema2.table_names().len());
+}
+
+#[test]
+fn environment_catalog_register_schema() {
+    use flux_datafusion::resolver::EnvironmentCatalog;
+
+    let cat = EnvironmentCatalog::new("dev".into());
+    let new_schema = Arc::new(flux_datafusion::resolver::EnvironmentSchema::new(
+        "test".into(),
+    ));
+    let prev = cat.register_schema("test", new_schema).unwrap();
+    assert!(prev.is_none());
+    assert!(cat.schema("test").is_some());
+}
+
+#[test]
+fn environment_catalog_debug() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    let cat = resolver.environment_catalog("dev").unwrap();
+    let dbg = format!("{cat:?}");
+    assert!(dbg.contains("EnvironmentCatalog"));
+}
+
+#[tokio::test]
+async fn merged_catalog_schema_names_deduplicates() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    // Both envs have "public" — merged should list it once.
+    let merged = resolver.catalog("datafusion").unwrap();
+    let names = merged.schema_names();
+    assert_eq!(names.iter().filter(|n| *n == "public").count(), 1);
+}
+
+#[tokio::test]
+async fn merged_catalog_schema_returns_none_for_unknown() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into()]);
+    let merged = resolver.catalog("datafusion").unwrap();
+    assert!(merged.schema("nonexistent").is_none());
+}
+
+#[tokio::test]
+async fn fallback_schema_table_names_merges() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+
+    let batch1 = make_batch(&[1], &["a"]);
+    let batch2 = make_batch(&[2], &["b"]);
+
+    let t1 = MemTable::try_new(test_schema(), vec![vec![batch1]]).unwrap();
+    resolver
+        .register_table("prod", "public", "t_prod", Arc::new(t1))
+        .unwrap();
+
+    let t2 = MemTable::try_new(test_schema(), vec![vec![batch2]]).unwrap();
+    resolver
+        .register_table("dev", "public", "t_dev", Arc::new(t2))
+        .unwrap();
+
+    let merged = resolver.catalog("datafusion").unwrap();
+    let schema = merged.schema("public").unwrap();
+    let names = schema.table_names();
+    assert!(names.contains(&"t_prod".to_string()));
+    assert!(names.contains(&"t_dev".to_string()));
+}
+
+#[tokio::test]
+async fn fallback_schema_table_exist() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+
+    let batch = make_batch(&[1], &["a"]);
+    let table = MemTable::try_new(test_schema(), vec![vec![batch]]).unwrap();
+    resolver
+        .register_table("prod", "public", "prod_only", Arc::new(table))
+        .unwrap();
+
+    let merged = resolver.catalog("datafusion").unwrap();
+    let schema = merged.schema("public").unwrap();
+    assert!(schema.table_exist("prod_only"));
+    assert!(!schema.table_exist("nonexistent"));
+}
+
+#[tokio::test]
+async fn fallback_schema_register_table_goes_to_active() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+    let merged = resolver.catalog("datafusion").unwrap();
+    let schema = merged.schema("public").unwrap();
+
+    let batch = make_batch(&[1], &["registered"]);
+    let table = MemTable::try_new(test_schema(), vec![vec![batch]]).unwrap();
+    schema
+        .register_table("new_table".to_string(), Arc::new(table))
+        .unwrap();
+
+    // Should be visible via the fallback schema.
+    assert!(schema.table_exist("new_table"));
+
+    // Should be in dev's catalog directly.
+    let dev_cat = resolver.environment_catalog("dev").unwrap();
+    let dev_schema = dev_cat.schema("public").unwrap();
+    assert!(dev_schema.table_exist("new_table"));
+}
+
+#[tokio::test]
+async fn fallback_schema_deregister_table() {
+    let resolver = EnvironmentResolver::new("dev".into(), vec!["dev".into(), "prod".into()]);
+
+    let batch = make_batch(&[1], &["a"]);
+    let table = MemTable::try_new(test_schema(), vec![vec![batch]]).unwrap();
+    resolver
+        .register_table("dev", "public", "removeme", Arc::new(table))
+        .unwrap();
+
+    let merged = resolver.catalog("datafusion").unwrap();
+    let schema = merged.schema("public").unwrap();
+    assert!(schema.table_exist("removeme"));
+
+    let removed = schema.deregister_table("removeme").unwrap();
+    assert!(removed.is_some());
+    assert!(!schema.table_exist("removeme"));
+}
+
+#[tokio::test]
+async fn environment_schema_deregister() {
+    use flux_datafusion::resolver::EnvironmentSchema;
+
+    let schema = EnvironmentSchema::new("test".into());
+    let batch = make_batch(&[1], &["a"]);
+    let table = MemTable::try_new(test_schema(), vec![vec![batch]]).unwrap();
+    schema
+        .register_table("t".to_string(), Arc::new(table))
+        .unwrap();
+    assert!(schema.table_exist("t"));
+
+    let removed = schema.deregister_table("t").unwrap();
+    assert!(removed.is_some());
+    assert!(!schema.table_exist("t"));
+}
+
+#[tokio::test]
+async fn environment_schema_table_async() {
+    use flux_datafusion::resolver::EnvironmentSchema;
+
+    let schema = EnvironmentSchema::new("test".into());
+    let batch = make_batch(&[1], &["a"]);
+    let table = MemTable::try_new(test_schema(), vec![vec![batch]]).unwrap();
+    schema
+        .register_table("t".to_string(), Arc::new(table))
+        .unwrap();
+
+    let result = schema.table("t").await.unwrap();
+    assert!(result.is_some());
+    let result = schema.table("nonexistent").await.unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn environment_schema_debug() {
+    use flux_datafusion::resolver::EnvironmentSchema;
+    let schema = EnvironmentSchema::new("test".into());
+    let dbg = format!("{schema:?}");
+    assert!(dbg.contains("EnvironmentSchema"));
+    assert!(dbg.contains("test"));
 }

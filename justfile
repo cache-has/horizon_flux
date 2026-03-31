@@ -24,6 +24,14 @@ check:
     cargo clippy --workspace -- -D warnings
     cd frontend && npm run lint
 
+# Run code coverage report (requires cargo-llvm-cov)
+coverage *ARGS:
+    cargo llvm-cov --workspace {{ARGS}}
+
+# Run coverage for a specific package
+coverage-package PKG:
+    cargo llvm-cov --package {{PKG}}
+
 # Format all code
 fmt:
     cargo fmt --all
