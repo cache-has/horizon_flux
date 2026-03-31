@@ -40,6 +40,7 @@ import { SidePanel } from './SidePanel';
 import { NodeEditorModal } from './NodeEditorModal';
 import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 import { SecretsPanel } from './SecretsPanel';
+import { SystemInfoPanel } from './SystemInfoPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { useEnvironmentStore } from '../../stores/environmentStore';
 import './PipelineCanvas.css';
@@ -85,6 +86,7 @@ function PipelineCanvasInner() {
   const isValidConnection = useConnectionValidation(edges);
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
   const [secretsPanelOpen, setSecretsPanelOpen] = useState(false);
+  const [systemInfoPanelOpen, setSystemInfoPanelOpen] = useState(false);
 
   // Keyboard shortcuts: Escape to close side panel, Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo
   useEffect(() => {
@@ -607,7 +609,10 @@ function PipelineCanvasInner() {
           zoomable
         />
         <Panel position="top-right" className="toolbar-panel">
-          <CanvasToolbar onSecretsClick={() => setSecretsPanelOpen((o) => !o)} />
+          <CanvasToolbar
+            onSecretsClick={() => setSecretsPanelOpen((o) => !o)}
+            onSystemInfoClick={() => setSystemInfoPanelOpen((o) => !o)}
+          />
           <div className="relayout-panel">
             <label className="relayout-checkbox">
               <input
@@ -647,6 +652,10 @@ function PipelineCanvasInner() {
       <SecretsPanel
         open={secretsPanelOpen}
         onClose={() => setSecretsPanelOpen(false)}
+      />
+      <SystemInfoPanel
+        open={systemInfoPanelOpen}
+        onClose={() => setSystemInfoPanelOpen(false)}
       />
       <NodeEditorModal />
     </div>

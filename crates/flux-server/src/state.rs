@@ -9,6 +9,7 @@ use flux_datafusion::{
 };
 use flux_engine::PipelineStorage;
 use flux_secrets::SecretStore;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -138,6 +139,63 @@ impl SecretSession {
     }
 }
 
+/// Metadata backend information captured at server startup for the system info
+/// endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataInfo {
+    /// `"sqlite"` or `"postgresql"`.
+    pub backend: String,
+    /// Data directory path (always present, even for PostgreSQL — used for secrets, cache, etc.).
+    pub data_dir: PathBuf,
+    /// Redacted connection string for PostgreSQL, or `None` for SQLite.
+    pub connection_string: Option<String>,
+    /// How the backend was configured: `"--metadata-url flag"`, `"HORIZON_FLUX_METADATA_URL env var"`,
+    /// `"config.toml"`, or `"default"`.
+    pub config_source: String,
+}
+
+/// Redact the password component of a PostgreSQL connection string.
+///
+/// Handles both URI-style (`postgresql://user:pass@host/db`) and key-value-style
+/// (`host=... password=secret ...`) connection strings.
+pub fn redact_connection_string(conn: &str) -> String {
+    // URI style: postgresql://user:password@host...
+    if let Some(scheme_end) = conn.find("://") {
+        let prefix = &conn[..scheme_end + 3];
+        let rest = &conn[scheme_end + 3..];
+        // Find the @ that separates userinfo from host
+        if let Some(at_pos) = rest.find('@') {
+            let userinfo = &rest[..at_pos];
+            let after_at = &rest[at_pos..];
+            // Redact the password portion (after the colon in userinfo)
+            if let Some(colon) = userinfo.find(':') {
+                let user = &userinfo[..colon];
+                return format!("{prefix}{user}:***{after_at}");
+            }
+        }
+        return conn.to_string();
+    }
+
+    // Key-value style: host=localhost password=secret dbname=flux
+    let mut result = String::with_capacity(conn.len());
+    let mut remaining = conn;
+    while let Some(pos) = remaining.find("password=") {
+        result.push_str(&remaining[..pos]);
+        result.push_str("password=***");
+        let after_key = &remaining[pos + 9..];
+        // Skip until next space or end
+        match after_key.find(' ') {
+            Some(space) => remaining = &after_key[space..],
+            None => {
+                remaining = "";
+                break;
+            }
+        }
+    }
+    result.push_str(remaining);
+    result
+}
+
 /// Shared state available to all request handlers via Axum's `State` extractor.
 #[derive(Clone)]
 pub struct AppState {
@@ -154,6 +212,8 @@ pub struct AppState {
     pub output_cache: Arc<OutputCache>,
     /// Shared DataFusion session factory with memory pool and spill-to-disk.
     pub session_factory: Option<Arc<SessionFactory>>,
+    /// Metadata backend info for the system info endpoint.
+    pub metadata_info: MetadataInfo,
 }
 
 impl AppState {
@@ -202,5 +262,52 @@ impl SecretResolver for SessionSecretResolver {
         )?;
         flux_secrets::resolve_json_secrets(value, store, environment)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_uri_with_password() {
+        assert_eq!(
+            redact_connection_string("postgresql://user:s3cret@localhost:5432/mydb"),
+            "postgresql://user:***@localhost:5432/mydb"
+        );
+    }
+
+    #[test]
+    fn redact_uri_without_password() {
+        let input = "postgresql://localhost:5432/mydb";
+        assert_eq!(redact_connection_string(input), input);
+    }
+
+    #[test]
+    fn redact_uri_user_only() {
+        let input = "postgresql://user@localhost/mydb";
+        assert_eq!(redact_connection_string(input), input);
+    }
+
+    #[test]
+    fn redact_key_value_style() {
+        assert_eq!(
+            redact_connection_string("host=localhost password=s3cret dbname=mydb"),
+            "host=localhost password=*** dbname=mydb"
+        );
+    }
+
+    #[test]
+    fn redact_key_value_password_at_end() {
+        assert_eq!(
+            redact_connection_string("host=localhost password=s3cret"),
+            "host=localhost password=***"
+        );
+    }
+
+    #[test]
+    fn redact_no_password() {
+        let input = "host=localhost dbname=mydb";
+        assert_eq!(redact_connection_string(input), input);
     }
 }

@@ -8,6 +8,7 @@ pub mod environments;
 pub mod pipelines;
 pub mod preview;
 pub mod secrets;
+pub mod system;
 
 use axum::Json;
 use axum::http::StatusCode;

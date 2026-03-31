@@ -97,6 +97,21 @@ pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -
 
     let output_cache = Arc::new(flux_datafusion::OutputCache::new(&data_dir));
 
+    let metadata_info = flux_server::state::MetadataInfo {
+        backend: match &backend {
+            crate::config::MetadataBackend::Sqlite => "sqlite".to_string(),
+            crate::config::MetadataBackend::Postgresql { .. } => "postgresql".to_string(),
+        },
+        data_dir: data_dir.clone(),
+        connection_string: match &backend {
+            crate::config::MetadataBackend::Postgresql { connection_string } => {
+                Some(flux_server::state::redact_connection_string(connection_string))
+            }
+            _ => None,
+        },
+        config_source: backend.display_source(metadata_url, &data_dir).to_string(),
+    };
+
     let app_state = flux_server::AppState {
         pipeline_store,
         run_store,
@@ -106,6 +121,7 @@ pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -
         event_tx,
         output_cache,
         session_factory: Some(Arc::new(flux_datafusion::SessionFactory::default())),
+        metadata_info,
     };
 
     let on_ready: Option<Box<dyn FnOnce(u16) + Send>> = match &tray_handle {

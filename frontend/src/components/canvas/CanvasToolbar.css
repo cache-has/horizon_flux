@@ -178,6 +178,32 @@
 }
 
 /* ---------------------------------------------------------------------------
+   System Info Button
+   --------------------------------------------------------------------------- */
+
+.toolbar-system-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-family: var(--sans);
+  font-weight: 500;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--bg, #fff);
+  color: var(--text, #64748b);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+}
+
+.toolbar-system-info:hover {
+  border-color: var(--accent, #7c3aed);
+  color: var(--accent, #7c3aed);
+}
+
+/* ---------------------------------------------------------------------------
    Run Button
    --------------------------------------------------------------------------- */
 

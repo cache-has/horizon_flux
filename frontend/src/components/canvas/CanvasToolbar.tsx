@@ -275,13 +275,31 @@ function SecretsButton({ onClick }: { onClick: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// System Info Button
+// ---------------------------------------------------------------------------
+
+function SystemInfoButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="System information"
+    >
+      System
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Toolbar
 // ---------------------------------------------------------------------------
 
 export function CanvasToolbar({
   onSecretsClick,
+  onSystemInfoClick,
 }: {
   onSecretsClick?: () => void;
+  onSystemInfoClick?: () => void;
 }) {
   return (
     <div className="canvas-toolbar">
@@ -289,6 +307,7 @@ export function CanvasToolbar({
       <div className="canvas-toolbar__separator" />
       <EnvironmentSelector />
       <div className="canvas-toolbar__spacer" />
+      {onSystemInfoClick && <SystemInfoButton onClick={onSystemInfoClick} />}
       {onSecretsClick && <SecretsButton onClick={onSecretsClick} />}
       <RunButton />
     </div>

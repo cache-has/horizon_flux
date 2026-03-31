@@ -28,6 +28,12 @@ fn test_state() -> AppState {
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
         session_factory: None,
+        metadata_info: flux_server::state::MetadataInfo {
+            backend: "sqlite".to_string(),
+            data_dir: std::env::temp_dir(),
+            connection_string: None,
+            config_source: "default".to_string(),
+        },
     }
 }
 
@@ -89,6 +95,12 @@ async fn list_connectors_empty_registry() {
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
         session_factory: None,
+        metadata_info: flux_server::state::MetadataInfo {
+            backend: "sqlite".to_string(),
+            data_dir: std::env::temp_dir(),
+            connection_string: None,
+            config_source: "default".to_string(),
+        },
     };
     let app = test_router(state);
     let resp = app
