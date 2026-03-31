@@ -489,6 +489,130 @@ mod tests {
     }
 
     #[test]
+    fn detects_duplicate_edge() {
+        let p = Pipeline {
+            name: "dup_edge".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            nodes: vec![source_node("src"), sink_node("sink")],
+            edges: vec![Edge::new("src", "sink"), Edge::new("src", "sink")],
+        };
+        let errs = validate(&p).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, DagError::DuplicateEdge { .. }))
+        );
+    }
+
+    #[test]
+    fn detects_sink_with_downstream() {
+        let p = Pipeline {
+            name: "bad_sink".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            nodes: vec![
+                source_node("src"),
+                sink_node("mid_sink"),
+                sink_node("end_sink"),
+            ],
+            edges: vec![
+                Edge::new("src", "mid_sink"),
+                Edge::new("mid_sink", "end_sink"), // sink has downstream
+            ],
+        };
+        let errs = validate(&p).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, DagError::SinkHasDownstream(_)))
+        );
+    }
+
+    #[test]
+    fn detects_transform_missing_upstream() {
+        let p = Pipeline {
+            name: "no_upstream".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            nodes: vec![transform_node("orphan_xform"), sink_node("sink")],
+            edges: vec![Edge::new("orphan_xform", "sink")],
+        };
+        let errs = validate(&p).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, DagError::TransformMissingUpstream(_)))
+        );
+    }
+
+    #[test]
+    fn single_source_node_is_valid() {
+        // A single-node pipeline is exempt from orphan detection.
+        let p = Pipeline {
+            name: "solo".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            nodes: vec![source_node("src")],
+            edges: vec![],
+        };
+        assert!(validate(&p).is_ok());
+    }
+
+    #[test]
+    fn topological_sort_fan_out_fan_in() {
+        // src -> a, src -> b, src -> c, a -> sink, b -> sink, c -> sink
+        let p = Pipeline {
+            name: "fan".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            nodes: vec![
+                source_node("src"),
+                transform_node("a"),
+                transform_node("b"),
+                transform_node("c"),
+                sink_node("sink"),
+            ],
+            edges: vec![
+                Edge::new("src", "a"),
+                Edge::new("src", "b"),
+                Edge::new("src", "c"),
+                Edge::new("a", "sink"),
+                Edge::new("b", "sink"),
+                Edge::new("c", "sink"),
+            ],
+        };
+        assert!(validate(&p).is_ok());
+        let order = topological_sort(&p);
+        let pos = |id: &str| order.iter().position(|n| n.0 == id).unwrap();
+        // src must be first, sink must be last.
+        assert_eq!(pos("src"), 0);
+        assert_eq!(pos("sink"), 4);
+    }
+
+    #[test]
     fn pipeline_serde_roundtrip() {
         let p = simple_pipeline();
         let json = serde_json::to_string_pretty(&p).unwrap();

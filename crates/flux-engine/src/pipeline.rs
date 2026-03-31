@@ -213,3 +213,352 @@ pub enum VariableType {
     Date,
     Boolean,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::edge::Edge;
+    use crate::node::*;
+    use std::collections::BTreeMap;
+
+    fn source_node(id: &str) -> Node {
+        Node {
+            id: NodeId::new(id),
+            name: id.to_string(),
+            kind: NodeKind::Source(SourceConfig {
+                connector: "csv".into(),
+                config: serde_json::Value::Null,
+                cache_row_limit: None,
+            }),
+            position: Position::default(),
+            pinned_position: false,
+        }
+    }
+
+    fn transform_node(id: &str) -> Node {
+        Node {
+            id: NodeId::new(id),
+            name: id.to_string(),
+            kind: NodeKind::Transform(TransformConfig {
+                mode: TransformMode::Sql,
+                code: "SELECT * FROM upstream".into(),
+                code_path: None,
+                materialized: false,
+                cache_row_limit: None,
+            }),
+            position: Position::default(),
+            pinned_position: false,
+        }
+    }
+
+    fn sink_node(id: &str) -> Node {
+        Node {
+            id: NodeId::new(id),
+            name: id.to_string(),
+            kind: NodeKind::Sink(SinkConfig {
+                connector: "stdout".into(),
+                config: serde_json::Value::Null,
+            }),
+            position: Position::default(),
+            pinned_position: false,
+        }
+    }
+
+    fn diamond_pipeline() -> Pipeline {
+        // src -> a, src -> b, a -> join, b -> join, join -> sink
+        Pipeline {
+            name: "diamond".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            nodes: vec![
+                source_node("src"),
+                transform_node("a"),
+                transform_node("b"),
+                transform_node("join"),
+                sink_node("sink"),
+            ],
+            edges: vec![
+                Edge::new("src", "a"),
+                Edge::new("src", "b"),
+                Edge::new("a", "join"),
+                Edge::new("b", "join"),
+                Edge::new("join", "sink"),
+            ],
+        }
+    }
+
+    #[test]
+    fn node_lookup_found() {
+        let p = diamond_pipeline();
+        let node = p.node(&NodeId::new("a")).unwrap();
+        assert_eq!(node.name, "a");
+    }
+
+    #[test]
+    fn node_lookup_not_found() {
+        let p = diamond_pipeline();
+        assert!(p.node(&NodeId::new("ghost")).is_none());
+    }
+
+    #[test]
+    fn node_ids_returns_all() {
+        let p = diamond_pipeline();
+        let ids: Vec<&str> = p.node_ids().map(|id| id.0.as_str()).collect();
+        assert_eq!(ids.len(), 5);
+        assert!(ids.contains(&"src"));
+        assert!(ids.contains(&"sink"));
+    }
+
+    #[test]
+    fn upstream_of_transform() {
+        let p = diamond_pipeline();
+        let mut upstream: Vec<&str> = p
+            .upstream_of(&NodeId::new("join"))
+            .iter()
+            .map(|id| id.0.as_str())
+            .collect();
+        upstream.sort();
+        assert_eq!(upstream, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn upstream_of_source_is_empty() {
+        let p = diamond_pipeline();
+        assert!(p.upstream_of(&NodeId::new("src")).is_empty());
+    }
+
+    #[test]
+    fn downstream_of_source() {
+        let p = diamond_pipeline();
+        let mut downstream: Vec<&str> = p
+            .downstream_of(&NodeId::new("src"))
+            .iter()
+            .map(|id| id.0.as_str())
+            .collect();
+        downstream.sort();
+        assert_eq!(downstream, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn downstream_of_sink_is_empty() {
+        let p = diamond_pipeline();
+        assert!(p.downstream_of(&NodeId::new("sink")).is_empty());
+    }
+
+    #[test]
+    fn all_downstream_of_source() {
+        let p = diamond_pipeline();
+        let mut all: Vec<String> = p
+            .all_downstream_of(&NodeId::new("src"))
+            .into_iter()
+            .map(|id| id.0)
+            .collect();
+        all.sort();
+        assert_eq!(all, vec!["a", "b", "join", "sink"]);
+    }
+
+    #[test]
+    fn all_downstream_of_leaf_is_empty() {
+        let p = diamond_pipeline();
+        assert!(p.all_downstream_of(&NodeId::new("sink")).is_empty());
+    }
+
+    #[test]
+    fn effective_cache_row_limit_default() {
+        let p = diamond_pipeline();
+        let node = p.node(&NodeId::new("src")).unwrap();
+        assert_eq!(
+            p.effective_cache_row_limit(node),
+            Pipeline::DEFAULT_CACHE_ROW_LIMIT
+        );
+    }
+
+    #[test]
+    fn effective_cache_row_limit_pipeline_level() {
+        let mut p = diamond_pipeline();
+        p.cache_row_limit = Some(5_000);
+        let node = p.node(&NodeId::new("src")).unwrap();
+        assert_eq!(p.effective_cache_row_limit(node), 5_000);
+    }
+
+    #[test]
+    fn effective_cache_row_limit_node_overrides_pipeline() {
+        let mut p = diamond_pipeline();
+        p.cache_row_limit = Some(5_000);
+        // Mutate the source node to have a node-level limit.
+        p.nodes[0] = Node {
+            id: NodeId::new("src"),
+            name: "src".into(),
+            kind: NodeKind::Source(SourceConfig {
+                connector: "csv".into(),
+                config: serde_json::Value::Null,
+                cache_row_limit: Some(500),
+            }),
+            position: Position::default(),
+            pinned_position: false,
+        };
+        let node = p.node(&NodeId::new("src")).unwrap();
+        assert_eq!(p.effective_cache_row_limit(node), 500);
+    }
+
+    #[test]
+    fn effective_cache_row_limit_sink_ignores_node() {
+        let p = diamond_pipeline();
+        let node = p.node(&NodeId::new("sink")).unwrap();
+        // Sink nodes have no cache_row_limit field, so falls to pipeline/default.
+        assert_eq!(
+            p.effective_cache_row_limit(node),
+            Pipeline::DEFAULT_CACHE_ROW_LIMIT
+        );
+    }
+
+    #[test]
+    fn resolve_code_inline() {
+        let xform = TransformConfig {
+            mode: TransformMode::Sql,
+            code: "SELECT 1".into(),
+            code_path: None,
+            materialized: false,
+            cache_row_limit: None,
+        };
+        let p = diamond_pipeline();
+        assert_eq!(p.resolve_code(&xform).unwrap(), "SELECT 1");
+    }
+
+    #[test]
+    fn resolve_code_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql_path = dir.path().join("query.sql");
+        std::fs::write(&sql_path, "SELECT * FROM t").unwrap();
+
+        let xform = TransformConfig {
+            mode: TransformMode::Sql,
+            code: String::new(),
+            code_path: Some("query.sql".into()),
+            materialized: false,
+            cache_row_limit: None,
+        };
+
+        let mut p = diamond_pipeline();
+        p.code_dir = Some(dir.path().to_string_lossy().into_owned());
+
+        assert_eq!(p.resolve_code(&xform).unwrap(), "SELECT * FROM t");
+    }
+
+    #[test]
+    fn with_code_populated_fills_empty_code() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.sql"), "SELECT 42").unwrap();
+
+        let mut p = diamond_pipeline();
+        p.code_dir = Some(dir.path().to_string_lossy().into_owned());
+        // Replace transform "a" with one that has code_path but empty code.
+        p.nodes[1] = Node {
+            id: NodeId::new("a"),
+            name: "a".into(),
+            kind: NodeKind::Transform(TransformConfig {
+                mode: TransformMode::Sql,
+                code: String::new(),
+                code_path: Some("t.sql".into()),
+                materialized: false,
+                cache_row_limit: None,
+            }),
+            position: Position::default(),
+            pinned_position: false,
+        };
+
+        let populated = p.with_code_populated().unwrap();
+        if let NodeKind::Transform(ref xform) = populated.nodes[1].kind {
+            assert_eq!(xform.code, "SELECT 42");
+            // code_path is preserved.
+            assert_eq!(xform.code_path.as_deref(), Some("t.sql"));
+        } else {
+            panic!("expected transform node");
+        }
+    }
+
+    #[test]
+    fn with_resolved_code_clears_code_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.sql"), "SELECT 99").unwrap();
+
+        let mut p = diamond_pipeline();
+        p.code_dir = Some(dir.path().to_string_lossy().into_owned());
+        p.nodes[1] = Node {
+            id: NodeId::new("a"),
+            name: "a".into(),
+            kind: NodeKind::Transform(TransformConfig {
+                mode: TransformMode::Sql,
+                code: String::new(),
+                code_path: Some("t.sql".into()),
+                materialized: false,
+                cache_row_limit: None,
+            }),
+            position: Position::default(),
+            pinned_position: false,
+        };
+
+        let resolved = p.with_resolved_code().unwrap();
+        assert!(resolved.code_dir.is_none());
+        if let NodeKind::Transform(ref xform) = resolved.nodes[1].kind {
+            assert_eq!(xform.code, "SELECT 99");
+            assert!(xform.code_path.is_none());
+        } else {
+            panic!("expected transform node");
+        }
+    }
+
+    #[test]
+    fn from_json_with_warnings_reports_undefined_vars() {
+        let p = Pipeline {
+            name: "test".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            nodes: vec![
+                source_node("src"),
+                Node {
+                    id: NodeId::new("xform"),
+                    name: "xform".into(),
+                    kind: NodeKind::Transform(TransformConfig {
+                        mode: TransformMode::Sql,
+                        code: "SELECT * WHERE x = '{{ unknown_var }}'".into(),
+                        code_path: None,
+                        materialized: false,
+                        cache_row_limit: None,
+                    }),
+                    position: Position::default(),
+                    pinned_position: false,
+                },
+                sink_node("sink"),
+            ],
+            edges: vec![Edge::new("src", "xform"), Edge::new("xform", "sink")],
+        };
+        let json = serde_json::to_string_pretty(&p).unwrap();
+        let (_, warnings) = Pipeline::from_json_with_warnings(&json).unwrap();
+        assert_eq!(warnings.undefined_variables.len(), 1);
+        assert_eq!(warnings.undefined_variables[0].variable, "unknown_var");
+    }
+
+    #[test]
+    fn default_version_and_environment() {
+        // Verify defaults applied when fields are absent from JSON.
+        let json = r#"{
+            "name": "minimal",
+            "nodes": [{"id": "src", "name": "src", "type": "source", "connector": "csv"}],
+            "edges": []
+        }"#;
+        let p: Pipeline = serde_json::from_str(json).unwrap();
+        assert_eq!(p.version, 1);
+        assert_eq!(p.default_environment, "dev");
+    }
+}

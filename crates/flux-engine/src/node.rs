@@ -125,3 +125,137 @@ pub struct Position {
     pub x: f64,
     pub y: f64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_id_display() {
+        let id = NodeId::new("my_node");
+        assert_eq!(id.to_string(), "my_node");
+    }
+
+    #[test]
+    fn node_id_from_string() {
+        let id: NodeId = "test".into();
+        assert_eq!(id.0, "test");
+    }
+
+    #[test]
+    fn node_id_serde_transparent() {
+        let id = NodeId::new("abc");
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, r#""abc""#);
+        let id2: NodeId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn node_kind_source_serde() {
+        let kind = NodeKind::Source(SourceConfig {
+            connector: "csv".into(),
+            config: serde_json::json!({"path": "/data.csv"}),
+            cache_row_limit: Some(500),
+        });
+        let json = serde_json::to_value(&kind).unwrap();
+        assert_eq!(json["type"], "source");
+        assert_eq!(json["connector"], "csv");
+        assert_eq!(json["cache_row_limit"], 500);
+
+        let kind2: NodeKind = serde_json::from_value(json).unwrap();
+        assert!(kind2.is_source());
+        assert!(!kind2.is_transform());
+        assert!(!kind2.is_sink());
+    }
+
+    #[test]
+    fn node_kind_transform_serde() {
+        let kind = NodeKind::Transform(TransformConfig {
+            mode: TransformMode::Python,
+            code: "df.filter(col > 1)".into(),
+            code_path: Some("transforms/t.py".into()),
+            materialized: true,
+            cache_row_limit: None,
+        });
+        let json = serde_json::to_value(&kind).unwrap();
+        assert_eq!(json["type"], "transform");
+        assert_eq!(json["mode"], "python");
+        assert_eq!(json["materialized"], true);
+        assert_eq!(json["code_path"], "transforms/t.py");
+
+        let kind2: NodeKind = serde_json::from_value(json).unwrap();
+        assert!(kind2.is_transform());
+    }
+
+    #[test]
+    fn node_kind_sink_serde() {
+        let kind = NodeKind::Sink(SinkConfig {
+            connector: "postgresql".into(),
+            config: serde_json::json!({"table": "output"}),
+        });
+        let json = serde_json::to_value(&kind).unwrap();
+        assert_eq!(json["type"], "sink");
+        assert_eq!(json["connector"], "postgresql");
+
+        let kind2: NodeKind = serde_json::from_value(json).unwrap();
+        assert!(kind2.is_sink());
+    }
+
+    #[test]
+    fn transform_mode_serde() {
+        assert_eq!(
+            serde_json::to_string(&TransformMode::Sql).unwrap(),
+            r#""sql""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TransformMode::Python).unwrap(),
+            r#""python""#
+        );
+        let mode: TransformMode = serde_json::from_str(r#""sql""#).unwrap();
+        assert_eq!(mode, TransformMode::Sql);
+    }
+
+    #[test]
+    fn position_defaults_to_zero() {
+        let pos = Position::default();
+        assert_eq!(pos.x, 0.0);
+        assert_eq!(pos.y, 0.0);
+    }
+
+    #[test]
+    fn full_node_serde_roundtrip() {
+        let node = Node {
+            id: NodeId::new("t1"),
+            name: "Transform 1".into(),
+            kind: NodeKind::Transform(TransformConfig {
+                mode: TransformMode::Sql,
+                code: "SELECT * FROM upstream".into(),
+                code_path: None,
+                materialized: false,
+                cache_row_limit: None,
+            }),
+            position: Position { x: 100.0, y: 200.5 },
+            pinned_position: true,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let node2: Node = serde_json::from_str(&json).unwrap();
+        assert_eq!(node2.id, node.id);
+        assert_eq!(node2.name, "Transform 1");
+        assert!(node2.pinned_position);
+        assert_eq!(node2.position.x, 100.0);
+        assert_eq!(node2.position.y, 200.5);
+    }
+
+    #[test]
+    fn source_config_optional_fields() {
+        // cache_row_limit is skipped when None.
+        let cfg = SourceConfig {
+            connector: "csv".into(),
+            config: serde_json::Value::Null,
+            cache_row_limit: None,
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert!(json.get("cache_row_limit").is_none());
+    }
+}

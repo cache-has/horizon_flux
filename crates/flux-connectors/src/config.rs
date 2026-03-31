@@ -284,6 +284,9 @@ impl ConnectorConfig {
     ///
     /// Used to validate environment override keys — overrides may only set
     /// keys that the target connector actually supports.
+    ///
+    /// Used to validate environment override keys — overrides may only set
+    /// keys that the target connector actually supports.
     pub fn valid_config_keys(connector: &str) -> Option<&'static [&'static str]> {
         match connector {
             "file" | "csv" | "parquet" => Some(&[
@@ -346,5 +349,321 @@ impl ConnectorConfig {
                 "unknown connector type: {other}"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // -----------------------------------------------------------------------
+    // FileConfig
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn file_config_csv_roundtrip() {
+        let cfg = FileConfig {
+            path: PathBuf::from("/data/input.csv"),
+            format: FileFormat::Csv,
+            options: FileOptions {
+                delimiter: Some('|'),
+                has_header: Some(false),
+                quote_char: Some('\''),
+                null_values: vec!["NA".into(), "".into()],
+                ..Default::default()
+            },
+            table_partition_cols: None,
+            storage_options: HashMap::new(),
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        let cfg2: FileConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg2.path, PathBuf::from("/data/input.csv"));
+        assert_eq!(cfg2.options.delimiter, Some('|'));
+        assert_eq!(cfg2.options.has_header, Some(false));
+        assert_eq!(cfg2.options.null_values, vec!["NA", ""]);
+    }
+
+    #[test]
+    fn file_config_parquet_with_storage_options() {
+        let cfg = FileConfig {
+            path: PathBuf::from("s3://bucket/data.parquet"),
+            format: FileFormat::Parquet,
+            options: FileOptions {
+                compression: Some("zstd".into()),
+                row_group_size: Some(100_000),
+                ..Default::default()
+            },
+            table_partition_cols: Some(vec!["year".into(), "month".into()]),
+            storage_options: HashMap::from([
+                ("aws_region".into(), "us-east-1".into()),
+                ("aws_access_key_id".into(), "AKIA...".into()),
+            ]),
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        let cfg2: FileConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg2.options.compression.as_deref(), Some("zstd"));
+        assert_eq!(cfg2.table_partition_cols.as_ref().unwrap().len(), 2);
+        assert_eq!(cfg2.storage_options.len(), 2);
+    }
+
+    #[test]
+    fn file_config_write_mode() {
+        let json =
+            json!({"path": "/out.csv", "format": "csv", "options": {"write_mode": "append"}});
+        let cfg: FileConfig = serde_json::from_value(json).unwrap();
+        assert!(matches!(cfg.options.write_mode, Some(WriteMode::Append)));
+    }
+
+    // -----------------------------------------------------------------------
+    // PostgreSqlConfig
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn postgres_config_source_roundtrip() {
+        let cfg = PostgreSqlConfig {
+            connection_string: "host=localhost dbname=test".into(),
+            table: Some("users".into()),
+            query: None,
+            write_mode: None,
+            batch_size: None,
+            conflict_keys: vec![],
+            indexes: vec![],
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        let cfg2: PostgreSqlConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg2.table.as_deref(), Some("users"));
+        assert!(cfg2.query.is_none());
+    }
+
+    #[test]
+    fn postgres_config_sink_upsert() {
+        let cfg = PostgreSqlConfig {
+            connection_string: "{{ secret:pg_conn }}".into(),
+            table: Some("output".into()),
+            query: None,
+            write_mode: Some(PostgresWriteMode::Upsert),
+            batch_size: Some(1000),
+            conflict_keys: vec!["id".into()],
+            indexes: vec![
+                vec!["customer_id".into()],
+                vec!["region".into(), "tier".into()],
+            ],
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        let cfg2: PostgreSqlConfig = serde_json::from_value(json).unwrap();
+        assert!(matches!(cfg2.write_mode, Some(PostgresWriteMode::Upsert)));
+        assert_eq!(cfg2.batch_size, Some(1000));
+        assert_eq!(cfg2.conflict_keys, vec!["id"]);
+        assert_eq!(cfg2.indexes.len(), 2);
+    }
+
+    #[test]
+    fn postgres_write_mode_variants() {
+        for (mode, expected) in [
+            (PostgresWriteMode::Insert, "insert"),
+            (PostgresWriteMode::Upsert, "upsert"),
+            (PostgresWriteMode::TruncateInsert, "truncate_insert"),
+            (PostgresWriteMode::Append, "append"),
+        ] {
+            let json = serde_json::to_value(&mode).unwrap();
+            assert_eq!(json.as_str().unwrap(), expected);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // RestApiConfig
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rest_api_config_minimal() {
+        let json = json!({"url": "https://api.example.com/data"});
+        let cfg: RestApiConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.url, "https://api.example.com/data");
+        assert_eq!(cfg.method, "GET"); // default
+        assert!(cfg.auth.is_none());
+        assert!(matches!(cfg.response_format, ResponseFormat::Json));
+    }
+
+    #[test]
+    fn rest_api_auth_variants() {
+        let basic = json!({"type": "basic", "username": "user", "password": "pass"});
+        let auth: RestApiAuth = serde_json::from_value(basic).unwrap();
+        assert!(matches!(auth, RestApiAuth::Basic { .. }));
+
+        let bearer = json!({"type": "bearer", "token": "tok123"});
+        let auth: RestApiAuth = serde_json::from_value(bearer).unwrap();
+        assert!(matches!(auth, RestApiAuth::Bearer { .. }));
+
+        let api_key = json!({"type": "api_key", "header": "X-API-Key", "value": "key123"});
+        let auth: RestApiAuth = serde_json::from_value(api_key).unwrap();
+        assert!(matches!(auth, RestApiAuth::ApiKey { .. }));
+    }
+
+    #[test]
+    fn rest_api_pagination_variants() {
+        let offset = json!({"type": "offset", "offset_param": "offset", "limit_param": "limit", "limit": 100});
+        let pg: PaginationConfig = serde_json::from_value(offset).unwrap();
+        assert!(matches!(pg, PaginationConfig::Offset { limit: 100, .. }));
+
+        let cursor =
+            json!({"type": "cursor", "cursor_param": "cursor", "cursor_path": "meta.next"});
+        let pg: PaginationConfig = serde_json::from_value(cursor).unwrap();
+        assert!(matches!(pg, PaginationConfig::Cursor { .. }));
+
+        let link = json!({"type": "link_header"});
+        let pg: PaginationConfig = serde_json::from_value(link).unwrap();
+        assert!(matches!(pg, PaginationConfig::LinkHeader));
+    }
+
+    #[test]
+    fn rest_api_full_config_roundtrip() {
+        let cfg = RestApiConfig {
+            url: "https://api.example.com/v2/data".into(),
+            method: "POST".into(),
+            headers: HashMap::from([("Accept".into(), "application/json".into())]),
+            auth: Some(RestApiAuth::Bearer {
+                token: "{{ secret:api_token }}".into(),
+            }),
+            response_format: ResponseFormat::Ndjson,
+            data_path: Some("data.items".into()),
+            pagination: Some(PaginationConfig::Offset {
+                offset_param: "offset".into(),
+                limit_param: "limit".into(),
+                limit: 50,
+            }),
+            schema: HashMap::from([
+                ("id".into(), "int64".into()),
+                ("name".into(), "utf8".into()),
+            ]),
+            rate_limit_ms: Some(200),
+            max_retries: Some(5),
+            max_pages: Some(100),
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        let cfg2: RestApiConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg2.method, "POST");
+        assert_eq!(cfg2.headers.len(), 1);
+        assert!(cfg2.auth.is_some());
+        assert_eq!(cfg2.rate_limit_ms, Some(200));
+        assert_eq!(cfg2.max_pages, Some(100));
+        assert_eq!(cfg2.schema.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // StdoutConfig
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stdout_config_defaults() {
+        let cfg: StdoutConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(matches!(cfg.format, StdoutFormat::Table));
+        assert!(cfg.max_rows.is_none());
+    }
+
+    #[test]
+    fn stdout_format_variants() {
+        for (fmt_str, expected) in [
+            ("table", StdoutFormat::Table),
+            ("csv", StdoutFormat::Csv),
+            ("json", StdoutFormat::Json),
+            ("ndjson", StdoutFormat::Ndjson),
+        ] {
+            let val = json!(fmt_str);
+            let fmt: StdoutFormat = serde_json::from_value(val).unwrap();
+            assert_eq!(
+                std::mem::discriminant(&fmt),
+                std::mem::discriminant(&expected)
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ConnectorConfig::from_json dispatcher
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn from_json_file_aliases() {
+        let val = json!({"path": "/data.csv", "format": "csv"});
+        for alias in &["file", "csv", "parquet"] {
+            let cfg = ConnectorConfig::from_json(alias, &val).unwrap();
+            assert!(matches!(cfg, ConnectorConfig::File(_)));
+        }
+    }
+
+    #[test]
+    fn from_json_postgres_aliases() {
+        let val = json!({"connection_string": "host=localhost", "table": "t"});
+        for alias in &["postgresql", "postgres"] {
+            let cfg = ConnectorConfig::from_json(alias, &val).unwrap();
+            assert!(matches!(cfg, ConnectorConfig::PostgreSql(_)));
+        }
+    }
+
+    #[test]
+    fn from_json_rest_aliases() {
+        let val = json!({"url": "https://example.com"});
+        for alias in &["rest_api", "rest", "http"] {
+            let cfg = ConnectorConfig::from_json(alias, &val).unwrap();
+            assert!(matches!(cfg, ConnectorConfig::RestApi(_)));
+        }
+    }
+
+    #[test]
+    fn from_json_stdout() {
+        let cfg = ConnectorConfig::from_json("stdout", &json!({})).unwrap();
+        assert!(matches!(cfg, ConnectorConfig::Stdout(_)));
+    }
+
+    #[test]
+    fn from_json_unknown_connector_errors() {
+        let err = ConnectorConfig::from_json("redis", &json!({})).unwrap_err();
+        assert!(err.to_string().contains("unknown connector type"));
+    }
+
+    #[test]
+    fn from_json_invalid_value_errors() {
+        // Missing required field "path" for file config.
+        let err = ConnectorConfig::from_json("file", &json!({"format": "csv"})).unwrap_err();
+        assert!(err.to_string().contains("path"));
+    }
+
+    // -----------------------------------------------------------------------
+    // valid_config_keys
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn valid_config_keys_known_connectors() {
+        assert!(
+            ConnectorConfig::valid_config_keys("file")
+                .unwrap()
+                .contains(&"path")
+        );
+        assert!(
+            ConnectorConfig::valid_config_keys("csv")
+                .unwrap()
+                .contains(&"format")
+        );
+        assert!(
+            ConnectorConfig::valid_config_keys("postgresql")
+                .unwrap()
+                .contains(&"connection_string")
+        );
+        assert!(
+            ConnectorConfig::valid_config_keys("rest_api")
+                .unwrap()
+                .contains(&"url")
+        );
+        assert!(
+            ConnectorConfig::valid_config_keys("stdout")
+                .unwrap()
+                .contains(&"format")
+        );
+    }
+
+    #[test]
+    fn valid_config_keys_unknown_returns_none() {
+        assert!(ConnectorConfig::valid_config_keys("redis").is_none());
+        assert!(ConnectorConfig::valid_config_keys("").is_none());
     }
 }

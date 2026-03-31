@@ -598,4 +598,52 @@ mod tests {
         let errors = validate_overrides(&pipeline, &overrides);
         assert!(errors.is_empty());
     }
+
+    #[test]
+    fn interpolate_env_var() {
+        // Set a test env var and verify {{ env:VAR }} resolves it.
+        // SAFETY: test-only, no concurrent threads depend on this var.
+        unsafe { std::env::set_var("FLUX_TEST_DB_HOST", "db.example.com") };
+        let pipeline = minimal_pipeline();
+        let resolved = ResolvedVariables::resolve(&pipeline, &HashMap::new(), &test_builtin());
+        assert_eq!(
+            resolved.interpolate("host={{ env:FLUX_TEST_DB_HOST }}"),
+            "host=db.example.com"
+        );
+        unsafe { std::env::remove_var("FLUX_TEST_DB_HOST") };
+    }
+
+    #[test]
+    fn interpolate_env_var_missing_becomes_empty() {
+        // Unset env vars resolve to empty string.
+        // SAFETY: test-only, no concurrent threads depend on this var.
+        unsafe { std::env::remove_var("FLUX_TEST_NONEXISTENT") };
+        let pipeline = minimal_pipeline();
+        let resolved = ResolvedVariables::resolve(&pipeline, &HashMap::new(), &test_builtin());
+        assert_eq!(
+            resolved.interpolate("val={{ env:FLUX_TEST_NONEXISTENT }}"),
+            "val="
+        );
+    }
+
+    #[test]
+    fn from_map_and_as_map() {
+        let mut map = HashMap::new();
+        map.insert("key".into(), Value::String("value".into()));
+        let resolved = ResolvedVariables::from_map(map);
+        assert_eq!(resolved.get("key"), Some(&Value::String("value".into())));
+        assert_eq!(resolved.as_map().len(), 1);
+    }
+
+    #[test]
+    fn extract_references_json_nested() {
+        let val = serde_json::json!({
+            "a": "{{ x }}",
+            "b": {"c": "{{ y }}"},
+            "d": ["{{ z }}", 42]
+        });
+        let mut refs = extract_references_json(&val);
+        refs.sort();
+        assert_eq!(refs, vec!["x", "y", "z"]);
+    }
 }
