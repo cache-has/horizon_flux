@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { ApiNode, ApiColumnInfo } from '../../api/pipelines';
 import { previewPipeline } from '../../api/pipelines';
@@ -63,6 +63,20 @@ export function NodeEditorModal() {
   );
   const rfNode = nodes.find((n) => n.id === editingNodeId);
   const role = rfNode?.data.role;
+
+  // Extract pipeline variable defaults for preview/test connection requests.
+  const pipelineVariables = useMemo(() => {
+    const vars: Record<string, unknown> = {};
+    if (apiPipeline?.variables) {
+      for (const [name, varDef] of Object.entries(apiPipeline.variables)) {
+        const def = varDef as { default?: unknown };
+        if (def.default !== undefined) {
+          vars[name] = def.default;
+        }
+      }
+    }
+    return Object.keys(vars).length > 0 ? vars : undefined;
+  }, [apiPipeline?.variables]);
 
   // -----------------------------------------------------------------------
   // Open / close dialog
@@ -374,6 +388,7 @@ export function NodeEditorModal() {
                   connector={localConnector || apiNode.connector || ''}
                   onConfigChange={handleConfigChange}
                   onConnectorChange={handleConnectorChange}
+                  pipelineVariables={pipelineVariables}
                 />
               )}
               {role === 'sink' && (
@@ -383,6 +398,7 @@ export function NodeEditorModal() {
                   connector={localConnector || apiNode.connector || ''}
                   onConfigChange={handleConfigChange}
                   onConnectorChange={handleConnectorChange}
+                  pipelineVariables={pipelineVariables}
                 />
               )}
             </div>

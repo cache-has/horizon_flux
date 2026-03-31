@@ -22,6 +22,7 @@ use flux_datafusion::preview::sample_batches;
 use flux_engine::NodeId;
 use flux_engine::node::{SourceConfig, TransformMode};
 use flux_engine::sample::SampleConfig;
+use flux_engine::variables::ResolvedVariables;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,6 +53,11 @@ struct NodePreviewRequest {
     /// Optional sampling configuration (applied to source nodes).
     #[serde(default)]
     sample: Option<SampleConfig>,
+    /// Optional pipeline variables (name → resolved value) to interpolate
+    /// into the node config before execution. Without this, raw `{{ var }}`
+    /// templates are passed through unresolved.
+    #[serde(default)]
+    variables: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Discriminated node configuration sent by the frontend.
@@ -81,10 +87,20 @@ async fn preview_node(
 ) -> Result<Json<PreviewNodeResponse>, (StatusCode, Json<ApiError>)> {
     let start = Instant::now();
 
+    // Pre-build variable resolver if the request includes pipeline variables.
+    let var_resolver = req.variables.map(ResolvedVariables::from_map);
+
     match req.node {
         NodeConfig::Source { connector, config } => {
             let registry = state.connector_registry.to_provider_registry();
-            // Resolve secret references in the source config before preview.
+
+            // 1. Interpolate pipeline variables into the config.
+            let config = match &var_resolver {
+                Some(r) => r.interpolate_json(&config),
+                None => config,
+            };
+
+            // 2. Resolve secret references in the source config before preview.
             let resolved_config = if let Some(resolver) = state.secret_resolver() {
                 resolver
                     .resolve_json(&config, None)
@@ -139,6 +155,12 @@ async fn preview_node(
 
             debug!(mode = ?mode, upstreams = upstream_refs.len(), "previewing transform node");
 
+            // Interpolate pipeline variables into transform code if provided.
+            let code = match &var_resolver {
+                Some(r) => r.interpolate(&code),
+                None => code,
+            };
+
             let batches = tokio::time::timeout(PREVIEW_TIMEOUT, async {
                 match mode {
                     TransformMode::Sql => {
@@ -150,11 +172,16 @@ async fn preview_node(
                             })
                     }
                     TransformMode::Python => {
-                        let variables = HashMap::new();
+                        let variables = var_resolver
+                            .as_ref()
+                            .map(|r| r.as_map().clone())
+                            .unwrap_or_default();
+                        let py_config = flux_datafusion::PythonConfig::default();
                         flux_datafusion::python_runtime::execute_python_transform(
                             &code,
                             upstream_refs,
                             &variables,
+                            &py_config,
                         )
                         .await
                         .map_err(|e| {

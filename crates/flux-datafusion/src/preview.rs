@@ -326,10 +326,12 @@ impl PipelineExecutor {
                             })?
                     }
                     flux_engine::node::TransformMode::Python => {
+                        let py_config = crate::python_runtime::PythonConfig::default();
                         crate::python_runtime::execute_python_transform(
                             &code,
                             upstream_data,
                             resolved_vars.as_map(),
+                            &py_config,
                         )
                         .await
                         .map_err(|kind| ExecutorError::Node {

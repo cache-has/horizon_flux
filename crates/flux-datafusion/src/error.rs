@@ -35,6 +35,14 @@ pub enum NodeErrorKind {
     #[error("Python transform error: {0}")]
     Python(String),
 
+    #[error("Python transform timed out after {0:.0?}")]
+    PythonTimeout(std::time::Duration),
+
+    #[error(
+        "Python transform exceeded memory limit ({used_mb:.1} MiB used, {limit_mb:.1} MiB limit)"
+    )]
+    PythonMemoryExceeded { used_mb: f64, limit_mb: f64 },
+
     #[error("Python interpreter not found (`{0}`). Ensure Python 3 is installed and on your PATH.")]
     PythonNotFound(String),
 

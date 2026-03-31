@@ -941,3 +941,37 @@ async fn no_override_when_environment_doesnt_match() {
 
     assert_eq!(run.status, RunStatus::Success);
 }
+
+#[tokio::test]
+async fn python_transform_timeout() {
+    use flux_datafusion::PythonConfig;
+    use flux_datafusion::python_runtime;
+    use flux_engine::NodeId;
+    use std::collections::HashMap;
+
+    let code = r#"
+import time
+
+def transform(inputs, params):
+    time.sleep(60)
+    return inputs["src"]
+"#;
+    // Call execute_python_transform directly with a short timeout.
+    let batches = vec![test_batch()];
+    let upstream = HashMap::from([(NodeId::new("src"), &batches)]);
+    let variables = HashMap::new();
+    let config = PythonConfig {
+        timeout: Duration::from_secs(2),
+        memory_limit: None,
+    };
+
+    let err = python_runtime::execute_python_transform(code, upstream, &variables, &config)
+        .await
+        .unwrap_err();
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("timed out"),
+        "expected timeout message, got: {msg}"
+    );
+}

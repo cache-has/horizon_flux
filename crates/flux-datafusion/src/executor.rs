@@ -289,10 +289,13 @@ impl PipelineExecutor {
                                 let upstream_ids = pipeline.upstream_of(node_id);
                                 match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
                                     Ok(data) => {
+                                        let py_config =
+                                            crate::python_runtime::PythonConfig::default();
                                         crate::python_runtime::execute_python_transform(
                                             &code,
                                             data,
                                             resolved_vars.as_map(),
+                                            &py_config,
                                         )
                                         .await
                                     }

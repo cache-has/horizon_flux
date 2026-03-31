@@ -365,6 +365,8 @@ export interface ApiNodePreviewRequest {
   };
   upstream?: Record<string, Record<string, unknown>[]>;
   sample?: ApiSampleConfig;
+  /** Pipeline variables (name → resolved value) to interpolate into the config. */
+  variables?: Record<string, unknown>;
 }
 
 /** Error thrown by preview API calls, includes HTTP status for timeout detection. */

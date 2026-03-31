@@ -18,6 +18,8 @@ export interface SinkEditorProps {
   connector: string;
   onConfigChange: (config: Record<string, unknown>) => void;
   onConnectorChange: (connector: string) => void;
+  /** Resolved pipeline variable defaults (name → value). */
+  pipelineVariables?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -27,9 +29,11 @@ export interface SinkEditorProps {
 function PostgresSinkForm({
   config,
   onChange,
+  variables,
 }: {
   config: Record<string, unknown>;
   onChange: (config: Record<string, unknown>) => void;
+  variables?: Record<string, unknown>;
 }) {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [showSecretPicker, setShowSecretPicker] = useState(false);
@@ -45,12 +49,13 @@ function PostgresSinkForm({
           config: { ...config, query: 'SELECT 1' },
         },
         sample: { mode: 'first_n', count: 1 },
+        variables,
       });
       setTestResult({ ok: true, message: 'Connection successful' });
     } catch (err) {
       setTestResult({ ok: false, message: (err as Error).message });
     }
-  }, [config]);
+  }, [config, variables]);
 
   return (
     <>
@@ -323,6 +328,7 @@ export function SinkEditor({
   connector,
   onConfigChange,
   onConnectorChange,
+  pipelineVariables,
 }: SinkEditorProps) {
   const norm = normalizeConnector(connector);
   const format = config.format as string | undefined;
@@ -346,7 +352,7 @@ export function SinkEditor({
       </div>
 
       {isPostgres(connector) && (
-        <PostgresSinkForm config={config} onChange={onConfigChange} />
+        <PostgresSinkForm config={config} onChange={onConfigChange} variables={pipelineVariables} />
       )}
       {isFile(connector) && (
         <FileSinkForm config={config} connector={effectiveFileType} onChange={onConfigChange} />

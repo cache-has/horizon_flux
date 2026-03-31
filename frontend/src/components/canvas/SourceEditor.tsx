@@ -19,6 +19,8 @@ export interface SourceEditorProps {
   connector: string;
   onConfigChange: (config: Record<string, unknown>) => void;
   onConnectorChange: (connector: string) => void;
+  /** Resolved pipeline variable defaults (name → value). */
+  pipelineVariables?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -28,9 +30,11 @@ export interface SourceEditorProps {
 function PostgresSourceForm({
   config,
   onChange,
+  variables,
 }: {
   config: Record<string, unknown>;
   onChange: (config: Record<string, unknown>) => void;
+  variables?: Record<string, unknown>;
 }) {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [showSecretPicker, setShowSecretPicker] = useState(false);
@@ -46,12 +50,13 @@ function PostgresSourceForm({
           config: { ...config, query: 'SELECT 1' },
         },
         sample: { mode: 'first_n', count: 1 },
+        variables,
       });
       setTestResult({ ok: true, message: 'Connection successful' });
     } catch (err) {
       setTestResult({ ok: false, message: (err as Error).message });
     }
-  }, [config]);
+  }, [config, variables]);
 
   return (
     <>
@@ -272,7 +277,7 @@ function RestSourceForm({
 // Preview section
 // ---------------------------------------------------------------------------
 
-function SourcePreview({ config, connector }: { config: Record<string, unknown>; connector: string }) {
+function SourcePreview({ config, connector, variables }: { config: Record<string, unknown>; connector: string; variables?: Record<string, unknown> }) {
   const [preview, setPreview] = useState<ApiPreviewNodeResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -284,6 +289,7 @@ function SourcePreview({ config, connector }: { config: Record<string, unknown>;
       const result = await previewNode({
         node: { type: 'source', connector, config },
         sample: { mode: 'first_n', count: 10 },
+        variables,
       });
       setPreview(result);
     } catch (err) {
@@ -291,7 +297,7 @@ function SourcePreview({ config, connector }: { config: Record<string, unknown>;
     } finally {
       setLoading(false);
     }
-  }, [config, connector]);
+  }, [config, connector, variables]);
 
   return (
     <div className="connector-editor__section connector-editor__preview">
@@ -395,6 +401,7 @@ export function SourceEditor({
   connector,
   onConfigChange,
   onConnectorChange,
+  pipelineVariables,
 }: SourceEditorProps) {
   const norm = normalizeConnector(connector);
   const format = config.format as string | undefined;
@@ -418,7 +425,7 @@ export function SourceEditor({
       </div>
 
       {isPostgres(connector) && (
-        <PostgresSourceForm config={config} onChange={onConfigChange} />
+        <PostgresSourceForm config={config} onChange={onConfigChange} variables={pipelineVariables} />
       )}
       {isFile(connector) && (
         <FileSourceForm config={config} connector={effectiveFileType} onChange={onConfigChange} />
@@ -427,7 +434,7 @@ export function SourceEditor({
         <RestSourceForm config={config} onChange={onConfigChange} />
       )}
 
-      <SourcePreview config={config} connector={connector} />
+      <SourcePreview config={config} connector={connector} variables={pipelineVariables} />
     </div>
   );
 }

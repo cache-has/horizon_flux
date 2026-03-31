@@ -29,6 +29,7 @@ pub use provider::{
     OnConflict, PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions,
     WriteStats,
 };
+pub use python_runtime::PythonConfig;
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
 pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};

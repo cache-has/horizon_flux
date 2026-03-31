@@ -81,6 +81,14 @@ impl ResolvedVariables {
         Self { values }
     }
 
+    /// Create from a pre-resolved variable map.
+    ///
+    /// Useful for contexts that don't have access to the full pipeline or
+    /// built-in context (e.g. single-node preview).
+    pub fn from_map(values: HashMap<String, Value>) -> Self {
+        Self { values }
+    }
+
     /// Get the resolved value for a variable.
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.values.get(name)

@@ -26,6 +26,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tracing::{debug, warn};
 
 /// The Python runner script, embedded at compile time.
@@ -39,14 +41,50 @@ struct Manifest {
     code: String,
 }
 
+/// Configuration for Python subprocess execution.
+///
+/// Defaults are read from environment variables at construction time:
+/// - `HORIZON_FLUX_PYTHON_TIMEOUT`: max seconds (default 300 = 5 minutes)
+/// - `HORIZON_FLUX_PYTHON_MEMORY_LIMIT`: max RSS in bytes (default: none)
+#[derive(Debug, Clone)]
+pub struct PythonConfig {
+    /// Maximum wall-clock time before the subprocess is killed.
+    pub timeout: Duration,
+    /// Best-effort RSS memory limit in bytes. `None` disables monitoring.
+    pub memory_limit: Option<usize>,
+}
+
+impl Default for PythonConfig {
+    fn default() -> Self {
+        let timeout = std::env::var("HORIZON_FLUX_PYTHON_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(300));
+
+        let memory_limit = std::env::var("HORIZON_FLUX_PYTHON_MEMORY_LIMIT")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok());
+
+        Self {
+            timeout,
+            memory_limit,
+        }
+    }
+}
+
 /// Execute a Python transform as a subprocess.
 ///
 /// Serializes upstream Arrow data to IPC files, invokes the Python runner with
 /// a JSON manifest, and reads the output IPC file back into `RecordBatch`es.
+///
+/// The subprocess is killed if it exceeds the configured timeout or memory
+/// limit (see [`PythonConfig`]).
 pub async fn execute_python_transform(
     code: &str,
     upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
     variables: &HashMap<String, serde_json::Value>,
+    config: &PythonConfig,
 ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
     // Create a temp directory for this transform's IPC exchange.
     let tmp_dir = tempfile::tempdir()
@@ -100,9 +138,10 @@ pub async fn execute_python_transform(
 
     // Spawn the Python process.
     let python = find_python();
-    debug!(python = %python, "spawning Python subprocess");
+    debug!(python = %python, timeout = ?config.timeout, memory_limit = ?config.memory_limit,
+           "spawning Python subprocess");
 
-    let child = tokio::process::Command::new(&python)
+    let mut child = tokio::process::Command::new(&python)
         .arg(runner_path.to_string_lossy().as_ref())
         .arg(manifest_path.to_string_lossy().as_ref())
         .arg(output_path.to_string_lossy().as_ref())
@@ -118,42 +157,139 @@ pub async fn execute_python_transform(
             }
         })?;
 
-    let output = child
-        .wait_with_output()
+    let child_pid = child.id();
+
+    // Take ownership of the pipes so we can read them independently of wait().
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_end(&mut buf).await;
+        }
+        buf
+    });
+
+    // Race: process exit vs timeout vs memory limit exceeded.
+    let memory_limit = config.memory_limit;
+    let timeout = config.timeout;
+
+    enum Outcome {
+        Exited(std::io::Result<std::process::ExitStatus>),
+        Timeout,
+        MemoryExceeded { used_bytes: usize },
+    }
+
+    let outcome = tokio::select! {
+        status = child.wait() => Outcome::Exited(status),
+        _ = tokio::time::sleep(timeout) => Outcome::Timeout,
+        used = monitor_memory(child_pid, memory_limit) => {
+            Outcome::MemoryExceeded { used_bytes: used }
+        }
+    };
+
+    match outcome {
+        Outcome::Timeout => {
+            warn!("Python subprocess timed out after {timeout:?}, killing");
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            Err(NodeErrorKind::PythonTimeout(timeout))
+        }
+        Outcome::MemoryExceeded { used_bytes } => {
+            let limit = memory_limit.unwrap_or(0);
+            warn!(
+                used_bytes,
+                limit_bytes = limit,
+                "Python subprocess exceeded memory limit, killing"
+            );
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            Err(NodeErrorKind::PythonMemoryExceeded {
+                used_mb: used_bytes as f64 / (1024.0 * 1024.0),
+                limit_mb: limit as f64 / (1024.0 * 1024.0),
+            })
+        }
+        Outcome::Exited(Err(e)) => {
+            Err(NodeErrorKind::Python(format!("Python process failed: {e}")))
+        }
+        Outcome::Exited(Ok(status)) => {
+            // Collect pipe output.
+            let stderr_bytes = stderr_task.await.unwrap_or_default();
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
+
+            if !stderr.is_empty() {
+                for line in stderr.as_ref().lines() {
+                    debug!(target: "python_transform", "{}", line);
+                }
+            }
+
+            // Drop stdout — we don't use it but waited so the pipe doesn't block.
+            drop(stdout_task.await);
+
+            match status.code() {
+                Some(0) => read_ipc(&output_path),
+                Some(1) => {
+                    let message = parse_python_error(&stderr);
+                    Err(NodeErrorKind::Python(message))
+                }
+                Some(2) => {
+                    let message = parse_runner_error(&stderr);
+                    Err(NodeErrorKind::Python(message))
+                }
+                Some(code) => Err(NodeErrorKind::Python(format!(
+                    "Python process exited with unexpected code {code}: {stderr}"
+                ))),
+                None => Err(NodeErrorKind::Python(
+                    "Python process was killed by a signal".to_string(),
+                )),
+            }
+        }
+    }
+}
+
+/// Best-effort RSS memory monitor for a subprocess.
+///
+/// Polls the process's RSS via `ps` every second. Returns the RSS in bytes
+/// when it exceeds the configured limit. If no limit is set or the PID is
+/// unavailable, the future never completes (allowing `tokio::select!` to
+/// ignore it).
+async fn monitor_memory(pid: Option<u32>, limit: Option<usize>) -> usize {
+    let (pid, limit_bytes) = match (pid, limit) {
+        (Some(pid), Some(limit)) => (pid, limit),
+        _ => std::future::pending().await,
+    };
+
+    let limit_kb = limit_bytes / 1024;
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if let Some(rss_kb) = check_rss(pid).await {
+            if rss_kb > limit_kb {
+                return rss_kb * 1024;
+            }
+        }
+    }
+}
+
+/// Read the RSS (in KiB) of a process via `ps`. Returns `None` if the process
+/// has exited or the command fails.
+async fn check_rss(pid: u32) -> Option<usize> {
+    let output = tokio::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
         .await
-        .map_err(|e| NodeErrorKind::Python(format!("Python process failed: {e}")))?;
-
-    // Capture stderr for diagnostics.
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.is_empty() {
-        // Log non-empty stderr even on success (user might have print statements).
-        for line in stderr.as_ref().lines() {
-            debug!(target: "python_transform", "{}", line);
-        }
-    }
-
-    match output.status.code() {
-        Some(0) => {
-            // Success — read the output IPC file.
-            read_ipc(&output_path)
-        }
-        Some(1) => {
-            // User code error — stderr contains the traceback or message.
-            let message = parse_python_error(&stderr);
-            Err(NodeErrorKind::Python(message))
-        }
-        Some(2) => {
-            // Runner infrastructure error.
-            let message = parse_runner_error(&stderr);
-            Err(NodeErrorKind::Python(message))
-        }
-        Some(code) => Err(NodeErrorKind::Python(format!(
-            "Python process exited with unexpected code {code}: {stderr}"
-        ))),
-        None => Err(NodeErrorKind::Python(
-            "Python process was killed by a signal".to_string(),
-        )),
-    }
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.trim().parse::<usize>().ok()
 }
 
 /// Write a set of `RecordBatch`es to an Arrow IPC file.
