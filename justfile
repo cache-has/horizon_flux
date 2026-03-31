@@ -32,6 +32,15 @@ coverage *ARGS:
 coverage-package PKG:
     cargo llvm-cov --package {{PKG}}
 
+# Build optimized release binary with embedded frontend
+release:
+    cd frontend && npm run build
+    cargo build --release --bin horizon-flux
+
+# Report release binary size
+release-size: release
+    ls -lh target/release/horizon-flux
+
 # Format all code
 fmt:
     cargo fmt --all
