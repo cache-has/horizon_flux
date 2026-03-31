@@ -27,6 +27,7 @@ fn test_state() -> AppState {
         )),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
+        session_factory: None,
     }
 }
 

@@ -31,6 +31,7 @@ fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
         secret_session: Arc::new(Mutex::new(SecretSession::new_unlocked(store, secrets_path))),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
+        session_factory: None,
     };
     (state, tmp)
 }
@@ -48,6 +49,7 @@ fn test_state_locked() -> (AppState, tempfile::TempDir) {
         secret_session: Arc::new(Mutex::new(SecretSession::new(secrets_path))),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
+        session_factory: None,
     };
     (state, tmp)
 }

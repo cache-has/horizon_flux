@@ -103,7 +103,7 @@ async fn preview_node(
 
             let batches = tokio::time::timeout(
                 PREVIEW_TIMEOUT,
-                PipelineExecutor::execute_source(&node_id, &src_cfg, &registry),
+                PipelineExecutor::execute_source(&node_id, &src_cfg, &registry, None),
             )
             .await
             .map_err(|_| ApiError::gateway_timeout("preview timed out after 5 seconds"))?
@@ -142,7 +142,7 @@ async fn preview_node(
             let batches = tokio::time::timeout(PREVIEW_TIMEOUT, async {
                 match mode {
                     TransformMode::Sql => {
-                        PipelineExecutor::execute_sql_transform(&code, upstream_refs, None)
+                        PipelineExecutor::execute_sql_transform(&code, upstream_refs, None, None)
                             .await
                             .map_err(|e| {
                                 error!(error = %e, "SQL transform preview failed");

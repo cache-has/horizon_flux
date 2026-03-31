@@ -318,7 +318,7 @@ impl PipelineExecutor {
                 let batches = match xform_cfg.mode {
                     flux_engine::node::TransformMode::Sql => {
                         let interpolated_sql = resolved_vars.interpolate(&code);
-                        Self::execute_sql_transform(&interpolated_sql, upstream_data, None)
+                        Self::execute_sql_transform(&interpolated_sql, upstream_data, None, None)
                             .await
                             .map_err(|kind| ExecutorError::Node {
                                 node_id: node_id.clone(),
@@ -367,7 +367,7 @@ impl PipelineExecutor {
                     ResolvedVariables::resolve(pipeline, &options.variable_overrides, &builtin);
                 interpolated_cfg.config = resolved_vars.interpolate_json(&interpolated_cfg.config);
 
-                let batches = Self::execute_source(node_id, &interpolated_cfg, registry)
+                let batches = Self::execute_source(node_id, &interpolated_cfg, registry, None)
                     .await
                     .map_err(|kind| ExecutorError::Node {
                         node_id: node_id.clone(),

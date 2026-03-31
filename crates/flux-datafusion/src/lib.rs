@@ -15,6 +15,7 @@ pub mod resolver;
 pub mod result;
 pub mod run;
 pub mod run_store;
+pub mod session;
 pub mod stats;
 pub mod storage;
 
@@ -32,6 +33,7 @@ pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
 pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};
 pub use run_store::SqliteRunStore;
+pub use session::{SessionFactory, SessionFactoryConfig};
 pub use stats::NodeStats;
 pub use storage::{EnvironmentStorage, RunStorage};
 

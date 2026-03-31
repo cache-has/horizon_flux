@@ -5,7 +5,7 @@
 
 use flux_connectors::ConnectorRegistry;
 use flux_datafusion::{
-    EnvironmentStorage, ExecutionEvent, OutputCache, RunStorage, SecretResolver,
+    EnvironmentStorage, ExecutionEvent, OutputCache, RunStorage, SecretResolver, SessionFactory,
 };
 use flux_engine::PipelineStorage;
 use flux_secrets::SecretStore;
@@ -152,6 +152,8 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<ExecutionEvent>,
     /// On-disk cache for materialized node outputs (preview reads from here).
     pub output_cache: Arc<OutputCache>,
+    /// Shared DataFusion session factory with memory pool and spill-to-disk.
+    pub session_factory: Option<Arc<SessionFactory>>,
 }
 
 impl AppState {

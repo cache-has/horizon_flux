@@ -27,6 +27,7 @@ fn test_state() -> AppState {
         )),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
+        session_factory: None,
     }
 }
 
@@ -87,6 +88,7 @@ async fn list_connectors_empty_registry() {
         )),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
+        session_factory: None,
     };
     let app = test_router(state);
     let resp = app

@@ -258,6 +258,7 @@ async fn execute_pipeline(
         progress: Some(progress_tx),
         variable_overrides,
         secret_resolver,
+        session_factory: Some(Arc::new(flux_datafusion::SessionFactory::default())),
     };
 
     let result =

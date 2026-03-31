@@ -105,6 +105,7 @@ pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -
         secret_session: Arc::new(std::sync::Mutex::new(secret_session)),
         event_tx,
         output_cache,
+        session_factory: Some(Arc::new(flux_datafusion::SessionFactory::default())),
     };
 
     let on_ready: Option<Box<dyn FnOnce(u16) + Send>> = match &tray_handle {

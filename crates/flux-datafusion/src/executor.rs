@@ -12,6 +12,7 @@ use crate::provider::{ProviderRegistry, WriteOptions};
 use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
 use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus};
+use crate::session::SessionFactory;
 use crate::stats::NodeStats;
 use crate::storage::RunStorage;
 use arrow::datatypes::Schema;
@@ -71,6 +72,10 @@ pub struct ExecutionOptions {
     /// in connector configs. When `None`, secret references are left unresolved
     /// (which will cause connector errors if the config contains them).
     pub secret_resolver: Option<Arc<dyn SecretResolver>>,
+    /// Shared DataFusion session factory with memory pool and spill-to-disk
+    /// configuration. When `None`, each node creates an unconfigured
+    /// `SessionContext` with default (unbounded) memory.
+    pub session_factory: Option<Arc<SessionFactory>>,
 }
 
 impl Default for ExecutionOptions {
@@ -83,6 +88,7 @@ impl Default for ExecutionOptions {
             progress: None,
             variable_overrides: HashMap::new(),
             secret_resolver: None,
+            session_factory: None,
         }
     }
 }
@@ -218,7 +224,13 @@ impl PipelineExecutor {
                             }
                         }
                     }
-                    Self::execute_source(node_id, &interpolated_cfg, registry).await
+                    Self::execute_source(
+                        node_id,
+                        &interpolated_cfg,
+                        registry,
+                        options.session_factory.as_deref(),
+                    )
+                    .await
                 }
 
                 NodeKind::Transform(xform_cfg) => {
@@ -245,6 +257,7 @@ impl PipelineExecutor {
                                             &interpolated_sql,
                                             data,
                                             options.environment_resolver.as_ref(),
+                                            options.session_factory.as_deref(),
                                         )
                                         .await
                                     }
@@ -463,6 +476,7 @@ impl PipelineExecutor {
         node_id: &NodeId,
         config: &SourceConfig,
         registry: &ProviderRegistry,
+        session_factory: Option<&SessionFactory>,
     ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
         let connector = registry
             .get_source(&config.connector)
@@ -475,7 +489,10 @@ impl PipelineExecutor {
         // Use a DataFusion session to read all data from the TableProvider.
         // This path supports filter/projection pushdown for providers that
         // implement it (e.g. Parquet row-group pruning, PostgreSQL WHERE pushdown).
-        let ctx = SessionContext::new();
+        let ctx = match session_factory {
+            Some(factory) => factory.create_context(),
+            None => SessionContext::new(),
+        };
 
         // Allow connectors to register resources (e.g. cloud object stores)
         // on the execution context before scanning.
@@ -512,8 +529,12 @@ impl PipelineExecutor {
         sql: &str,
         upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
         resolver: Option<&Arc<EnvironmentResolver>>,
+        session_factory: Option<&SessionFactory>,
     ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
-        let ctx = SessionContext::new();
+        let ctx = match session_factory {
+            Some(factory) => factory.create_context(),
+            None => SessionContext::new(),
+        };
 
         // Register the environment resolver if provided, so that SQL queries
         // can reference tables from the active environment's catalog with
