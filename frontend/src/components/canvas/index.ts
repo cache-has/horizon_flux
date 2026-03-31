@@ -8,3 +8,5 @@ export type { PaletteItem } from './NodePalette';
 export { SidePanel } from './SidePanel';
 export { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 export { NodeEditorModal } from './NodeEditorModal';
+export { VersionHistoryPanel } from './VersionHistoryPanel';
+export { VersionDiffModal } from './VersionDiffModal';

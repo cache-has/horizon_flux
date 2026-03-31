@@ -41,6 +41,7 @@ import { NodeEditorModal } from './NodeEditorModal';
 import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 import { SecretsPanel } from './SecretsPanel';
 import { SystemInfoPanel } from './SystemInfoPanel';
+import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { useEnvironmentStore } from '../../stores/environmentStore';
 import './PipelineCanvas.css';
@@ -87,6 +88,7 @@ function PipelineCanvasInner() {
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
   const [secretsPanelOpen, setSecretsPanelOpen] = useState(false);
   const [systemInfoPanelOpen, setSystemInfoPanelOpen] = useState(false);
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
 
   // Keyboard shortcuts: Escape to close side panel, Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo
   useEffect(() => {
@@ -612,6 +614,7 @@ function PipelineCanvasInner() {
           <CanvasToolbar
             onSecretsClick={() => setSecretsPanelOpen((o) => !o)}
             onSystemInfoClick={() => setSystemInfoPanelOpen((o) => !o)}
+            onHistoryClick={() => setHistoryPanelOpen((o) => !o)}
           />
           <div className="relayout-panel">
             <label className="relayout-checkbox">
@@ -656,6 +659,10 @@ function PipelineCanvasInner() {
       <SystemInfoPanel
         open={systemInfoPanelOpen}
         onClose={() => setSystemInfoPanelOpen(false)}
+      />
+      <VersionHistoryPanel
+        open={historyPanelOpen}
+        onClose={() => setHistoryPanelOpen(false)}
       />
       <NodeEditorModal />
     </div>

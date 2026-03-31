@@ -275,6 +275,22 @@ function SecretsButton({ onClick }: { onClick: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// History Button
+// ---------------------------------------------------------------------------
+
+function HistoryButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-history"
+      onClick={onClick}
+      title="Version history"
+    >
+      History
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // System Info Button
 // ---------------------------------------------------------------------------
 
@@ -297,9 +313,11 @@ function SystemInfoButton({ onClick }: { onClick: () => void }) {
 export function CanvasToolbar({
   onSecretsClick,
   onSystemInfoClick,
+  onHistoryClick,
 }: {
   onSecretsClick?: () => void;
   onSystemInfoClick?: () => void;
+  onHistoryClick?: () => void;
 }) {
   return (
     <div className="canvas-toolbar">
@@ -307,6 +325,7 @@ export function CanvasToolbar({
       <div className="canvas-toolbar__separator" />
       <EnvironmentSelector />
       <div className="canvas-toolbar__spacer" />
+      {onHistoryClick && <HistoryButton onClick={onHistoryClick} />}
       {onSystemInfoClick && <SystemInfoButton onClick={onSystemInfoClick} />}
       {onSecretsClick && <SecretsButton onClick={onSecretsClick} />}
       <RunButton />
