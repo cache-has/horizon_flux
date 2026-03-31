@@ -154,7 +154,11 @@ fn run_tray_loop(
                 prefs.save();
                 info!(
                     "Notifications {}",
-                    if prefs.notifications_enabled { "enabled" } else { "disabled" }
+                    if prefs.notifications_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
                 );
             } else if event.id() == tray_menu.stop_item.id() {
                 info!("Stop Server requested from tray menu");

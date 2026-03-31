@@ -16,6 +16,8 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 glob = "0.3"
+object_store = { workspace = true }
+url = { workspace = true }
 tokio-postgres = { workspace = true }
 chrono = { workspace = true }
 parquet = { version = "58", features = ["arrow"] }

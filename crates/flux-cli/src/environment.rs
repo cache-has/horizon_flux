@@ -84,7 +84,10 @@ fn list(format: OutputFormat) -> Result<()> {
                     })
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "environments": items }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "environments": items }))?
+            );
         }
     }
     Ok(())

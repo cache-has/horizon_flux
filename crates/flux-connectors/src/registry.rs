@@ -290,8 +290,9 @@ mod tests {
 
         let errors = registry.validate_pipeline(&pipeline).unwrap_err();
         assert!(
-            errors.iter().any(|e| e.contains("nonexistent_field")
-                && e.contains("not a valid config field")),
+            errors
+                .iter()
+                .any(|e| e.contains("nonexistent_field") && e.contains("not a valid config field")),
             "expected invalid key error, got: {errors:?}",
         );
     }
@@ -315,16 +316,10 @@ mod tests {
             position: Position::default(),
             pinned_position: false,
         });
-        pipeline.edges = vec![
-            Edge::new("src", "xform"),
-            Edge::new("xform", "sink"),
-        ];
+        pipeline.edges = vec![Edge::new("src", "xform"), Edge::new("xform", "sink")];
 
         let mut overrides = BTreeMap::new();
-        overrides.insert(
-            "xform".to_string(),
-            serde_json::json!({"code": "SELECT 1"}),
-        );
+        overrides.insert("xform".to_string(), serde_json::json!({"code": "SELECT 1"}));
         pipeline
             .environment_overrides
             .insert("prod".into(), overrides);

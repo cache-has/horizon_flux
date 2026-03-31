@@ -91,9 +91,7 @@ pub enum ValidationError {
         value: String,
     },
 
-    #[error(
-        "environment override `{environment}` references unknown node `{node_id}`"
-    )]
+    #[error("environment override `{environment}` references unknown node `{node_id}`")]
     OverrideUnknownNode {
         environment: String,
         node_id: String,

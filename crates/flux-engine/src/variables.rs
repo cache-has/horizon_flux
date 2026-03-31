@@ -282,10 +282,7 @@ fn check_json_refs(
 /// Returns errors for any override whose value doesn't match the pipeline's
 /// variable type declaration. Unknown overrides (not declared in the pipeline)
 /// are silently allowed — they may be used by built-in variables or future extensions.
-pub fn validate_overrides(
-    pipeline: &Pipeline,
-    overrides: &HashMap<String, Value>,
-) -> Vec<String> {
+pub fn validate_overrides(pipeline: &Pipeline, overrides: &HashMap<String, Value>) -> Vec<String> {
     let mut errors = Vec::new();
     for (name, value) in overrides {
         if let Some(var) = pipeline.variables.get(name) {
@@ -307,11 +304,9 @@ fn override_matches_type(value: &Value, var_type: VariableType) -> bool {
         VariableType::Integer => value.is_i64() || value.is_u64(),
         VariableType::Float => value.is_number(),
         VariableType::Boolean => value.is_boolean(),
-        VariableType::Date => {
-            value
-                .as_str()
-                .is_some_and(|s| s.len() == 10 && s.as_bytes().get(4) == Some(&b'-'))
-        }
+        VariableType::Date => value
+            .as_str()
+            .is_some_and(|s| s.len() == 10 && s.as_bytes().get(4) == Some(&b'-')),
     }
 }
 
@@ -496,10 +491,7 @@ mod tests {
             },
         );
         let resolved = ResolvedVariables::resolve(&pipeline, &HashMap::new(), &test_builtin());
-        assert_eq!(
-            resolved.interpolate("LIMIT {{ count }}"),
-            "LIMIT 100"
-        );
+        assert_eq!(resolved.interpolate("LIMIT {{ count }}"), "LIMIT 100");
         assert_eq!(
             resolved.interpolate("enabled={{ enabled }}"),
             "enabled=true"

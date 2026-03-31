@@ -434,9 +434,7 @@ async fn preview_pipeline(
         ),
     )
     .await
-    .map_err(|_| {
-        ApiError::gateway_timeout("preview timed out after 5 seconds")
-    })?
+    .map_err(|_| ApiError::gateway_timeout("preview timed out after 5 seconds"))?
     .map_err(|e| {
         error!(pipeline = %record.pipeline.name, error = %e, "preview failed");
         ApiError::internal(e.to_string())
@@ -607,9 +605,7 @@ async fn get_version(
         .pipeline_store
         .get_version(&pipeline_id, version)
         .map_err(|e| ApiError::internal(e.to_string()))?
-        .ok_or_else(|| {
-            ApiError::not_found("version", &format!("{id} v{version}"))
-        })?;
+        .ok_or_else(|| ApiError::not_found("version", &format!("{id} v{version}")))?;
 
     Ok(Json(VersionResponse {
         version: pv.version,
@@ -632,9 +628,7 @@ async fn restore_version(
         .pipeline_store
         .get_version(&pipeline_id, version)
         .map_err(|e| ApiError::internal(e.to_string()))?
-        .ok_or_else(|| {
-            ApiError::not_found("version", &format!("{id} v{version}"))
-        })?;
+        .ok_or_else(|| ApiError::not_found("version", &format!("{id} v{version}")))?;
 
     // Update the pipeline with the restored snapshot — this auto-increments
     // the version and stores a new snapshot.
@@ -696,8 +690,8 @@ async fn import_pipeline(
     Json(req): Json<ImportRequest>,
 ) -> Result<(StatusCode, Json<ImportResponse>), (StatusCode, Json<ApiError>)> {
     // Parse and validate the pipeline definition.
-    let json_str = serde_json::to_string(&req.pipeline)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let json_str =
+        serde_json::to_string(&req.pipeline).map_err(|e| ApiError::internal(e.to_string()))?;
 
     let (mut pipeline, import_warnings) =
         Pipeline::from_json_with_warnings(&json_str).map_err(|e| match e {
@@ -809,13 +803,13 @@ async fn bulk_export(
             .pipeline
             .with_resolved_code()
             .map_err(|e| ApiError::internal(format!("failed to resolve code files: {e}")))?;
-        let value = serde_json::to_value(&resolved)
-            .map_err(|e| ApiError::internal(e.to_string()))?;
+        let value =
+            serde_json::to_value(&resolved).map_err(|e| ApiError::internal(e.to_string()))?;
         export.insert(record.pipeline.name.clone(), value);
     }
 
-    let json = serde_json::to_string_pretty(&export)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(&export).map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok((
         StatusCode::OK,
@@ -860,7 +854,13 @@ fn system_time_to_ms(t: std::time::SystemTime) -> u64 {
 /// Sanitize a pipeline name for use as a filename.
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

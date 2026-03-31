@@ -5,6 +5,7 @@ import { useCallback, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import type { ApiNode, ApiPreviewNodeResponse } from '../../api/pipelines';
 import { previewNode } from '../../api/pipelines';
+import { StorageOptionsEditor } from './StorageOptionsEditor';
 import './connector-editor.css';
 
 // ---------------------------------------------------------------------------
@@ -122,7 +123,7 @@ function FileSourceForm({
           type="text"
           value={String(config.path ?? '')}
           onChange={(e) => onChange({ ...config, path: e.target.value })}
-          placeholder={connector === 'csv' ? '/path/to/data.csv' : '/path/to/data.parquet'}
+          placeholder="Local path or cloud URL (s3://, gs://, az://)"
         />
       </div>
       {connector === 'csv' && (
@@ -155,6 +156,7 @@ function FileSourceForm({
           </div>
         </>
       )}
+      <StorageOptionsEditor config={config} onChange={onChange} />
     </div>
   );
 }

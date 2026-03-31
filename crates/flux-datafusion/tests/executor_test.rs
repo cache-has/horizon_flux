@@ -907,10 +907,7 @@ async fn no_override_when_environment_doesnt_match() {
     // Verify pipeline executes normally when the active environment has no overrides.
     let mut pipeline = make_pipeline(
         "no_match",
-        vec![
-            source_node("src"),
-            sink_node("out"),
-        ],
+        vec![source_node("src"), sink_node("out")],
         vec![Edge::new("src", "out")],
     );
 

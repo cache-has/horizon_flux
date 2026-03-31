@@ -171,10 +171,9 @@ impl PipelineExecutor {
                 .is_some_and(|id| id == node_id);
 
             if is_re_execute {
-                let result = Self::re_execute_node(
-                    pipeline, cache, registry, node_id, options, node_start,
-                )
-                .await?;
+                let result =
+                    Self::re_execute_node(pipeline, cache, registry, node_id, options, node_start)
+                        .await?;
                 node_results.insert(node_id.clone(), result);
                 continue;
             }
@@ -266,8 +265,9 @@ impl PipelineExecutor {
         match &node.kind {
             NodeKind::Transform(xform_cfg) => {
                 // Resolve code.
-                let code = pipeline.resolve_code(xform_cfg).map_err(|e| {
-                    ExecutorError::Node {
+                let code = pipeline
+                    .resolve_code(xform_cfg)
+                    .map_err(|e| ExecutorError::Node {
                         node_id: node_id.clone(),
                         kind: crate::error::NodeErrorKind::CodeFileRead {
                             path: xform_cfg
@@ -276,8 +276,7 @@ impl PipelineExecutor {
                                 .unwrap_or_else(|| "(inline)".into()),
                             source: e,
                         },
-                    }
-                })?;
+                    })?;
 
                 // Resolve variables.
                 let builtin = BuiltinContext {
@@ -366,8 +365,7 @@ impl PipelineExecutor {
                 };
                 let resolved_vars =
                     ResolvedVariables::resolve(pipeline, &options.variable_overrides, &builtin);
-                interpolated_cfg.config =
-                    resolved_vars.interpolate_json(&interpolated_cfg.config);
+                interpolated_cfg.config = resolved_vars.interpolate_json(&interpolated_cfg.config);
 
                 let batches = Self::execute_source(node_id, &interpolated_cfg, registry)
                     .await
@@ -389,16 +387,14 @@ impl PipelineExecutor {
                     status: PreviewStatus::ReExecuted,
                 })
             }
-            NodeKind::Sink(_) => {
-                Ok(PreviewNodeResult {
-                    node_id: node_id.clone(),
-                    schema: Arc::new(arrow::datatypes::Schema::empty()),
-                    batches: Vec::new(),
-                    row_count: 0,
-                    duration: node_start.elapsed(),
-                    status: PreviewStatus::Skipped,
-                })
-            }
+            NodeKind::Sink(_) => Ok(PreviewNodeResult {
+                node_id: node_id.clone(),
+                schema: Arc::new(arrow::datatypes::Schema::empty()),
+                batches: Vec::new(),
+                row_count: 0,
+                duration: node_start.elapsed(),
+                status: PreviewStatus::Skipped,
+            }),
         }
     }
 }

@@ -215,3 +215,48 @@
   color: var(--text, #6b6375);
   font-style: italic;
 }
+
+/* Storage options collapse/expand */
+.connector-editor__collapse-btn {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text, #6b6375);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.connector-editor__collapse-btn:hover {
+  color: var(--text-h, #08060d);
+}
+
+.connector-editor__add-btn {
+  font-size: 12px;
+  font-family: var(--sans);
+  color: var(--accent, #a855f7);
+  background: none;
+  border: 1px dashed var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.connector-editor__add-btn:hover {
+  border-color: var(--accent, #a855f7);
+}
+
+.connector-editor__remove-btn {
+  font-size: 16px;
+  color: var(--text, #6b6375);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+}
+
+.connector-editor__remove-btn:hover {
+  color: #ef4444;
+}

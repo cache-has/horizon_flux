@@ -42,6 +42,21 @@ pub trait SourceConnector: Send + Sync {
         &self,
         config: &SourceConfig,
     ) -> Result<Arc<dyn TableProvider>, ProviderError>;
+
+    /// Configure a DataFusion session context with any resources this source
+    /// needs at scan time (e.g., cloud object stores).
+    ///
+    /// Called by the executor after creating the [`SessionContext`] but before
+    /// scanning the table provider. The default implementation is a no-op.
+    ///
+    /// [`SessionContext`]: datafusion::prelude::SessionContext
+    fn configure_session(
+        &self,
+        _config: &SourceConfig,
+        _ctx: &datafusion::prelude::SessionContext,
+    ) -> Result<(), ProviderError> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

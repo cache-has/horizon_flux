@@ -187,48 +187,49 @@ impl PipelineExecutor {
 
                 NodeKind::Transform(xform_cfg) => {
                     // Resolve code from file or inline.
-                    let code = pipeline.resolve_code(xform_cfg).map_err(|e| {
-                        NodeErrorKind::CodeFileRead {
-                            path: xform_cfg
-                                .code_path
-                                .clone()
-                                .unwrap_or_else(|| "(inline)".into()),
-                            source: e,
-                        }
-                    });
+                    let code =
+                        pipeline
+                            .resolve_code(xform_cfg)
+                            .map_err(|e| NodeErrorKind::CodeFileRead {
+                                path: xform_cfg
+                                    .code_path
+                                    .clone()
+                                    .unwrap_or_else(|| "(inline)".into()),
+                                source: e,
+                            });
                     match code {
                         Err(e) => Err(e),
                         Ok(code) => match xform_cfg.mode {
-                        TransformMode::Sql => {
-                            let upstream_ids = pipeline.upstream_of(node_id);
-                            match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
-                                Ok(data) => {
-                                    let interpolated_sql = resolved_vars.interpolate(&code);
-                                    Self::execute_sql_transform(
-                                        &interpolated_sql,
-                                        data,
-                                        options.environment_resolver.as_ref(),
-                                    )
-                                    .await
+                            TransformMode::Sql => {
+                                let upstream_ids = pipeline.upstream_of(node_id);
+                                match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                                    Ok(data) => {
+                                        let interpolated_sql = resolved_vars.interpolate(&code);
+                                        Self::execute_sql_transform(
+                                            &interpolated_sql,
+                                            data,
+                                            options.environment_resolver.as_ref(),
+                                        )
+                                        .await
+                                    }
+                                    Err(e) => Err(e),
                                 }
-                                Err(e) => Err(e),
                             }
-                        }
-                        TransformMode::Python => {
-                            let upstream_ids = pipeline.upstream_of(node_id);
-                            match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
-                                Ok(data) => {
-                                    crate::python_runtime::execute_python_transform(
-                                        &code,
-                                        data,
-                                        resolved_vars.as_map(),
-                                    )
-                                    .await
+                            TransformMode::Python => {
+                                let upstream_ids = pipeline.upstream_of(node_id);
+                                match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                                    Ok(data) => {
+                                        crate::python_runtime::execute_python_transform(
+                                            &code,
+                                            data,
+                                            resolved_vars.as_map(),
+                                        )
+                                        .await
+                                    }
+                                    Err(e) => Err(e),
                                 }
-                                Err(e) => Err(e),
                             }
-                        }
-                    }
+                        },
                     }
                 }
 
@@ -424,6 +425,13 @@ impl PipelineExecutor {
         // This path supports filter/projection pushdown for providers that
         // implement it (e.g. Parquet row-group pruning, PostgreSQL WHERE pushdown).
         let ctx = SessionContext::new();
+
+        // Allow connectors to register resources (e.g. cloud object stores)
+        // on the execution context before scanning.
+        connector
+            .configure_session(config, &ctx)
+            .map_err(NodeErrorKind::Source)?;
+
         let table_name = node_id.to_string();
         ctx.register_table(table_name.as_str(), table_provider)?;
         let df = ctx

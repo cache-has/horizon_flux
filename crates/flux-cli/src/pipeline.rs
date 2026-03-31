@@ -497,12 +497,11 @@ pub fn history(pipeline_name: &str, limit: u32, format: OutputFormat) -> Result<
                     .map(format_duration_ms)
                     .unwrap_or_else(|| "-".into());
                 let status_str = run.status.as_str();
-                let colored_status =
-                    if run.status == flux_datafusion::RunStatus::Failed {
-                        crate::color::red(status_str).to_string()
-                    } else {
-                        crate::color::green(status_str).to_string()
-                    };
+                let colored_status = if run.status == flux_datafusion::RunStatus::Failed {
+                    crate::color::red(status_str).to_string()
+                } else {
+                    crate::color::green(status_str).to_string()
+                };
                 println!(
                     "{:<36}  {:<10}  {:<20}  {:>10}",
                     run.id, colored_status, started, duration,
@@ -583,7 +582,10 @@ async fn execute_preview(
                             continue;
                         }
                         flux_datafusion::PreviewStatus::NoCache => {
-                            eprintln!("--- {} (no cached data — run the pipeline first) ---", node_name);
+                            eprintln!(
+                                "--- {} (no cached data — run the pipeline first) ---",
+                                node_name
+                            );
                             continue;
                         }
                         _ => {}

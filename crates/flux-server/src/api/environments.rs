@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_environments).post(create_environment))
-        .route("/{name}", delete(delete_environment).put(update_environment))
+        .route(
+            "/{name}",
+            delete(delete_environment).put(update_environment),
+        )
         .route("/{name}/tables", get(list_table_overrides))
         .route(
             "/{name}/tables/{table}/override",

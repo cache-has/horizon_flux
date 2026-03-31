@@ -17,20 +17,20 @@ pub mod run;
 pub mod run_store;
 pub mod stats;
 
+pub use column_stats::{ColumnStats, compute_column_stats};
 pub use environment::{Environment, EnvironmentStore, TableOverride};
 pub use executor::{ExecutionOptions, PipelineExecutor};
 pub use friendly_sql::{PreprocessError, preprocess_sql};
+pub use output_cache::OutputCache;
 pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult, PreviewStatus};
 pub use provider::{
     OnConflict, PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions,
     WriteStats,
 };
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
-pub use output_cache::OutputCache;
 pub use result::PipelineResult;
 pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};
 pub use run_store::RunStore;
-pub use column_stats::{ColumnStats, compute_column_stats};
 pub use stats::NodeStats;
 
 pub fn version() -> &'static str {

@@ -17,6 +17,7 @@ tracing = { workspace = true }
 rusqlite = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
+url = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 tempfile = "3"

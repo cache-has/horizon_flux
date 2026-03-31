@@ -214,9 +214,10 @@ async fn preview_loads_cached_data() {
         .write_node("cached_preview", "xform", &[test_batch()], 10_000)
         .unwrap();
 
-    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
-        .await
-        .expect("preview should succeed");
+    let result =
+        PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
+            .await
+            .expect("preview should succeed");
 
     // All 3 nodes should have results.
     assert_eq!(result.nodes.len(), 3);
@@ -253,9 +254,10 @@ async fn preview_reports_no_cache_for_uncached_nodes() {
     );
 
     // Don't populate cache — all nodes should report NoCache.
-    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
-        .await
-        .expect("preview should succeed");
+    let result =
+        PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
+            .await
+            .expect("preview should succeed");
 
     let src = result.node_output(&"src".into()).unwrap();
     assert_eq!(src.status, PreviewStatus::NoCache);
@@ -420,9 +422,10 @@ async fn preview_schema_from_cached_data() {
         .write_node("schema_test", "src", &[test_batch()], 10_000)
         .unwrap();
 
-    let result = PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
-        .await
-        .unwrap();
+    let result =
+        PipelineExecutor::preview(&pipeline, &cache, &registry, &PreviewOptions::default())
+            .await
+            .unwrap();
 
     let src_schema = &result.node_output(&"src".into()).unwrap().schema;
     assert_eq!(src_schema.fields().len(), 2);

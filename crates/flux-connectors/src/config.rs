@@ -34,15 +34,38 @@ pub enum ConnectorConfig {
 // ---------------------------------------------------------------------------
 
 /// Configuration for file-based connectors (CSV, Parquet).
+///
+/// The `path` field accepts local paths, glob patterns, and cloud URLs:
+/// - `/local/path/data.csv` or `./relative/path` — local filesystem
+/// - `s3://bucket/path` — Amazon S3 (and S3-compatible: MinIO, R2)
+/// - `gs://bucket/path` — Google Cloud Storage
+/// - `az://container/path` — Azure Blob Storage
+/// - `https://host/path` — HTTP/HTTPS (read-only source)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileConfig {
-    /// File path or glob pattern (e.g. `data/*.csv`).
+    /// File path, glob pattern, or cloud URL (e.g. `s3://bucket/data.csv`).
     pub path: PathBuf,
     /// File format.
     pub format: FileFormat,
     /// Format-specific options.
     #[serde(default)]
     pub options: FileOptions,
+    /// Hive-style partition column names.
+    ///
+    /// When set, DataFusion extracts partition values from directory names
+    /// (e.g., `year=2026/month=03/`) and adds them as additional columns.
+    /// All partition columns are typed as `Utf8`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_partition_cols: Option<Vec<String>>,
+    /// Per-connector cloud storage options (credentials, endpoint overrides).
+    ///
+    /// Common keys:
+    /// - S3: `aws_access_key_id`, `aws_secret_access_key`, `aws_region`,
+    ///   `aws_session_token`, `aws_endpoint`, `aws_allow_http`, `aws_skip_signature`
+    /// - GCS: `google_service_account_key`
+    /// - Azure: `azure_storage_account_name`, `azure_storage_account_key`
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub storage_options: HashMap<String, String>,
 }
 
 /// Supported file formats.
@@ -263,9 +286,13 @@ impl ConnectorConfig {
     /// keys that the target connector actually supports.
     pub fn valid_config_keys(connector: &str) -> Option<&'static [&'static str]> {
         match connector {
-            "file" | "csv" | "parquet" => {
-                Some(&["path", "format", "options"])
-            }
+            "file" | "csv" | "parquet" => Some(&[
+                "path",
+                "format",
+                "options",
+                "table_partition_cols",
+                "storage_options",
+            ]),
             "postgresql" | "postgres" => Some(&[
                 "connection_string",
                 "table",

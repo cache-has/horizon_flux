@@ -8,6 +8,7 @@
 //! - [`ConnectorRegistry`]: Factory that creates connectors from config and
 //!   populates a [`ProviderRegistry`]
 
+pub mod cloud_store;
 pub mod config;
 pub mod file_sink;
 pub mod file_source;

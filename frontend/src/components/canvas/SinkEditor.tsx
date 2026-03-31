@@ -4,6 +4,7 @@
 import { useCallback, useState } from 'react';
 import type { ApiNode } from '../../api/pipelines';
 import { previewNode } from '../../api/pipelines';
+import { StorageOptionsEditor } from './StorageOptionsEditor';
 import './connector-editor.css';
 
 // ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ function FileSinkForm({
           type="text"
           value={String(config.path ?? '')}
           onChange={(e) => onChange({ ...config, path: e.target.value })}
-          placeholder={connector === 'csv' ? '/path/to/output.csv' : '/path/to/output.parquet'}
+          placeholder="Local path or cloud URL (s3://, gs://, az://)"
         />
       </div>
       {connector === 'parquet' && (
@@ -169,6 +170,7 @@ function FileSinkForm({
           </div>
         </div>
       )}
+      <StorageOptionsEditor config={config} onChange={onChange} />
     </div>
   );
 }

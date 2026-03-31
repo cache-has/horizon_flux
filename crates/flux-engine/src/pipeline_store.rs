@@ -484,9 +484,7 @@ impl PipelineStore {
         let path = self.json_path(id);
         let json = std::fs::read_to_string(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                PipelineStoreError::NotFound(format!(
-                    "definition file missing for pipeline {id}"
-                ))
+                PipelineStoreError::NotFound(format!("definition file missing for pipeline {id}"))
             } else {
                 PipelineStoreError::Io(e)
             }

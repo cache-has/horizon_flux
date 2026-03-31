@@ -4,7 +4,7 @@
 //! Per-column statistics computed from Arrow RecordBatches for preview display.
 
 use arrow::array::{Array, AsArray, BooleanArray};
-use arrow::{compute};
+use arrow::compute;
 use arrow::datatypes::{DataType, Float64Type};
 use arrow::record_batch::RecordBatch;
 use serde::Serialize;
@@ -50,10 +50,7 @@ pub fn compute_column_stats(batches: &[RecordBatch]) -> Vec<ColumnStats> {
 
     for col_idx in 0..num_cols {
         let field = schema.field(col_idx);
-        let arrays: Vec<&dyn Array> = batches
-            .iter()
-            .map(|b| b.column(col_idx).as_ref())
-            .collect();
+        let arrays: Vec<&dyn Array> = batches.iter().map(|b| b.column(col_idx).as_ref()).collect();
 
         let stats = match field.data_type() {
             dt if is_numeric(dt) => compute_numeric_stats(&arrays),
@@ -159,8 +156,9 @@ fn compute_string_stats(arrays: &[&dyn Array]) -> ColumnStats {
                     unique_set.insert(val.to_owned());
                 }
             }
-        } else if let Some(str_arr) =
-            arr.as_any().downcast_ref::<arrow::array::LargeStringArray>()
+        } else if let Some(str_arr) = arr
+            .as_any()
+            .downcast_ref::<arrow::array::LargeStringArray>()
         {
             for i in 0..str_arr.len() {
                 if !str_arr.is_null(i) {

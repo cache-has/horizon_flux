@@ -22,8 +22,8 @@
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
-use flux_engine::node::{NodeId, NodeKind};
 use flux_engine::Pipeline;
+use flux_engine::node::{NodeId, NodeKind};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -136,7 +136,13 @@ impl OutputCache {
             size_bytes,
         };
 
-        debug!(pipeline = pipeline_name, node = node_id, rows, size_bytes, "cached node output");
+        debug!(
+            pipeline = pipeline_name,
+            node = node_id,
+            rows,
+            size_bytes,
+            "cached node output"
+        );
         Ok(entry)
     }
 
@@ -231,10 +237,7 @@ impl OutputCache {
     ///
     /// Call this when a pipeline is saved/updated. Returns the IDs of
     /// invalidated nodes.
-    pub fn invalidate_changed(
-        &self,
-        pipeline: &Pipeline,
-    ) -> Result<Vec<NodeId>, CacheError> {
+    pub fn invalidate_changed(&self, pipeline: &Pipeline) -> Result<Vec<NodeId>, CacheError> {
         let manifest = match self.read_manifest(&pipeline.name) {
             Some(m) => m,
             None => return Ok(Vec::new()),
@@ -301,11 +304,7 @@ impl OutputCache {
     }
 
     /// Delete a single node's cache file and remove it from the manifest.
-    pub fn delete_node(
-        &self,
-        pipeline_name: &str,
-        node_id: &str,
-    ) -> Result<(), CacheError> {
+    pub fn delete_node(&self, pipeline_name: &str, node_id: &str) -> Result<(), CacheError> {
         let path = self.node_path(pipeline_name, node_id);
         if path.exists() {
             std::fs::remove_file(&path)?;
@@ -350,7 +349,9 @@ pub fn compute_node_fingerprint(pipeline: &Pipeline, node: &flux_engine::node::N
             "transform".hash(&mut hasher);
             format!("{:?}", cfg.mode).hash(&mut hasher);
             // Resolve code from file if needed, fall back to inline.
-            let code = pipeline.resolve_code(cfg).unwrap_or_else(|_| cfg.code.clone());
+            let code = pipeline
+                .resolve_code(cfg)
+                .unwrap_or_else(|_| cfg.code.clone());
             code.hash(&mut hasher);
         }
         NodeKind::Sink(cfg) => {

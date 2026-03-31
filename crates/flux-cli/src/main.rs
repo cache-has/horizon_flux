@@ -188,9 +188,9 @@ fn run(cli: Cli, format: OutputFormat) -> Result<()> {
             if all {
                 export_all(output.as_deref(), format)
             } else {
-                let pipeline = pipeline
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("pipeline name or UUID required (or use --all)"))?;
+                let pipeline = pipeline.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("pipeline name or UUID required (or use --all)")
+                })?;
                 export_pipeline(pipeline, output.as_deref(), format)
             }
         }
@@ -312,12 +312,12 @@ fn export_all(output_dir: Option<&std::path::Path>, format: OutputFormat) -> Res
 
     let mut exported = Vec::new();
     for record in &records {
-        let export_pipeline = record
-            .pipeline
-            .with_resolved_code()
-            .with_context(|| {
-                format!("failed to resolve code files for `{}`", record.pipeline.name)
-            })?;
+        let export_pipeline = record.pipeline.with_resolved_code().with_context(|| {
+            format!(
+                "failed to resolve code files for `{}`",
+                record.pipeline.name
+            )
+        })?;
         let json = export_pipeline
             .to_json()
             .with_context(|| format!("failed to serialize pipeline `{}`", record.pipeline.name))?;
@@ -330,7 +330,11 @@ fn export_all(output_dir: Option<&std::path::Path>, format: OutputFormat) -> Res
 
     match format {
         OutputFormat::Human => {
-            println!("Exported {} pipelines to {}/", exported.len(), out_dir.display());
+            println!(
+                "Exported {} pipelines to {}/",
+                exported.len(),
+                out_dir.display()
+            );
             for (name, path) in &exported {
                 println!("  `{name}` → {}", path.display());
             }
@@ -345,7 +349,10 @@ fn export_all(output_dir: Option<&std::path::Path>, format: OutputFormat) -> Res
                     })
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "exported": items }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "exported": items }))?
+            );
         }
     }
     Ok(())
@@ -436,11 +443,7 @@ fn import_pipeline(file: &std::path::Path, on_conflict: &str, format: OutputForm
     Ok(())
 }
 
-fn import_directory(
-    dir: &std::path::Path,
-    on_conflict: &str,
-    format: OutputFormat,
-) -> Result<()> {
+fn import_directory(dir: &std::path::Path, on_conflict: &str, format: OutputFormat) -> Result<()> {
     let data_dir = dirs::home_dir()
         .context("could not determine home directory")?
         .join(".horizon-flux");
@@ -544,7 +547,11 @@ fn import_directory(
     match format {
         OutputFormat::Human => {
             if !imported.is_empty() {
-                println!("Imported {} pipelines from {}/", imported.len(), dir.display());
+                println!(
+                    "Imported {} pipelines from {}/",
+                    imported.len(),
+                    dir.display()
+                );
                 for (name, id) in &imported {
                     println!("  `{name}` (id: {id})");
                 }

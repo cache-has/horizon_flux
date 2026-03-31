@@ -8,7 +8,6 @@
 
 use crate::api::ApiError;
 use crate::api::pipelines::{ColumnInfo, PreviewNodeResponse, batches_to_json_rows};
-use flux_datafusion::compute_column_stats;
 use crate::state::AppState;
 use arrow::json::ReaderBuilder;
 use arrow::record_batch::RecordBatch;
@@ -18,6 +17,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
 use flux_datafusion::PipelineExecutor;
+use flux_datafusion::compute_column_stats;
 use flux_datafusion::preview::sample_batches;
 use flux_engine::NodeId;
 use flux_engine::node::{SourceConfig, TransformMode};
