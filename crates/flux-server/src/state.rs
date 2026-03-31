@@ -4,8 +4,10 @@
 //! Shared application state for all API handlers.
 
 use flux_connectors::ConnectorRegistry;
-use flux_datafusion::{EnvironmentStore, ExecutionEvent, OutputCache, RunStore, SecretResolver};
-use flux_engine::PipelineStore;
+use flux_datafusion::{
+    EnvironmentStorage, ExecutionEvent, OutputCache, RunStorage, SecretResolver,
+};
+use flux_engine::PipelineStorage;
 use flux_secrets::SecretStore;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -139,10 +141,10 @@ impl SecretSession {
 /// Shared state available to all request handlers via Axum's `State` extractor.
 #[derive(Clone)]
 pub struct AppState {
-    pub pipeline_store: Arc<PipelineStore>,
-    pub run_store: Arc<RunStore>,
+    pub pipeline_store: Arc<dyn PipelineStorage>,
+    pub run_store: Arc<dyn RunStorage>,
     pub connector_registry: Arc<ConnectorRegistry>,
-    pub environment_store: Arc<EnvironmentStore>,
+    pub environment_store: Arc<dyn EnvironmentStorage>,
     /// Secret store session with unlock/lock lifecycle and auto-lock timeout.
     pub secret_session: Arc<Mutex<SecretSession>>,
     /// Broadcast channel for real-time execution events (WebSocket consumers

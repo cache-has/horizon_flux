@@ -16,9 +16,10 @@ pub mod result;
 pub mod run;
 pub mod run_store;
 pub mod stats;
+pub mod storage;
 
 pub use column_stats::{ColumnStats, compute_column_stats};
-pub use environment::{Environment, EnvironmentStore, TableOverride};
+pub use environment::{Environment, SqliteEnvironmentStore, TableOverride};
 pub use executor::{ExecutionOptions, PipelineExecutor, SecretResolver};
 pub use friendly_sql::{PreprocessError, preprocess_sql};
 pub use output_cache::OutputCache;
@@ -30,8 +31,9 @@ pub use provider::{
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
 pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};
-pub use run_store::RunStore;
+pub use run_store::SqliteRunStore;
 pub use stats::NodeStats;
+pub use storage::{EnvironmentStorage, RunStorage};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

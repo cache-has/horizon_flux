@@ -75,6 +75,9 @@ pub enum RunStoreError {
 
     #[error("invalid run status: {0}")]
     InvalidStatus(String),
+
+    #[error("database error: {0}")]
+    Database(String),
 }
 
 /// Errors from the environment system.
@@ -100,4 +103,7 @@ pub enum EnvironmentError {
 
     #[error("cyclic fallback chain detected")]
     CyclicFallback,
+
+    #[error("database error: {0}")]
+    Database(String),
 }

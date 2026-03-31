@@ -8,15 +8,16 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
-use flux_datafusion::environment::EnvironmentStore;
+use flux_datafusion::EnvironmentStorage;
+use flux_datafusion::environment::SqliteEnvironmentStore;
 use flux_datafusion::resolver::EnvironmentResolver;
 use std::sync::Arc;
 
-// ── EnvironmentStore tests ───────────────────────────────────────────────────
+// ── SqliteEnvironmentStore tests ───────────────────────────────────────────────────
 
 #[test]
 fn default_environments_exist() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     let envs = store.list().unwrap();
     let names: Vec<&str> = envs.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"prod"));
@@ -31,7 +32,7 @@ fn default_environments_exist() {
 
 #[test]
 fn create_and_delete_environment() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     store.create("staging", Some("prod")).unwrap();
 
     let staging = store.get("staging").unwrap().unwrap();
@@ -43,28 +44,28 @@ fn create_and_delete_environment() {
 
 #[test]
 fn cannot_delete_prod() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     let err = store.delete("prod").unwrap_err();
     assert!(err.to_string().contains("prod"));
 }
 
 #[test]
 fn cannot_create_duplicate() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     let err = store.create("prod", None).unwrap_err();
     assert!(err.to_string().contains("already exists"));
 }
 
 #[test]
 fn fallback_must_exist() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     let err = store.create("staging", Some("nonexistent")).unwrap_err();
     assert!(err.to_string().contains("not found"));
 }
 
 #[test]
 fn fallback_chain() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     store.create("staging", Some("prod")).unwrap();
     store.create("feature", Some("staging")).unwrap();
 
@@ -74,7 +75,7 @@ fn fallback_chain() {
 
 #[test]
 fn delete_repoints_dependents() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     store.create("staging", Some("prod")).unwrap();
     store.create("feature", Some("staging")).unwrap();
 
@@ -87,7 +88,7 @@ fn delete_repoints_dependents() {
 
 #[test]
 fn update_fallback() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
     store.create("staging", Some("prod")).unwrap();
 
     store.update_fallback("dev", Some("staging")).unwrap();
@@ -97,7 +98,7 @@ fn update_fallback() {
 
 #[test]
 fn table_override_crud() {
-    let store = EnvironmentStore::open_in_memory().unwrap();
+    let store = SqliteEnvironmentStore::open_in_memory().unwrap();
 
     store
         .register_table_override("dev", "public", "orders")

@@ -7,6 +7,7 @@ members = [
     "crates/flux-server",
     "crates/flux-tray",
     "crates/flux-cli",
+    "crates/flux-postgres",
 ]
 resolver = "2"
 
@@ -24,6 +25,7 @@ flux-connectors = { path = "crates/flux-connectors" }
 flux-secrets = { path = "crates/flux-secrets" }
 flux-server = { path = "crates/flux-server" }
 flux-tray = { path = "crates/flux-tray" }
+flux-postgres = { path = "crates/flux-postgres" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -46,7 +48,8 @@ serde_json = "1"
 
 # Database
 rusqlite = { version = "0.39", features = ["bundled"] }
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
+deadpool-postgres = "0.14"
 chrono = "0.4"
 
 # Error handling
@@ -75,6 +78,9 @@ rand = "0.9"
 clap = { version = "4", features = ["derive"] }
 owo-colors = { version = "4", features = ["supports-colors"] }
 rpassword = "7"
+
+# Configuration
+toml = "0.8"
 
 # Filesystem
 dirs = "6"

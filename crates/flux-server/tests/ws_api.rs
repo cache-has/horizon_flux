@@ -6,8 +6,8 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use flux_connectors::ConnectorRegistry;
-use flux_datafusion::{EnvironmentStore, ExecutionEvent, RunId, RunStore};
-use flux_engine::PipelineStore;
+use flux_datafusion::{ExecutionEvent, RunId, SqliteEnvironmentStore, SqliteRunStore};
+use flux_engine::SqlitePipelineStore;
 use flux_server::AppState;
 use serde_json::Value;
 use std::sync::Arc;
@@ -16,10 +16,10 @@ use tower::ServiceExt;
 fn test_state() -> AppState {
     let pipelines_dir = tempfile::tempdir().unwrap().keep();
     AppState {
-        pipeline_store: Arc::new(PipelineStore::open_in_memory(&pipelines_dir).unwrap()),
-        run_store: Arc::new(RunStore::open_in_memory().unwrap()),
+        pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
+        run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
-        environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
+        environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(std::sync::Mutex::new(
             flux_server::state::SecretSession::new(std::env::temp_dir().join("unused-secrets.db")),
         )),

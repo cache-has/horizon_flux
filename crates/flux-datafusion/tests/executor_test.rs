@@ -13,7 +13,7 @@ use flux_datafusion::error::{ExecutorError, NodeErrorKind};
 use flux_datafusion::provider::{
     PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions, WriteStats,
 };
-use flux_datafusion::{ExecutionOptions, PipelineExecutor, RunStatus, RunStore};
+use flux_datafusion::{ExecutionOptions, PipelineExecutor, RunStatus, RunStorage, SqliteRunStore};
 use flux_engine::edge::Edge;
 use flux_engine::node::*;
 use flux_engine::pipeline::Pipeline;
@@ -643,7 +643,7 @@ async fn execution_stats_track_duration() {
 
 #[tokio::test]
 async fn execute_with_run_store_persists_history() {
-    let store = Arc::new(RunStore::open_in_memory().unwrap());
+    let store: Arc<dyn RunStorage> = Arc::new(SqliteRunStore::open_in_memory().unwrap());
 
     let pipeline = make_pipeline(
         "persisted",
@@ -690,7 +690,7 @@ async fn execute_with_run_store_persists_history() {
 
 #[tokio::test]
 async fn failed_run_persists_error() {
-    let store = Arc::new(RunStore::open_in_memory().unwrap());
+    let store: Arc<dyn RunStorage> = Arc::new(SqliteRunStore::open_in_memory().unwrap());
 
     let pipeline = make_pipeline(
         "failing",
@@ -805,7 +805,7 @@ async fn cancellation_stops_execution() {
 
 #[test]
 fn run_store_create_and_get() {
-    let store = RunStore::open_in_memory().unwrap();
+    let store = SqliteRunStore::open_in_memory().unwrap();
     let run = store.create_run("my_pipeline", "dev").unwrap();
 
     assert_eq!(run.pipeline_name, "my_pipeline");
@@ -821,7 +821,7 @@ fn run_store_create_and_get() {
 fn run_store_lifecycle() {
     use std::time::SystemTime;
 
-    let store = RunStore::open_in_memory().unwrap();
+    let store = SqliteRunStore::open_in_memory().unwrap();
     let run = store.create_run("lifecycle", "prod").unwrap();
 
     let start = SystemTime::now();
@@ -843,7 +843,7 @@ fn run_store_lifecycle() {
 
 #[test]
 fn run_store_list_filters_by_pipeline() {
-    let store = RunStore::open_in_memory().unwrap();
+    let store = SqliteRunStore::open_in_memory().unwrap();
     store.create_run("alpha", "dev").unwrap();
     store.create_run("beta", "dev").unwrap();
     store.create_run("alpha", "prod").unwrap();

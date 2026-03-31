@@ -5,8 +5,6 @@
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use flux_datafusion::EnvironmentStore;
-
 use crate::OutputFormat;
 
 #[derive(Subcommand)]
@@ -33,26 +31,28 @@ pub enum EnvAction {
     },
 }
 
-pub fn handle(action: EnvAction, format: OutputFormat) -> Result<()> {
+pub fn handle(action: EnvAction, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     match action {
-        EnvAction::List => list(format),
-        EnvAction::Create { name, fallback } => create(&name, fallback.as_deref(), format),
-        EnvAction::Delete { name } => delete(&name, format),
-        EnvAction::Show { name } => show(&name, format),
+        EnvAction::List => list(format, metadata_url),
+        EnvAction::Create { name, fallback } => {
+            create(&name, fallback.as_deref(), format, metadata_url)
+        }
+        EnvAction::Delete { name } => delete(&name, format, metadata_url),
+        EnvAction::Show { name } => show(&name, format, metadata_url),
     }
 }
 
-fn open_store() -> Result<EnvironmentStore> {
-    let data_dir = dirs::home_dir()
-        .context("could not determine home directory")?
-        .join(".horizon-flux");
-    std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
-    EnvironmentStore::open(&data_dir.join("environments.db"))
-        .context("failed to open environment store")
+fn open_store(
+    metadata_url: Option<&str>,
+) -> Result<std::sync::Arc<dyn flux_datafusion::EnvironmentStorage>> {
+    let data_dir = crate::config::data_dir()?;
+    let backend = crate::config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+    let stores = crate::config::open_stores(&backend, &data_dir)?;
+    Ok(stores.environment_store)
 }
 
-fn list(format: OutputFormat) -> Result<()> {
-    let store = open_store()?;
+fn list(format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
+    let store = open_store(metadata_url)?;
     let envs = store.list().context("failed to list environments")?;
 
     match format {
@@ -93,8 +93,13 @@ fn list(format: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn create(name: &str, fallback: Option<&str>, format: OutputFormat) -> Result<()> {
-    let store = open_store()?;
+fn create(
+    name: &str,
+    fallback: Option<&str>,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let store = open_store(metadata_url)?;
     let env = store
         .create(name, fallback)
         .with_context(|| format!("failed to create environment '{name}'"))?;
@@ -117,8 +122,8 @@ fn create(name: &str, fallback: Option<&str>, format: OutputFormat) -> Result<()
     Ok(())
 }
 
-fn delete(name: &str, format: OutputFormat) -> Result<()> {
-    let store = open_store()?;
+fn delete(name: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
+    let store = open_store(metadata_url)?;
     store
         .delete(name)
         .with_context(|| format!("failed to delete environment '{name}'"))?;
@@ -135,8 +140,8 @@ fn delete(name: &str, format: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn show(name: &str, format: OutputFormat) -> Result<()> {
-    let store = open_store()?;
+fn show(name: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
+    let store = open_store(metadata_url)?;
     let env = store
         .get(name)
         .context("failed to read environment")?

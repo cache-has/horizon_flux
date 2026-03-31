@@ -48,14 +48,14 @@ pub fn handle(action: ServerAction, format: OutputFormat) -> Result<()> {
             port,
             headless,
             dev,
-        } => start(port, headless, dev),
+        } => start(port, headless, dev, None),
         ServerAction::Stop => stop(format),
         ServerAction::Status => status(format),
     }
 }
 
 /// Start the server — extracted from the previous default path in main.
-pub fn start(port: u16, headless: bool, dev: bool) -> Result<()> {
+pub fn start(port: u16, headless: bool, dev: bool, metadata_url: Option<&str>) -> Result<()> {
     let config = flux_server::ServerConfig {
         port_start: port,
         open_browser: !headless,
@@ -63,25 +63,14 @@ pub fn start(port: u16, headless: bool, dev: bool) -> Result<()> {
         ..Default::default()
     };
 
-    let data_dir = dirs::home_dir()
-        .context("could not determine home directory")?
-        .join(".horizon-flux");
-    std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
+    let data_dir = crate::config::data_dir()?;
+    let backend = crate::config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+    let stores = crate::config::open_stores(&backend, &data_dir)?;
 
-    let pipelines_dir = data_dir.join("pipelines");
-    let pipeline_store = Arc::new(
-        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
-            .context("failed to open pipeline store")?,
-    );
-    let run_store = Arc::new(
-        flux_datafusion::RunStore::open(&data_dir.join("runs.db"))
-            .context("failed to open run store")?,
-    );
+    let pipeline_store = stores.pipeline_store;
+    let run_store = stores.run_store;
     let connector_registry = Arc::new(flux_connectors::default_registry());
-    let environment_store = Arc::new(
-        flux_datafusion::EnvironmentStore::open(&data_dir.join("environments.db"))
-            .context("failed to open environment store")?,
-    );
+    let environment_store = stores.environment_store;
 
     let secrets_path = data_dir.join("secrets.db");
     let secret_session = match std::env::var("HORIZON_FLUX_SECRET_PASSWORD") {

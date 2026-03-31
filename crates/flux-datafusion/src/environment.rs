@@ -8,6 +8,7 @@
 //! `prod` (no fallback) and `dev` (falls back to `prod`).
 
 use crate::error::EnvironmentError;
+use crate::storage::EnvironmentStorage;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -31,11 +32,11 @@ pub struct TableOverride {
 }
 
 /// SQLite-backed storage for environment metadata and table override tracking.
-pub struct EnvironmentStore {
+pub struct SqliteEnvironmentStore {
     conn: Mutex<Connection>,
 }
 
-impl EnvironmentStore {
+impl SqliteEnvironmentStore {
     /// Open (or create) an environment store at the given file path.
     pub fn open(path: &Path) -> Result<Self, EnvironmentError> {
         let conn = Connection::open(path)?;
@@ -89,14 +90,10 @@ impl EnvironmentStore {
         )?;
         Ok(())
     }
+}
 
-    /// Create a new environment. Returns an error if it already exists or the
-    /// fallback environment does not exist.
-    pub fn create(
-        &self,
-        name: &str,
-        fallback: Option<&str>,
-    ) -> Result<Environment, EnvironmentError> {
+impl EnvironmentStorage for SqliteEnvironmentStore {
+    fn create(&self, name: &str, fallback: Option<&str>) -> Result<Environment, EnvironmentError> {
         let conn = self.conn.lock().unwrap();
 
         if let Some(fb) = fallback {
@@ -129,8 +126,7 @@ impl EnvironmentStore {
         })
     }
 
-    /// Delete an environment. Cannot delete `prod`.
-    pub fn delete(&self, name: &str) -> Result<(), EnvironmentError> {
+    fn delete(&self, name: &str) -> Result<(), EnvironmentError> {
         if name == "prod" {
             return Err(EnvironmentError::CannotDeleteProd);
         }
@@ -166,8 +162,7 @@ impl EnvironmentStore {
         Ok(())
     }
 
-    /// Get a single environment by name.
-    pub fn get(&self, name: &str) -> Result<Option<Environment>, EnvironmentError> {
+    fn get(&self, name: &str) -> Result<Option<Environment>, EnvironmentError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT name, fallback FROM environments WHERE name = ?1")?;
         let mut rows = stmt.query(params![name])?;
@@ -180,8 +175,7 @@ impl EnvironmentStore {
         }
     }
 
-    /// List all environments.
-    pub fn list(&self) -> Result<Vec<Environment>, EnvironmentError> {
+    fn list(&self) -> Result<Vec<Environment>, EnvironmentError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT name, fallback FROM environments ORDER BY name")?;
         let mut rows = stmt.query([])?;
@@ -195,12 +189,7 @@ impl EnvironmentStore {
         Ok(envs)
     }
 
-    /// Update the fallback chain for an environment.
-    pub fn update_fallback(
-        &self,
-        name: &str,
-        fallback: Option<&str>,
-    ) -> Result<(), EnvironmentError> {
+    fn update_fallback(&self, name: &str, fallback: Option<&str>) -> Result<(), EnvironmentError> {
         if name == "prod" && fallback.is_some() {
             return Err(EnvironmentError::ProdCannotHaveFallback);
         }
@@ -231,9 +220,7 @@ impl EnvironmentStore {
         Ok(())
     }
 
-    /// Compute the full fallback chain starting from the given environment.
-    /// Returns the chain as a list of environment names (including the start).
-    pub fn fallback_chain(&self, start: &str) -> Result<Vec<String>, EnvironmentError> {
+    fn fallback_chain(&self, start: &str) -> Result<Vec<String>, EnvironmentError> {
         let conn = self.conn.lock().unwrap();
         let mut chain = Vec::new();
         let mut current = start.to_string();
@@ -266,8 +253,7 @@ impl EnvironmentStore {
         Ok(chain)
     }
 
-    /// Record that a table override exists in the given environment.
-    pub fn register_table_override(
+    fn register_table_override(
         &self,
         environment: &str,
         schema_name: &str,
@@ -282,8 +268,7 @@ impl EnvironmentStore {
         Ok(())
     }
 
-    /// Remove a table override from an environment.
-    pub fn deregister_table_override(
+    fn deregister_table_override(
         &self,
         environment: &str,
         schema_name: &str,
@@ -298,8 +283,7 @@ impl EnvironmentStore {
         Ok(rows > 0)
     }
 
-    /// List all table overrides in an environment.
-    pub fn list_table_overrides(
+    fn list_table_overrides(
         &self,
         environment: &str,
     ) -> Result<Vec<TableOverride>, EnvironmentError> {
@@ -326,8 +310,8 @@ impl EnvironmentStore {
 mod tests {
     use super::*;
 
-    fn test_store() -> EnvironmentStore {
-        EnvironmentStore::open_in_memory().unwrap()
+    fn test_store() -> SqliteEnvironmentStore {
+        SqliteEnvironmentStore::open_in_memory().unwrap()
     }
 
     #[test]

@@ -45,41 +45,30 @@ fn vars_to_map(vars: Vec<(String, String)>) -> HashMap<String, serde_json::Value
 // ---------------------------------------------------------------------------
 
 struct Stores {
-    pipeline_store: flux_engine::PipelineStore,
-    run_store: Arc<flux_datafusion::RunStore>,
+    pipeline_store: Arc<dyn flux_engine::PipelineStorage>,
+    run_store: Arc<dyn flux_datafusion::RunStorage>,
     connector_registry: flux_connectors::ConnectorRegistry,
     output_cache: flux_datafusion::OutputCache,
 }
 
-fn open_stores() -> Result<Stores> {
-    let data_dir = dirs::home_dir()
-        .context("could not determine home directory")?
-        .join(".horizon-flux");
-    std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
-    let pipelines_dir = data_dir.join("pipelines");
-
-    let pipeline_store =
-        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
-            .context("failed to open pipeline store")?;
-
-    let run_store = Arc::new(
-        flux_datafusion::RunStore::open(&data_dir.join("runs.db"))
-            .context("failed to open run store")?,
-    );
+fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
+    let data_dir = crate::config::data_dir()?;
+    let backend = crate::config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+    let meta = crate::config::open_stores(&backend, &data_dir)?;
 
     let connector_registry = flux_connectors::default_registry();
     let output_cache = flux_datafusion::OutputCache::new(&data_dir);
 
     Ok(Stores {
-        pipeline_store,
-        run_store,
+        pipeline_store: meta.pipeline_store,
+        run_store: meta.run_store,
         connector_registry,
         output_cache,
     })
 }
 
 fn resolve_pipeline(
-    store: &flux_engine::PipelineStore,
+    store: &dyn flux_engine::PipelineStorage,
     name_or_id: &str,
 ) -> Result<flux_engine::PipelineRecord> {
     let record = if let Ok(id) = name_or_id.parse::<flux_engine::PipelineId>() {
@@ -119,9 +108,10 @@ pub fn run(
     vars: Vec<(String, String)>,
     dry_run: bool,
     format: OutputFormat,
+    metadata_url: Option<&str>,
 ) -> Result<()> {
-    let stores = open_stores()?;
-    let record = resolve_pipeline(&stores.pipeline_store, pipeline_name)?;
+    let stores = open_stores(metadata_url)?;
+    let record = resolve_pipeline(&*stores.pipeline_store, pipeline_name)?;
     let variable_overrides = vars_to_map(vars);
 
     // Validate variable overrides against declared types.
@@ -370,8 +360,8 @@ fn print_progress_event(event: &flux_datafusion::ExecutionEvent) {
 // `flux list`
 // ---------------------------------------------------------------------------
 
-pub fn list(format: OutputFormat) -> Result<()> {
-    let stores = open_stores()?;
+pub fn list(format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
+    let stores = open_stores(metadata_url)?;
     let records = stores
         .pipeline_store
         .list(1000, 0)
@@ -431,9 +421,9 @@ pub fn list(format: OutputFormat) -> Result<()> {
 // `flux show`
 // ---------------------------------------------------------------------------
 
-pub fn show(pipeline_name: &str, format: OutputFormat) -> Result<()> {
-    let stores = open_stores()?;
-    let record = resolve_pipeline(&stores.pipeline_store, pipeline_name)?;
+pub fn show(pipeline_name: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
+    let stores = open_stores(metadata_url)?;
+    let record = resolve_pipeline(&*stores.pipeline_store, pipeline_name)?;
     let p = &record.pipeline;
 
     match format {
@@ -517,10 +507,15 @@ pub fn show(pipeline_name: &str, format: OutputFormat) -> Result<()> {
 // `flux history`
 // ---------------------------------------------------------------------------
 
-pub fn history(pipeline_name: &str, limit: u32, format: OutputFormat) -> Result<()> {
-    let stores = open_stores()?;
+pub fn history(
+    pipeline_name: &str,
+    limit: u32,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let stores = open_stores(metadata_url)?;
     // Resolve the pipeline to get its canonical name.
-    let record = resolve_pipeline(&stores.pipeline_store, pipeline_name)?;
+    let record = resolve_pipeline(&*stores.pipeline_store, pipeline_name)?;
 
     let runs = stores
         .run_store
@@ -577,9 +572,10 @@ pub fn preview(
     pipeline_name: &str,
     vars: Vec<(String, String)>,
     format: OutputFormat,
+    metadata_url: Option<&str>,
 ) -> Result<()> {
-    let stores = open_stores()?;
-    let record = resolve_pipeline(&stores.pipeline_store, pipeline_name)?;
+    let stores = open_stores(metadata_url)?;
+    let record = resolve_pipeline(&*stores.pipeline_store, pipeline_name)?;
     let variable_overrides = vars_to_map(vars);
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;

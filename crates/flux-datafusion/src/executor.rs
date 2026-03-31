@@ -12,8 +12,8 @@ use crate::provider::{ProviderRegistry, WriteOptions};
 use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
 use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus};
-use crate::run_store::RunStore;
 use crate::stats::NodeStats;
+use crate::storage::RunStorage;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
@@ -51,7 +51,7 @@ pub struct ExecutionOptions {
     /// Environment name for this run (e.g. "dev", "prod").
     pub environment: String,
     /// Optional run store for persisting execution history.
-    pub run_store: Option<Arc<RunStore>>,
+    pub run_store: Option<Arc<dyn RunStorage>>,
     /// Set to `true` from another thread/task to cancel execution after the
     /// current node completes.
     pub cancel: Arc<AtomicBool>,

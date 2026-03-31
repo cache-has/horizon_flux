@@ -8,6 +8,7 @@
 //! inside a configurable pipelines directory.
 
 use crate::pipeline::Pipeline;
+use crate::storage::PipelineStorage;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -86,16 +87,19 @@ pub enum PipelineStoreError {
 
     #[error("invalid UUID: {0}")]
     InvalidId(String),
+
+    #[error("database error: {0}")]
+    Database(String),
 }
 
 /// Persists pipeline definitions using SQLite (metadata) and the filesystem
 /// (JSON definition files in a configurable directory).
-pub struct PipelineStore {
+pub struct SqlitePipelineStore {
     conn: Mutex<Connection>,
     pipelines_dir: PathBuf,
 }
 
-impl PipelineStore {
+impl SqlitePipelineStore {
     /// Open (or create) a pipeline store.
     ///
     /// `db_path` — SQLite database file for metadata.
@@ -162,11 +166,75 @@ impl PipelineStore {
         Ok(())
     }
 
-    /// Create a new pipeline. Returns the created record.
+    /// Filesystem path for a pipeline's JSON definition file.
+    fn json_path(&self, id: &PipelineId) -> PathBuf {
+        self.pipelines_dir.join(format!("{}.json", id.0))
+    }
+
+    /// Read a pipeline definition from its JSON file on disk.
+    fn read_definition(&self, id: &PipelineId) -> Result<Pipeline, PipelineStoreError> {
+        let path = self.json_path(id);
+        let json = std::fs::read_to_string(&path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                PipelineStoreError::NotFound(format!("definition file missing for pipeline {id}"))
+            } else {
+                PipelineStoreError::Io(e)
+            }
+        })?;
+        let pipeline: Pipeline = serde_json::from_str(&json)?;
+        Ok(pipeline)
+    }
+
+    /// Import a pipeline record preserving its original ID, timestamps, and run count.
     ///
-    /// The pipeline's version is set to 1 and an initial version snapshot is
-    /// stored in the history table.
-    pub fn create(&self, mut pipeline: Pipeline) -> Result<PipelineRecord, PipelineStoreError> {
+    /// Used by `flux metadata import` to copy data from a remote store.
+    /// Skips the record if a pipeline with the same ID already exists.
+    pub fn import_record(&self, record: &PipelineRecord) -> Result<(), PipelineStoreError> {
+        let conn = self.conn.lock().unwrap();
+
+        // Write definition JSON to filesystem.
+        let json = serde_json::to_string_pretty(&record.pipeline)?;
+        std::fs::write(self.json_path(&record.id), &json)?;
+
+        let last_run_ms = record.last_run_at.map(system_time_to_ms);
+        conn.execute(
+            "INSERT OR IGNORE INTO pipelines (id, name, created_at, updated_at, last_run_at, run_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                record.id.0.to_string(),
+                record.pipeline.name,
+                system_time_to_ms(record.created_at),
+                system_time_to_ms(record.updated_at),
+                last_run_ms,
+                record.run_count,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Import a pipeline version snapshot preserving its original version number and timestamp.
+    pub fn import_version(&self, version: &PipelineVersion) -> Result<(), PipelineStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let snapshot_json = serde_json::to_string_pretty(&version.snapshot)?;
+
+        conn.execute(
+            "INSERT OR IGNORE INTO pipeline_versions (pipeline_id, version, saved_at, snapshot)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                version.pipeline_id.0.to_string(),
+                version.version,
+                system_time_to_ms(version.saved_at),
+                &snapshot_json,
+            ],
+        )?;
+
+        Ok(())
+    }
+}
+
+impl PipelineStorage for SqlitePipelineStore {
+    fn create(&self, mut pipeline: Pipeline) -> Result<PipelineRecord, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
 
         // Check for name conflict.
@@ -218,7 +286,7 @@ impl PipelineStore {
     }
 
     /// Get a pipeline by name.
-    pub fn get_by_name(&self, name: &str) -> Result<Option<PipelineRecord>, PipelineStoreError> {
+    fn get_by_name(&self, name: &str) -> Result<Option<PipelineRecord>, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, created_at, updated_at, last_run_at, run_count
@@ -246,7 +314,7 @@ impl PipelineStore {
     }
 
     /// Get a pipeline by ID.
-    pub fn get(&self, id: &PipelineId) -> Result<Option<PipelineRecord>, PipelineStoreError> {
+    fn get(&self, id: &PipelineId) -> Result<Option<PipelineRecord>, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, created_at, updated_at, last_run_at, run_count
@@ -271,7 +339,7 @@ impl PipelineStore {
     }
 
     /// List all pipelines, ordered by name.
-    pub fn list(&self, limit: u32, offset: u32) -> Result<Vec<PipelineRecord>, PipelineStoreError> {
+    fn list(&self, limit: u32, offset: u32) -> Result<Vec<PipelineRecord>, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, created_at, updated_at, last_run_at, run_count
@@ -304,7 +372,7 @@ impl PipelineStore {
     }
 
     /// Get the total count of pipelines.
-    pub fn count(&self) -> Result<u32, PipelineStoreError> {
+    fn count(&self) -> Result<u32, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let count: u32 = conn.query_row("SELECT COUNT(*) FROM pipelines", [], |row| row.get(0))?;
         Ok(count)
@@ -314,7 +382,7 @@ impl PipelineStore {
     ///
     /// The pipeline's version is auto-incremented and a version snapshot is
     /// stored in the history table.
-    pub fn update(
+    fn update(
         &self,
         id: &PipelineId,
         mut pipeline: Pipeline,
@@ -379,7 +447,7 @@ impl PipelineStore {
 
     /// Delete a pipeline by ID. Removes the metadata row, version history, and
     /// the JSON file.
-    pub fn delete(&self, id: &PipelineId) -> Result<(), PipelineStoreError> {
+    fn delete(&self, id: &PipelineId) -> Result<(), PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
 
         // Delete version history first (foreign key cascade may handle this,
@@ -407,7 +475,7 @@ impl PipelineStore {
     }
 
     /// List version history for a pipeline, newest first.
-    pub fn list_versions(
+    fn list_versions(
         &self,
         id: &PipelineId,
         limit: u32,
@@ -430,7 +498,7 @@ impl PipelineStore {
     }
 
     /// Get a specific version snapshot.
-    pub fn get_version(
+    fn get_version(
         &self,
         id: &PipelineId,
         version: u32,
@@ -449,7 +517,7 @@ impl PipelineStore {
     }
 
     /// Count versions for a pipeline.
-    pub fn count_versions(&self, id: &PipelineId) -> Result<u32, PipelineStoreError> {
+    fn count_versions(&self, id: &PipelineId) -> Result<u32, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let count: u32 = conn.query_row(
             "SELECT COUNT(*) FROM pipeline_versions WHERE pipeline_id = ?1",
@@ -461,7 +529,7 @@ impl PipelineStore {
 
     /// Record that a pipeline was executed. Updates `last_run_at` to now and
     /// increments `run_count`.
-    pub fn record_run(&self, id: &PipelineId) -> Result<(), PipelineStoreError> {
+    fn record_run(&self, id: &PipelineId) -> Result<(), PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let now = system_time_to_ms(SystemTime::now());
         let rows = conn.execute(
@@ -472,25 +540,6 @@ impl PipelineStore {
             return Err(PipelineStoreError::NotFound(id.to_string()));
         }
         Ok(())
-    }
-
-    /// Filesystem path for a pipeline's JSON definition file.
-    fn json_path(&self, id: &PipelineId) -> PathBuf {
-        self.pipelines_dir.join(format!("{}.json", id.0))
-    }
-
-    /// Read a pipeline definition from its JSON file on disk.
-    fn read_definition(&self, id: &PipelineId) -> Result<Pipeline, PipelineStoreError> {
-        let path = self.json_path(id);
-        let json = std::fs::read_to_string(&path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                PipelineStoreError::NotFound(format!("definition file missing for pipeline {id}"))
-            } else {
-                PipelineStoreError::Io(e)
-            }
-        })?;
-        let pipeline: Pipeline = serde_json::from_str(&json)?;
-        Ok(pipeline)
     }
 }
 
@@ -584,7 +633,7 @@ mod tests {
     #[test]
     fn create_and_get() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("test")).unwrap();
         assert_eq!(record.pipeline.name, "test");
         assert_eq!(record.run_count, 0);
@@ -602,7 +651,7 @@ mod tests {
     #[test]
     fn get_by_name_found() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("lookup")).unwrap();
 
         let found = store.get_by_name("lookup").unwrap().unwrap();
@@ -613,14 +662,14 @@ mod tests {
     #[test]
     fn get_by_name_not_found() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         assert!(store.get_by_name("nope").unwrap().is_none());
     }
 
     #[test]
     fn name_conflict() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         store.create(test_pipeline("dup")).unwrap();
         let err = store.create(test_pipeline("dup")).unwrap_err();
         assert!(matches!(err, PipelineStoreError::NameConflict(_)));
@@ -629,7 +678,7 @@ mod tests {
     #[test]
     fn list_and_count() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         store.create(test_pipeline("b")).unwrap();
         store.create(test_pipeline("a")).unwrap();
 
@@ -644,7 +693,7 @@ mod tests {
     #[test]
     fn update_pipeline() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("old")).unwrap();
 
         let updated = store.update(&record.id, test_pipeline("new")).unwrap();
@@ -660,7 +709,7 @@ mod tests {
     #[test]
     fn delete_pipeline() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("doomed")).unwrap();
         let json_path = tmp.path().join(format!("{}.json", record.id.0));
         assert!(json_path.exists());
@@ -673,7 +722,7 @@ mod tests {
     #[test]
     fn delete_not_found() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let err = store.delete(&PipelineId::new()).unwrap_err();
         assert!(matches!(err, PipelineStoreError::NotFound(_)));
     }
@@ -681,7 +730,7 @@ mod tests {
     #[test]
     fn pagination() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         for i in 0..5 {
             store.create(test_pipeline(&format!("p{i}"))).unwrap();
         }
@@ -697,7 +746,7 @@ mod tests {
     #[test]
     fn record_run_updates_metadata() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("runner")).unwrap();
 
         store.record_run(&record.id).unwrap();
@@ -713,7 +762,7 @@ mod tests {
     #[test]
     fn create_stores_version_1() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("versioned")).unwrap();
         assert_eq!(record.pipeline.version, 1);
 
@@ -726,7 +775,7 @@ mod tests {
     #[test]
     fn update_auto_increments_version() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("v1")).unwrap();
         assert_eq!(record.pipeline.version, 1);
 
@@ -747,7 +796,7 @@ mod tests {
     #[test]
     fn get_specific_version() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("snap")).unwrap();
         store.update(&record.id, test_pipeline("snap-v2")).unwrap();
 
@@ -763,7 +812,7 @@ mod tests {
     #[test]
     fn delete_removes_version_history() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("bye")).unwrap();
         store.update(&record.id, test_pipeline("bye")).unwrap();
         assert_eq!(store.count_versions(&record.id).unwrap(), 2);
@@ -775,7 +824,7 @@ mod tests {
     #[test]
     fn version_pagination() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("paged")).unwrap();
         for _ in 0..4 {
             store.update(&record.id, test_pipeline("paged")).unwrap();
@@ -791,5 +840,56 @@ mod tests {
         let page2 = store.list_versions(&record.id, 2, 2).unwrap();
         assert_eq!(page2.len(), 2);
         assert_eq!(page2[0].version, 3);
+    }
+
+    #[test]
+    fn import_record_preserves_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
+
+        let original = store.create(test_pipeline("original")).unwrap();
+
+        // Import into a second store.
+        let tmp2 = tempfile::tempdir().unwrap();
+        let store2 = SqlitePipelineStore::open_in_memory(tmp2.path()).unwrap();
+        store2.import_record(&original).unwrap();
+
+        let fetched = store2.get(&original.id).unwrap().unwrap();
+        assert_eq!(fetched.id, original.id);
+        assert_eq!(fetched.pipeline.name, "original");
+        assert_eq!(fetched.run_count, original.run_count);
+    }
+
+    #[test]
+    fn import_record_skips_duplicate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
+
+        let record = store.create(test_pipeline("dup")).unwrap();
+        // Importing the same record again should not error.
+        store.import_record(&record).unwrap();
+        assert_eq!(store.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn import_version_preserves_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SqlitePipelineStore::open_in_memory(tmp.path()).unwrap();
+
+        let record = store.create(test_pipeline("versioned")).unwrap();
+        let versions = store.list_versions(&record.id, 100, 0).unwrap();
+
+        // Import into a second store.
+        let tmp2 = tempfile::tempdir().unwrap();
+        let store2 = SqlitePipelineStore::open_in_memory(tmp2.path()).unwrap();
+        store2.import_record(&record).unwrap();
+        for v in &versions {
+            store2.import_version(v).unwrap();
+        }
+
+        let fetched_versions = store2.list_versions(&record.id, 100, 0).unwrap();
+        assert_eq!(fetched_versions.len(), 1);
+        assert_eq!(fetched_versions[0].version, 1);
+        assert_eq!(fetched_versions[0].snapshot.name, "versioned");
     }
 }

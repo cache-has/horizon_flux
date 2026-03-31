@@ -8,7 +8,9 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 pub mod color;
+pub mod config;
 mod environment;
+mod metadata;
 mod pipeline;
 mod secret;
 mod server;
@@ -38,6 +40,11 @@ struct Cli {
     /// Output results as JSON instead of human-readable text.
     #[arg(long, global = true)]
     json: bool,
+
+    /// Use a PostgreSQL metadata store instead of local SQLite.
+    /// Overrides HORIZON_FLUX_METADATA_URL and config.toml.
+    #[arg(long, global = true)]
+    metadata_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -127,6 +134,22 @@ enum Command {
         #[arg(long, short = 'V', value_parser = pipeline::parse_var)]
         var: Vec<(String, String)>,
     },
+    /// Show active metadata configuration.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+    /// Manage the metadata store (schema init, migrations, data transfer).
+    Metadata {
+        #[command(subcommand)]
+        action: metadata::MetadataAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Display the active metadata backend configuration.
+    Show,
 }
 
 fn main() -> ExitCode {
@@ -146,7 +169,8 @@ fn main() -> ExitCode {
         OutputFormat::Human
     };
 
-    let code = match run(cli, format) {
+    let metadata_url = cli.metadata_url.clone();
+    let code = match run(cli, format, metadata_url.as_deref()) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{} {e:#}", color::red("Error:"));
@@ -159,16 +183,16 @@ fn main() -> ExitCode {
     std::process::exit(code);
 }
 
-fn run(cli: Cli, format: OutputFormat) -> Result<()> {
+fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     match cli.command {
         // Default (no subcommand) = start the server.
-        None => server::start(8080, false, false),
+        None => server::start(8080, false, false, metadata_url),
 
         Some(Command::Start {
             port,
             headless,
             dev,
-        }) => server::start(port, headless, dev),
+        }) => server::start(port, headless, dev, metadata_url),
 
         Some(Command::Stop) => server::handle(server::ServerAction::Stop, format),
 
@@ -177,7 +201,7 @@ fn run(cli: Cli, format: OutputFormat) -> Result<()> {
         Some(Command::Secret { action }) => secret::handle(action).context("secret command failed"),
 
         Some(Command::Env { action }) => {
-            environment::handle(action, format).context("env command failed")
+            environment::handle(action, format, metadata_url).context("env command failed")
         }
 
         Some(Command::Export {
@@ -186,20 +210,20 @@ fn run(cli: Cli, format: OutputFormat) -> Result<()> {
             all,
         }) => {
             if all {
-                export_all(output.as_deref(), format)
+                export_all(output.as_deref(), format, metadata_url)
             } else {
                 let pipeline = pipeline.as_deref().ok_or_else(|| {
                     anyhow::anyhow!("pipeline name or UUID required (or use --all)")
                 })?;
-                export_pipeline(pipeline, output.as_deref(), format)
+                export_pipeline(pipeline, output.as_deref(), format, metadata_url)
             }
         }
 
         Some(Command::Import { file, on_conflict }) => {
             if file.is_dir() {
-                import_directory(&file, &on_conflict, format)
+                import_directory(&file, &on_conflict, format, metadata_url)
             } else {
-                import_pipeline(&file, &on_conflict, format)
+                import_pipeline(&file, &on_conflict, format, metadata_url)
             }
         }
 
@@ -208,30 +232,100 @@ fn run(cli: Cli, format: OutputFormat) -> Result<()> {
             env,
             var,
             dry_run,
-        }) => pipeline::run(&pipeline, env.as_deref(), var, dry_run, format),
+        }) => pipeline::run(&pipeline, env.as_deref(), var, dry_run, format, metadata_url),
 
-        Some(Command::List) => pipeline::list(format),
+        Some(Command::List) => pipeline::list(format, metadata_url),
 
-        Some(Command::Show { pipeline }) => pipeline::show(&pipeline, format),
+        Some(Command::Show { pipeline }) => pipeline::show(&pipeline, format, metadata_url),
 
-        Some(Command::History { pipeline, limit }) => pipeline::history(&pipeline, limit, format),
+        Some(Command::History { pipeline, limit }) => {
+            pipeline::history(&pipeline, limit, format, metadata_url)
+        }
 
-        Some(Command::Preview { pipeline, var }) => pipeline::preview(&pipeline, var, format),
+        Some(Command::Preview { pipeline, var }) => {
+            pipeline::preview(&pipeline, var, format, metadata_url)
+        }
+
+        Some(Command::Config { action }) => config_command(action, format, metadata_url),
+
+        Some(Command::Metadata { action }) => {
+            metadata::handle(action, format, metadata_url).context("metadata command failed")
+        }
     }
+}
+
+fn config_command(
+    action: ConfigAction,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    match action {
+        ConfigAction::Show => {
+            let data_dir = config::data_dir()?;
+            let backend = config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+            let source = backend.display_source(metadata_url, &data_dir);
+
+            match format {
+                OutputFormat::Human => {
+                    match &backend {
+                        config::MetadataBackend::Sqlite => {
+                            println!("Metadata backend: sqlite (local)");
+                            println!("Data directory:   {}", data_dir.display());
+                        }
+                        config::MetadataBackend::Postgresql { connection_string } => {
+                            println!("Metadata backend: postgresql");
+                            println!("Connection:       {}", redact_password(connection_string));
+                        }
+                    }
+                    println!("Source:           {source}");
+                }
+                OutputFormat::Json => {
+                    let out = match &backend {
+                        config::MetadataBackend::Sqlite => serde_json::json!({
+                            "backend": "sqlite",
+                            "data_directory": data_dir.display().to_string(),
+                            "source": source,
+                        }),
+                        config::MetadataBackend::Postgresql { connection_string } => {
+                            serde_json::json!({
+                                "backend": "postgresql",
+                                "connection_string": redact_password(connection_string),
+                                "source": source,
+                            })
+                        }
+                    };
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Redact the password portion of a PostgreSQL connection string for display.
+fn redact_password(url: &str) -> String {
+    // postgresql://user:pass@host → postgresql://user:***@host
+    if let Some(at) = url.find('@') {
+        if let Some(colon) = url[..at].rfind(':') {
+            // Only redact if there's a scheme prefix (contains "://")
+            if url[..colon].contains("://") {
+                return format!("{}:***{}", &url[..colon], &url[at..]);
+            }
+        }
+    }
+    url.to_string()
 }
 
 fn export_pipeline(
     pipeline: &str,
     output: Option<&std::path::Path>,
     format: OutputFormat,
+    metadata_url: Option<&str>,
 ) -> Result<()> {
-    let data_dir = dirs::home_dir()
-        .context("could not determine home directory")?
-        .join(".horizon-flux");
-    let pipelines_dir = data_dir.join("pipelines");
-    let pipeline_store =
-        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
-            .context("failed to open pipeline store")?;
+    let data_dir = config::data_dir()?;
+    let backend = config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+    let stores = config::open_stores(&backend, &data_dir)?;
+    let pipeline_store = stores.pipeline_store;
 
     let record = if let Ok(id) = pipeline.parse::<flux_engine::PipelineId>() {
         pipeline_store.get(&id).context("failed to read pipeline")?
@@ -279,14 +373,15 @@ fn export_pipeline(
     Ok(())
 }
 
-fn export_all(output_dir: Option<&std::path::Path>, format: OutputFormat) -> Result<()> {
-    let data_dir = dirs::home_dir()
-        .context("could not determine home directory")?
-        .join(".horizon-flux");
-    let pipelines_dir = data_dir.join("pipelines");
-    let pipeline_store =
-        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
-            .context("failed to open pipeline store")?;
+fn export_all(
+    output_dir: Option<&std::path::Path>,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let data_dir = config::data_dir()?;
+    let backend = config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+    let stores = config::open_stores(&backend, &data_dir)?;
+    let pipeline_store = stores.pipeline_store;
 
     let out_dir = output_dir
         .map(|p| p.to_path_buf())
@@ -370,15 +465,16 @@ fn sanitize_name(name: &str) -> String {
         .collect()
 }
 
-fn import_pipeline(file: &std::path::Path, on_conflict: &str, format: OutputFormat) -> Result<()> {
-    let data_dir = dirs::home_dir()
-        .context("could not determine home directory")?
-        .join(".horizon-flux");
-    let pipelines_dir = data_dir.join("pipelines");
-    std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
-    let pipeline_store =
-        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
-            .context("failed to open pipeline store")?;
+fn import_pipeline(
+    file: &std::path::Path,
+    on_conflict: &str,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let data_dir = config::data_dir()?;
+    let backend = config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+    let stores = config::open_stores(&backend, &data_dir)?;
+    let pipeline_store = stores.pipeline_store;
 
     let json = std::fs::read_to_string(file)
         .with_context(|| format!("failed to read {}", file.display()))?;
@@ -443,15 +539,16 @@ fn import_pipeline(file: &std::path::Path, on_conflict: &str, format: OutputForm
     Ok(())
 }
 
-fn import_directory(dir: &std::path::Path, on_conflict: &str, format: OutputFormat) -> Result<()> {
-    let data_dir = dirs::home_dir()
-        .context("could not determine home directory")?
-        .join(".horizon-flux");
-    let pipelines_dir = data_dir.join("pipelines");
-    std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
-    let pipeline_store =
-        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
-            .context("failed to open pipeline store")?;
+fn import_directory(
+    dir: &std::path::Path,
+    on_conflict: &str,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let data_dir = config::data_dir()?;
+    let backend = config::MetadataBackend::resolve(metadata_url, &data_dir)?;
+    let stores = config::open_stores(&backend, &data_dir)?;
+    let pipeline_store = stores.pipeline_store;
 
     let mut json_files: Vec<_> = std::fs::read_dir(dir)
         .with_context(|| format!("failed to read directory {}", dir.display()))?
@@ -968,5 +1065,50 @@ mod tests {
             }
             _ => panic!("expected Preview"),
         }
+    }
+
+    #[test]
+    fn parse_metadata_init() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "metadata",
+            "init",
+            "--url",
+            "postgresql://localhost/test",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::Metadata { .. })));
+    }
+
+    #[test]
+    fn parse_metadata_migrate() {
+        let cli = Cli::try_parse_from(["horizon-flux", "metadata", "migrate"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Metadata { .. })));
+    }
+
+    #[test]
+    fn parse_metadata_export() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "metadata",
+            "export",
+            "--to",
+            "postgresql://localhost/target",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::Metadata { .. })));
+    }
+
+    #[test]
+    fn parse_metadata_import() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "metadata",
+            "import",
+            "--from",
+            "postgresql://localhost/source",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::Metadata { .. })));
     }
 }

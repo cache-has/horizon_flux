@@ -7,8 +7,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use flux_connectors::ConnectorRegistry;
-use flux_datafusion::{EnvironmentStore, RunStore};
-use flux_engine::PipelineStore;
+use flux_datafusion::{SqliteEnvironmentStore, SqliteRunStore};
+use flux_engine::SqlitePipelineStore;
 use flux_secrets::SecretStore;
 use flux_server::AppState;
 use flux_server::state::SecretSession;
@@ -24,10 +24,10 @@ fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
     let store = SecretStore::init(&secrets_path, b"test-password").unwrap();
     let pipelines_dir = tempfile::tempdir().unwrap().keep();
     let state = AppState {
-        pipeline_store: Arc::new(PipelineStore::open_in_memory(&pipelines_dir).unwrap()),
-        run_store: Arc::new(RunStore::open_in_memory().unwrap()),
+        pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
+        run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
-        environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
+        environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(Mutex::new(SecretSession::new_unlocked(store, secrets_path))),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
@@ -41,10 +41,10 @@ fn test_state_locked() -> (AppState, tempfile::TempDir) {
     let secrets_path = tmp.path().join("secrets.db");
     let pipelines_dir = tempfile::tempdir().unwrap().keep();
     let state = AppState {
-        pipeline_store: Arc::new(PipelineStore::open_in_memory(&pipelines_dir).unwrap()),
-        run_store: Arc::new(RunStore::open_in_memory().unwrap()),
+        pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
+        run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
-        environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
+        environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(Mutex::new(SecretSession::new(secrets_path))),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),

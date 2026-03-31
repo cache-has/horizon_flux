@@ -8,6 +8,7 @@ pub mod node;
 pub mod pipeline;
 pub mod pipeline_store;
 pub mod sample;
+pub mod storage;
 pub mod validate;
 pub mod variables;
 
@@ -21,9 +22,10 @@ pub use error::{DagError, EngineError, ImportError, ImportWarnings, ValidationEr
 pub use node::{Node, NodeId, NodeKind};
 pub use pipeline::Pipeline;
 pub use pipeline_store::{
-    PipelineId, PipelineRecord, PipelineStore, PipelineStoreError, PipelineVersion,
+    PipelineId, PipelineRecord, PipelineStoreError, PipelineVersion, SqlitePipelineStore,
 };
 pub use sample::SampleConfig;
+pub use storage::PipelineStorage;
 pub use variables::{BuiltinContext, ResolvedVariables, VariableWarning};
 
 #[cfg(test)]
