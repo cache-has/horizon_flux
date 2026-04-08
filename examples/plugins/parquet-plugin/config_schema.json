@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parquet plugin sink config",
+  "type": "object",
+  "required": ["path"],
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Filesystem path the Parquet file will be written to."
+    },
+    "compression": {
+      "type": "string",
+      "enum": ["none", "snappy", "gzip", "zstd"],
+      "default": "snappy",
+      "description": "Parquet compression codec."
+    }
+  },
+  "additionalProperties": false
+}

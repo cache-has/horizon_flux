@@ -101,6 +101,11 @@ pub fn start(
 
     let event_tx = flux_server::AppState::new_event_channel();
 
+    let plugin_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let plugin_registry = Arc::new(std::sync::RwLock::new(Arc::new(
+        flux_plugin_host::discover_plugins(&plugin_cwd),
+    )));
+
     #[cfg(feature = "tray")]
     let tray_handle = flux_tray::spawn(
         flux_tray::TrayConfig {
@@ -136,6 +141,8 @@ pub fn start(
         output_cache,
         session_factory: Some(Arc::new(flux_datafusion::SessionFactory::default())),
         metadata_info,
+        plugin_registry,
+        plugin_cwd,
     };
 
     #[cfg(feature = "tray")]
@@ -258,6 +265,7 @@ fn send_sigterm(pid: u32) -> Result<()> {
     }
     #[cfg(not(unix))]
     {
+        let _ = pid;
         anyhow::bail!("stopping the server is only supported on Unix systems");
     }
 }

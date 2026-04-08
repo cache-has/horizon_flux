@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { describe, it, expect } from 'vitest';
-import { generateJoinSql, type JoinInput, type JoinMapping } from './JoinConfigurator';
+import { generateJoinSql, type JoinInput, type JoinMapping } from './joinSql';
 
 const orders: JoinInput = {
   nodeName: 'orders',

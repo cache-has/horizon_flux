@@ -12,6 +12,7 @@ pub mod cloud_store;
 pub mod config;
 pub mod file_sink;
 pub mod file_source;
+pub mod plugin_sink;
 pub mod postgres_sink;
 pub mod postgres_source;
 pub mod registry;
@@ -21,6 +22,7 @@ pub mod stdout_sink;
 pub use config::ConnectorConfig;
 pub use file_sink::FileSink;
 pub use file_source::FileSource;
+pub use plugin_sink::PluginSink;
 pub use postgres_sink::PostgresSink;
 pub use postgres_source::PostgresSource;
 pub use registry::ConnectorRegistry;
@@ -63,6 +65,41 @@ pub fn default_registry() -> ConnectorRegistry {
     let stdout_sink: Arc<dyn flux_datafusion::provider::PipelineSink> = Arc::new(StdoutSink::new());
     registry.register_sink("stdout", stdout_sink);
 
+    registry
+}
+
+/// Build a [`ConnectorRegistry`] with all built-in connectors plus a plugin
+/// sink registered under each sink type provided by an `Ok` plugin in the
+/// supplied [`flux_plugin_host::PluginRegistry`].
+///
+/// All plugin sink types share a single `PluginSink` adapter; the adapter
+/// dispatches by the `connector` field of the incoming `SinkConfig`. Built-in
+/// sink names take precedence — if a plugin advertises the same sink type as
+/// a built-in (e.g. `stdout`), the built-in wins.
+pub fn default_registry_with_plugins(
+    plugins: Arc<flux_plugin_host::PluginRegistry>,
+) -> ConnectorRegistry {
+    let mut registry = default_registry();
+    let plugin_sink: Arc<dyn flux_datafusion::provider::PipelineSink> =
+        Arc::new(PluginSink::new(Arc::clone(&plugins)));
+
+    for plugin in plugins.iter() {
+        let manifest = match (&plugin.status, &plugin.manifest) {
+            (flux_plugin_host::PluginStatus::Ok, Some(m)) => m,
+            _ => continue,
+        };
+        for sink in &manifest.sinks {
+            if registry.get_sink(&sink.ty).is_some() {
+                tracing::warn!(
+                    plugin = %plugin.name,
+                    sink_type = %sink.ty,
+                    "plugin sink type collides with built-in; built-in wins"
+                );
+                continue;
+            }
+            registry.register_sink(sink.ty.clone(), Arc::clone(&plugin_sink));
+        }
+    }
     registry
 }
 

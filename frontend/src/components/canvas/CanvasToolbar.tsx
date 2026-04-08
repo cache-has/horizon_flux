@@ -49,11 +49,18 @@ function PipelineSelector() {
   // Load pipeline list when opened
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
+    let cancelled = false;
     listPipelines(100, 0)
-      .then((res) => setPipelines(res.data))
-      .catch(() => setPipelines([]))
-      .finally(() => setLoading(false));
+      .then((res) => {
+        if (!cancelled) setPipelines(res.data);
+      })
+      .catch(() => {
+        if (!cancelled) setPipelines([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [open]);
 
   const switchToPipeline = useCallback(
@@ -127,7 +134,7 @@ function PipelineSelector() {
     <div className="pipeline-selector" ref={ref}>
       <button
         className="pipeline-selector__trigger"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => { setOpen((o) => !o); setLoading(true); }}
         aria-expanded={open}
         aria-haspopup="listbox"
       >
@@ -306,6 +313,18 @@ function SystemInfoButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function PluginsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="Manage plugins"
+    >
+      Plugins
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Toolbar
 // ---------------------------------------------------------------------------
@@ -314,10 +333,12 @@ export function CanvasToolbar({
   onSecretsClick,
   onSystemInfoClick,
   onHistoryClick,
+  onPluginsClick,
 }: {
   onSecretsClick?: () => void;
   onSystemInfoClick?: () => void;
   onHistoryClick?: () => void;
+  onPluginsClick?: () => void;
 }) {
   return (
     <div className="canvas-toolbar">
@@ -326,6 +347,7 @@ export function CanvasToolbar({
       <EnvironmentSelector />
       <div className="canvas-toolbar__spacer" />
       {onHistoryClick && <HistoryButton onClick={onHistoryClick} />}
+      {onPluginsClick && <PluginsButton onClick={onPluginsClick} />}
       {onSystemInfoClick && <SystemInfoButton onClick={onSystemInfoClick} />}
       {onSecretsClick && <SecretsButton onClick={onSecretsClick} />}
       <RunButton />

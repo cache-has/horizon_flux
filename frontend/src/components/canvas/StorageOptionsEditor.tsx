@@ -31,7 +31,8 @@ export function StorageOptionsEditor({
     delete next[key];
     // Remove the field entirely when empty so it doesn't pollute saved config.
     if (Object.keys(next).length === 0) {
-      const { storage_options: _, ...rest } = config;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { storage_options: _unused, ...rest } = config;
       onChange(rest);
     } else {
       onChange({ ...config, storage_options: next });

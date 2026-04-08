@@ -17,10 +17,12 @@
   transform: translateX(100%);
   transition: transform 0.2s ease-out;
   font-family: var(--sans, system-ui, sans-serif);
+  pointer-events: none;
 }
 
 .version-panel--open {
   transform: translateX(0);
+  pointer-events: auto;
 }
 
 /* Header */

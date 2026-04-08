@@ -58,12 +58,6 @@ export function SecretsPanel({ open, onClose }: SecretsPanelProps) {
       });
   }, [open]);
 
-  // Fetch secrets when unlocked
-  useEffect(() => {
-    if (storeState !== 'unlocked') return;
-    refreshSecrets();
-  }, [storeState]);
-
   const refreshSecrets = useCallback(async () => {
     try {
       const list = await listSecrets();
@@ -77,6 +71,12 @@ export function SecretsPanel({ open, onClose }: SecretsPanelProps) {
       }
     }
   }, []);
+
+  // Fetch secrets when unlocked
+  useEffect(() => {
+    if (storeState !== 'unlocked') return;
+    refreshSecrets();
+  }, [storeState, refreshSecrets]);
 
   // Init handler
   const handleInit = useCallback(async () => {
@@ -198,9 +198,11 @@ export function SecretsPanel({ open, onClose }: SecretsPanelProps) {
     ),
   );
 
+  if (!open) return null;
+
   return (
     <>
-      <div className={`secrets-panel ${open ? 'secrets-panel--open' : ''}`}>
+      <div className="secrets-panel secrets-panel--open">
         <div className="secrets-panel__header">
           <h3 className="secrets-panel__title">Secrets</h3>
           {storeState === 'unlocked' && (

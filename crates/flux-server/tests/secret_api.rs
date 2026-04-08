@@ -38,6 +38,10 @@ fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
             connection_string: None,
             config_source: "default".to_string(),
         },
+        plugin_registry: Arc::new(std::sync::RwLock::new(Arc::new(
+            flux_plugin_host::PluginRegistry::default(),
+        ))),
+        plugin_cwd: std::env::temp_dir(),
     };
     (state, tmp)
 }
@@ -62,6 +66,10 @@ fn test_state_locked() -> (AppState, tempfile::TempDir) {
             connection_string: None,
             config_source: "default".to_string(),
         },
+        plugin_registry: Arc::new(std::sync::RwLock::new(Arc::new(
+            flux_plugin_host::PluginRegistry::default(),
+        ))),
+        plugin_cwd: std::env::temp_dir(),
     };
     (state, tmp)
 }

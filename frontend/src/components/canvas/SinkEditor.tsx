@@ -1,11 +1,14 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ApiNode } from '../../api/pipelines';
 import { previewNode } from '../../api/pipelines';
 import { StorageOptionsEditor } from './StorageOptionsEditor';
 import { SecretPicker } from './SecretPicker';
+import { JsonSchemaForm } from './JsonSchemaForm';
+import { usePluginStore } from '../../stores/pluginStore';
+import { getPluginSinkSchema } from '../../api/plugins';
 import './connector-editor.css';
 
 // ---------------------------------------------------------------------------
@@ -296,13 +299,61 @@ function EnvironmentOverrides({
 // Main SinkEditor
 // ---------------------------------------------------------------------------
 
-const CONNECTOR_OPTIONS = ['postgresql', 'csv', 'parquet', 'stdout'];
+const BUILTIN_CONNECTOR_OPTIONS = ['postgresql', 'csv', 'parquet', 'stdout'];
 const CONNECTOR_LABELS: Record<string, string> = {
   postgresql: 'PostgreSQL',
   csv: 'CSV',
   parquet: 'Parquet',
   stdout: 'Stdout',
 };
+
+// ---------------------------------------------------------------------------
+// Plugin sink form (JSON-Schema driven)
+// ---------------------------------------------------------------------------
+
+function PluginSinkForm({
+  pluginName,
+  sinkType,
+  config,
+  onChange,
+}: {
+  pluginName: string;
+  sinkType: string;
+  config: Record<string, unknown>;
+  onChange: (config: Record<string, unknown>) => void;
+}) {
+  const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError(null);
+    setSchema(null);
+    getPluginSinkSchema(pluginName, sinkType, ctrl.signal)
+      .then((s) => setSchema(s))
+      .catch((e) => {
+        if ((e as Error).name !== 'AbortError') setError((e as Error).message);
+      })
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [pluginName, sinkType]);
+
+  return (
+    <div className="connector-editor__section">
+      <div className="connector-editor__section-title">
+        Configuration
+        <span className="connector-editor__plugin-badge">plugin</span>
+      </div>
+      {loading && <div className="connector-editor__empty">Loading schema…</div>}
+      {error && <div className="connector-editor__error">Failed to load schema: {error}</div>}
+      {!loading && !error && (
+        <JsonSchemaForm schema={schema} value={config} onChange={onChange} />
+      )}
+    </div>
+  );
+}
 
 /** Normalize connector aliases to canonical names. */
 function normalizeConnector(c: string): string {
@@ -334,30 +385,80 @@ export function SinkEditor({
   const format = config.format as string | undefined;
   const effectiveFileType = norm === 'parquet' || format === 'parquet' ? 'parquet' : 'csv';
 
+  // Plugin discovery — lazy fetch on mount.
+  const pluginsLoaded = usePluginStore((s) => s.loaded);
+  const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
+  const sinkOptions = usePluginStore((s) => s.sinkOptions());
+  useEffect(() => {
+    if (!pluginsLoaded) void fetchPlugins();
+  }, [pluginsLoaded, fetchPlugins]);
+
+  // Determine if the current connector is plugin-provided. Built-ins win on
+  // collisions so removing a plugin can never silently change a built-in node.
+  const isBuiltin = BUILTIN_CONNECTOR_OPTIONS.includes(norm);
+  const pluginOwner = !isBuiltin
+    ? sinkOptions.find((o) => o.sink.type === norm || o.sink.type === connector)
+    : undefined;
+
+  const allOptions = [
+    ...BUILTIN_CONNECTOR_OPTIONS.map((opt) => ({
+      value: opt,
+      label: CONNECTOR_LABELS[opt] ?? opt,
+      plugin: false,
+    })),
+    ...sinkOptions
+      .filter((o) => !BUILTIN_CONNECTOR_OPTIONS.includes(o.sink.type))
+      .map((o) => ({
+        value: o.sink.type,
+        label: `${o.sink.display_name} (${o.pluginName})`,
+        plugin: true,
+      })),
+  ];
+
+  // If the saved connector references a plugin that hasn't loaded yet, surface
+  // it as an option so the dropdown reflects current state instead of snapping.
+  if (
+    !isBuiltin &&
+    !pluginOwner &&
+    !allOptions.some((o) => o.value === norm || o.value === connector)
+  ) {
+    allOptions.push({ value: connector, label: `${connector} (unavailable)`, plugin: true });
+  }
+
   return (
     <div className="connector-editor">
       <div className="connector-editor__section">
         <div className="connector-editor__section-title">Connector Type</div>
         <select
           className="connector-editor__select"
-          value={norm}
+          value={pluginOwner ? pluginOwner.sink.type : norm}
           onChange={(e) => onConnectorChange(e.target.value)}
         >
-          {CONNECTOR_OPTIONS.map((opt) => (
-            <option key={opt} value={opt}>
-              {CONNECTOR_LABELS[opt] ?? opt}
+          {allOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}{opt.plugin ? ' [plugin]' : ''}
             </option>
           ))}
         </select>
       </div>
 
-      {isPostgres(connector) && (
+      {isPostgres(connector) && isBuiltin && (
         <PostgresSinkForm config={config} onChange={onConfigChange} variables={pipelineVariables} />
       )}
-      {isFile(connector) && (
+      {isFile(connector) && isBuiltin && (
         <FileSinkForm config={config} connector={effectiveFileType} onChange={onConfigChange} />
       )}
-      {connector.toLowerCase() === 'stdout' && <StdoutSinkForm config={config} onChange={onConfigChange} />}
+      {connector.toLowerCase() === 'stdout' && isBuiltin && (
+        <StdoutSinkForm config={config} onChange={onConfigChange} />
+      )}
+      {pluginOwner && (
+        <PluginSinkForm
+          pluginName={pluginOwner.pluginName}
+          sinkType={pluginOwner.sink.type}
+          config={config}
+          onChange={onConfigChange}
+        />
+      )}
 
       <EnvironmentOverrides config={config} onChange={onConfigChange} />
     </div>

@@ -227,9 +227,11 @@ export function EnvironmentManagementPanel() {
       : `Are you sure you want to delete "${deleteTarget}"?`
     : '';
 
+  if (!open) return null;
+
   return (
     <>
-      <div className={`env-panel${open ? ' env-panel--open' : ''}`}>
+      <div className="env-panel env-panel--open">
         <div className="env-panel__header">
           <h2 className="env-panel__title">Environments</h2>
           <button className="env-panel__close" onClick={handleClose} aria-label="Close">

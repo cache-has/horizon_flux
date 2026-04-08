@@ -6,6 +6,7 @@
 pub mod connectors;
 pub mod environments;
 pub mod pipelines;
+pub mod plugins;
 pub mod preview;
 pub mod secrets;
 pub mod system;

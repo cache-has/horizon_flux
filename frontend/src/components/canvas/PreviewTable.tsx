@@ -3,30 +3,10 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ApiPreviewNodeResponse, ApiColumnInfo, ApiColumnStats } from '../../api/pipelines';
+import type { ApiPreviewNodeResponse, ApiColumnInfo } from '../../api/pipelines';
 import type { ColumnDiff } from './schemaDiff';
+import { classifyType, formatCell, formatColumnStatsTooltip } from './previewUtils';
 import './PreviewTable.css';
-
-// ---------------------------------------------------------------------------
-// Type classification
-// ---------------------------------------------------------------------------
-
-export type ColumnKind = 'numeric' | 'boolean' | 'temporal' | 'string';
-
-export function classifyType(dataType: string): ColumnKind {
-  const t = dataType.toLowerCase();
-  if (t === 'boolean' || t === 'bool') return 'boolean';
-  if (
-    /^(u?int\d|float\d|decimal|double|half)/i.test(dataType) ||
-    t === 'numeric'
-  ) {
-    return 'numeric';
-  }
-  if (/^(date|time|timestamp|duration|interval)/i.test(dataType)) {
-    return 'temporal';
-  }
-  return 'string';
-}
 
 /** Short display label for the type badge. */
 function typeBadgeLabel(dataType: string): string {
@@ -58,37 +38,6 @@ function typeBadgeLabel(dataType: string): string {
   if (lower.startsWith('duration')) return 'duration';
   if (lower.startsWith('decimal')) return 'decimal';
   return dataType.length > 10 ? dataType.slice(0, 10) : dataType;
-}
-
-// ---------------------------------------------------------------------------
-// Cell formatting
-// ---------------------------------------------------------------------------
-
-export function formatCell(
-  value: unknown,
-  kind: ColumnKind,
-): { text: string; isNull: boolean } {
-  if (value === null || value === undefined) {
-    return { text: 'null', isNull: true };
-  }
-
-  switch (kind) {
-    case 'numeric': {
-      const num = Number(value);
-      if (Number.isNaN(num)) return { text: String(value), isNull: false };
-      return { text: num.toLocaleString(), isNull: false };
-    }
-    case 'boolean':
-      return { text: String(value), isNull: false };
-    case 'temporal':
-      if (typeof value === 'number') {
-        // Assume epoch millis for numeric timestamps
-        return { text: new Date(value).toISOString().replace('T', ' ').replace('Z', ''), isNull: false };
-      }
-      return { text: String(value), isNull: false };
-    default:
-      return { text: String(value), isNull: false };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -130,32 +79,6 @@ export interface PreviewTableProps {
   columnDiffs?: ColumnDiff[];
 }
 
-/** Format a column stats object as a tooltip string. */
-export function formatColumnStatsTooltip(stats: ApiColumnStats): string {
-  switch (stats.kind) {
-    case 'numeric': {
-      const parts: string[] = [];
-      if (stats.min !== null) parts.push(`Min: ${stats.min.toLocaleString()}`);
-      if (stats.max !== null) parts.push(`Max: ${stats.max.toLocaleString()}`);
-      if (stats.mean !== null) parts.push(`Mean: ${stats.mean.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
-      parts.push(`Nulls: ${stats.null_count}`);
-      return parts.join('\n');
-    }
-    case 'string': {
-      const parts: string[] = [];
-      if (stats.min_length !== null) parts.push(`Min length: ${stats.min_length}`);
-      if (stats.max_length !== null) parts.push(`Max length: ${stats.max_length}`);
-      parts.push(`Unique: ${stats.unique_count}`);
-      parts.push(`Nulls: ${stats.null_count}`);
-      return parts.join('\n');
-    }
-    case 'boolean':
-      return `True: ${stats.true_count}\nFalse: ${stats.false_count}\nNulls: ${stats.null_count}`;
-    case 'other':
-      return `Nulls: ${stats.null_count}`;
-  }
-}
-
 export function PreviewTable({ preview, loading, error, sampleMethod, columnDiffs }: PreviewTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState | null>(null);
@@ -167,7 +90,7 @@ export function PreviewTable({ preview, loading, error, sampleMethod, columnDiff
   } | null>(null);
 
   // Columns metadata
-  const columns: ApiColumnInfo[] = preview?.columns ?? [];
+  const columns = useMemo<ApiColumnInfo[]>(() => preview?.columns ?? [], [preview]);
   const columnKinds = useMemo(
     () => columns.map((c) => classifyType(c.data_type)),
     [columns],

@@ -34,6 +34,10 @@ fn test_state() -> AppState {
             connection_string: None,
             config_source: "default".to_string(),
         },
+        plugin_registry: Arc::new(std::sync::RwLock::new(Arc::new(
+            flux_plugin_host::PluginRegistry::default(),
+        ))),
+        plugin_cwd: std::env::temp_dir(),
     }
 }
 
@@ -101,6 +105,10 @@ async fn list_connectors_empty_registry() {
             connection_string: None,
             config_source: "default".to_string(),
         },
+        plugin_registry: Arc::new(std::sync::RwLock::new(Arc::new(
+            flux_plugin_host::PluginRegistry::default(),
+        ))),
+        plugin_cwd: std::env::temp_dir(),
     };
     let app = test_router(state);
     let resp = app

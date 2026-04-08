@@ -4,6 +4,7 @@
 //! Shared application state for all API handlers.
 
 use flux_connectors::ConnectorRegistry;
+use flux_plugin_host::PluginRegistry;
 use flux_datafusion::{
     EnvironmentStorage, ExecutionEvent, OutputCache, RunStorage, SecretResolver, SessionFactory,
 };
@@ -13,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
@@ -214,6 +215,14 @@ pub struct AppState {
     pub session_factory: Option<Arc<SessionFactory>>,
     /// Metadata backend info for the system info endpoint.
     pub metadata_info: MetadataInfo,
+    /// Discovered plugin registry. Wrapped in `RwLock` so the
+    /// `POST /api/plugins/reload` endpoint can swap it without restarting
+    /// the server. Handlers should clone the inner `Arc` for cheap reads.
+    pub plugin_registry: Arc<RwLock<Arc<PluginRegistry>>>,
+    /// Working directory used for plugin discovery (workspace-local
+    /// `./plugins/` resolution). Captured at startup so reload remains
+    /// consistent even if the process `cwd` changes later.
+    pub plugin_cwd: PathBuf,
 }
 
 impl AppState {

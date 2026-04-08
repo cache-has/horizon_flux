@@ -1,0 +1,21 @@
+name = "parquet"
+version = "0.1.0"
+author = "Horizon Analytic Studios, LLC"
+description = "Reference Horizon Flux plugin: writes pipeline output to a Parquet file"
+license = "MIT OR Apache-2.0"
+
+flux_plugin_protocol = 1
+flux_min_version = "0.1.0"
+
+executable = "flux-parquet-plugin"
+
+[[sinks]]
+type = "parquet_plugin"
+display_name = "Parquet (plugin)"
+description = "Writes pipeline output to a local Parquet file via the plugin protocol"
+config_schema = "config_schema.json"
+
+[sinks.capabilities]
+transactional = false
+upsert = false
+schema_validation = true

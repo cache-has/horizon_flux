@@ -8,6 +8,8 @@ members = [
     "crates/flux-tray",
     "crates/flux-cli",
     "crates/flux-postgres",
+    "crates/flux-plugin-host",
+    "examples/plugins/parquet-plugin",
 ]
 resolver = "2"
 
@@ -26,6 +28,7 @@ flux-secrets = { path = "crates/flux-secrets" }
 flux-server = { path = "crates/flux-server" }
 flux-tray = { path = "crates/flux-tray" }
 flux-postgres = { path = "crates/flux-postgres" }
+flux-plugin-host = { path = "crates/flux-plugin-host" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -84,6 +87,8 @@ toml = "0.8"
 
 # Filesystem
 dirs = "6"
+directories = "5"
+semver = "1"
 dotenvy = "0.15"
 
 # Browser
@@ -99,6 +104,7 @@ crossbeam-channel = "0.5"
 
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
 
 # Static file embedding
 rust-embed = { version = "8", features = ["mime-guess", "interpolate-folder-path"] }

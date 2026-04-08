@@ -65,7 +65,8 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
         .nest("/preview", api::preview::router())
         .nest("/environments", api::environments::router())
         .nest("/secrets", api::secrets::router())
-        .nest("/system", api::system::router());
+        .nest("/system", api::system::router())
+        .nest("/plugins", api::plugins::router());
 
     // CORS: allow localhost origins for single-user mode.
     let cors = CorsLayer::new()

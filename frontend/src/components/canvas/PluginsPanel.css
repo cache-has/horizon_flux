@@ -1,0 +1,124 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.plugins-panel__reload {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 4px 10px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.plugins-panel__reload:hover:not(:disabled) {
+  background: #334155;
+}
+
+.plugins-panel__reload:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.plugins-panel__empty {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.plugins-panel__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugins-panel__item {
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #0f172a;
+}
+
+.plugins-panel__item--error {
+  border-color: #7f1d1d;
+}
+
+.plugins-panel__item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugins-panel__name {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.plugins-panel__version {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.plugins-panel__status {
+  margin-left: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.plugins-panel__status--ok {
+  background: #065f46;
+  color: #d1fae5;
+}
+
+.plugins-panel__status--error {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.plugins-panel__directory {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+.plugins-panel__description {
+  font-size: 12px;
+  color: #cbd5f5;
+  margin-top: 6px;
+}
+
+.plugins-panel__error-msg {
+  margin-top: 6px;
+  color: #fca5a5;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.plugins-panel__sinks {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.plugins-panel__sink {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #cbd5f5;
+}
+
+.plugins-panel__sink-type {
+  font-family: ui-monospace, monospace;
+  color: #94a3b8;
+}

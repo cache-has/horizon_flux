@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useState, useCallback, type ReactNode } from 'react';
+import { useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import type { NodeRole } from '../../types/pipeline';
-import { roleIcon, paletteIcon, IconChevronLeft, IconChevronRight } from '../icons';
+import { IconChevronLeft, IconChevronRight, IconSink } from '../icons';
+import { roleIcon, paletteIcon } from '../iconMaps';
+import { usePluginStore } from '../../stores/pluginStore';
 import './NodePalette.css';
 
 // ---------------------------------------------------------------------------
@@ -23,11 +25,14 @@ export interface PaletteItem {
   subtype: string;
   /** Which field to set: 'connector' for source/sink, 'mode' for transform. */
   subtypeField: 'connector' | 'mode';
+  /** Marks this entry as plugin-provided so it can be tagged in the UI. */
+  plugin?: boolean;
 }
 
 const PALETTE_ITEMS: PaletteItem[] = [
   // Sources
   { id: 'source-csv', label: 'CSV', icon: paletteIcon.csv, role: 'source', subtype: 'csv', subtypeField: 'connector' },
+  { id: 'source-parquet', label: 'Parquet', icon: paletteIcon.parquet, role: 'source', subtype: 'parquet', subtypeField: 'connector' },
   { id: 'source-postgresql', label: 'PostgreSQL', icon: paletteIcon.postgresql, role: 'source', subtype: 'postgresql', subtypeField: 'connector' },
   { id: 'source-rest', label: 'REST API', icon: paletteIcon.rest, role: 'source', subtype: 'rest', subtypeField: 'connector' },
   // Transforms
@@ -35,6 +40,7 @@ const PALETTE_ITEMS: PaletteItem[] = [
   { id: 'transform-python', label: 'Python', icon: paletteIcon.python, role: 'transform', subtype: 'python', subtypeField: 'mode' },
   // Sinks
   { id: 'sink-csv', label: 'CSV', icon: paletteIcon.csv, role: 'sink', subtype: 'csv', subtypeField: 'connector' },
+  { id: 'sink-parquet', label: 'Parquet', icon: paletteIcon.parquet, role: 'sink', subtype: 'parquet', subtypeField: 'connector' },
   { id: 'sink-postgresql', label: 'PostgreSQL', icon: paletteIcon.postgresql, role: 'sink', subtype: 'postgresql', subtypeField: 'connector' },
   { id: 'sink-stdout', label: 'stdout', icon: paletteIcon.stdout, role: 'sink', subtype: 'stdout', subtypeField: 'connector' },
 ];
@@ -64,6 +70,32 @@ interface NodePaletteProps {
 export function NodePalette({ collapsed, onToggle }: NodePaletteProps) {
   const [filter, setFilter] = useState('');
 
+  // Hydrate plugin sinks into the palette.
+  const pluginsLoaded = usePluginStore((s) => s.loaded);
+  const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
+  const sinkOptions = usePluginStore((s) => s.sinkOptions());
+  useEffect(() => {
+    if (!pluginsLoaded) void fetchPlugins();
+  }, [pluginsLoaded, fetchPlugins]);
+
+  const allItems: PaletteItem[] = useMemo(() => {
+    const builtinSinkTypes = new Set(
+      PALETTE_ITEMS.filter((i) => i.role === 'sink').map((i) => i.subtype),
+    );
+    const pluginItems: PaletteItem[] = sinkOptions
+      .filter((o) => !builtinSinkTypes.has(o.sink.type))
+      .map((o) => ({
+        id: `sink-plugin-${o.pluginName}-${o.sink.type}`,
+        label: o.sink.display_name,
+        icon: <IconSink />,
+        role: 'sink',
+        subtype: o.sink.type,
+        subtypeField: 'connector',
+        plugin: true,
+      }));
+    return [...PALETTE_ITEMS, ...pluginItems];
+  }, [sinkOptions]);
+
   const handleDragStart = useCallback(
     (e: React.DragEvent, item: PaletteItem) => {
       e.dataTransfer.setData(PALETTE_DRAG_TYPE, JSON.stringify(item));
@@ -74,12 +106,12 @@ export function NodePalette({ collapsed, onToggle }: NodePaletteProps) {
 
   const normalizedFilter = filter.toLowerCase().trim();
   const filteredItems = normalizedFilter
-    ? PALETTE_ITEMS.filter(
+    ? allItems.filter(
         (item) =>
           item.label.toLowerCase().includes(normalizedFilter) ||
           item.role.toLowerCase().includes(normalizedFilter),
       )
-    : PALETTE_ITEMS;
+    : allItems;
 
   return (
     <div className={`node-palette ${collapsed ? 'node-palette--collapsed' : ''}`}>
@@ -118,13 +150,20 @@ export function NodePalette({ collapsed, onToggle }: NodePaletteProps) {
                 {items.map((item) => (
                   <div
                     key={item.id}
-                    className={`node-palette__item node-palette__item--${item.role}`}
+                    className={`node-palette__item node-palette__item--${item.role}${item.plugin ? ' node-palette__item--plugin' : ''}`}
                     draggable
                     onDragStart={(e) => handleDragStart(e, item)}
-                    title={`Drag to add ${item.label} ${section.label.toLowerCase().slice(0, -1)}`}
+                    title={
+                      item.plugin
+                        ? `Plugin sink — drag to add ${item.label}`
+                        : `Drag to add ${item.label} ${section.label.toLowerCase().slice(0, -1)}`
+                    }
                   >
                     <span className="node-palette__item-icon">{item.icon}</span>
                     <span className="node-palette__item-label">{item.label}</span>
+                    {item.plugin && (
+                      <span className="node-palette__item-tag">plugin</span>
+                    )}
                   </div>
                 ))}
               </div>

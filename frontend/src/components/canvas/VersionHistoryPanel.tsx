@@ -183,9 +183,11 @@ export function VersionHistoryPanel({ open, onClose }: VersionHistoryPanelProps)
 
   const currentVersion = apiPipeline?.version;
 
+  if (!open) return null;
+
   return (
     <>
-      <div className={`version-panel${open ? ' version-panel--open' : ''}`}>
+      <div className="version-panel version-panel--open">
         <div className="version-panel__header">
           <h3 className="version-panel__title">Version History</h3>
           <button className="version-panel__close" onClick={onClose} title="Close">

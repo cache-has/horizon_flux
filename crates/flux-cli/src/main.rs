@@ -12,6 +12,7 @@ pub mod config;
 mod environment;
 mod metadata;
 mod pipeline;
+mod plugin;
 mod secret;
 mod server;
 
@@ -143,6 +144,11 @@ enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Manage plugins (discovery, inspection, smoke-test).
+    Plugin {
+        #[command(subcommand)]
+        action: plugin::PluginAction,
+    },
     /// Manage the metadata store (schema init, migrations, data transfer).
     Metadata {
         #[command(subcommand)]
@@ -265,6 +271,10 @@ fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()>
         }
 
         Some(Command::Config { action }) => config_command(action, format, metadata_url),
+
+        Some(Command::Plugin { action }) => {
+            plugin::handle(action, format).context("plugin command failed")
+        }
 
         Some(Command::Metadata { action }) => {
             metadata::handle(action, format, metadata_url).context("metadata command failed")
@@ -1084,6 +1094,28 @@ mod tests {
                 assert_eq!(var[0], ("date".into(), "2026-03-28".into()));
             }
             _ => panic!("expected Preview"),
+        }
+    }
+
+    #[test]
+    fn parse_plugin_subcommands() {
+        for (args, want) in [
+            (vec!["horizon-flux", "plugin", "list"], "list"),
+            (vec!["horizon-flux", "plugin", "info", "openboard"], "info"),
+            (vec!["horizon-flux", "plugin", "check", "openboard"], "check"),
+            (vec!["horizon-flux", "plugin", "path"], "path"),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            match cli.command {
+                Some(Command::Plugin { action }) => match (want, action) {
+                    ("list", plugin::PluginAction::List) => {}
+                    ("info", plugin::PluginAction::Info { name }) => assert_eq!(name, "openboard"),
+                    ("check", plugin::PluginAction::Check { name }) => assert_eq!(name, "openboard"),
+                    ("path", plugin::PluginAction::Path) => {}
+                    _ => panic!("wrong plugin action for {want}"),
+                },
+                _ => panic!("expected Plugin"),
+            }
         }
     }
 

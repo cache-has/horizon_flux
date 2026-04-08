@@ -260,3 +260,28 @@
 .connector-editor__remove-btn:hover {
   color: #ef4444;
 }
+
+.connector-editor__hint {
+  display: block;
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.connector-editor__plugin-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #334155;
+  color: #cbd5f5;
+  border-radius: 3px;
+}
+
+.connector-editor__error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 4px;
+}

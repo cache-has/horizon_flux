@@ -41,6 +41,7 @@ import { NodeEditorModal } from './NodeEditorModal';
 import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 import { SecretsPanel } from './SecretsPanel';
 import { SystemInfoPanel } from './SystemInfoPanel';
+import { PluginsPanel } from './PluginsPanel';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { useEnvironmentStore } from '../../stores/environmentStore';
@@ -88,6 +89,7 @@ function PipelineCanvasInner() {
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
   const [secretsPanelOpen, setSecretsPanelOpen] = useState(false);
   const [systemInfoPanelOpen, setSystemInfoPanelOpen] = useState(false);
+  const [pluginsPanelOpen, setPluginsPanelOpen] = useState(false);
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
 
   // Keyboard shortcuts: Escape to close side panel, Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo
@@ -612,9 +614,30 @@ function PipelineCanvasInner() {
         />
         <Panel position="top-right" className="toolbar-panel">
           <CanvasToolbar
-            onSecretsClick={() => setSecretsPanelOpen((o) => !o)}
-            onSystemInfoClick={() => setSystemInfoPanelOpen((o) => !o)}
-            onHistoryClick={() => setHistoryPanelOpen((o) => !o)}
+            onSecretsClick={() => {
+              setSecretsPanelOpen((o) => !o);
+              setSystemInfoPanelOpen(false);
+              setHistoryPanelOpen(false);
+              setPluginsPanelOpen(false);
+            }}
+            onSystemInfoClick={() => {
+              setSystemInfoPanelOpen((o) => !o);
+              setSecretsPanelOpen(false);
+              setHistoryPanelOpen(false);
+              setPluginsPanelOpen(false);
+            }}
+            onHistoryClick={() => {
+              setHistoryPanelOpen((o) => !o);
+              setSecretsPanelOpen(false);
+              setSystemInfoPanelOpen(false);
+              setPluginsPanelOpen(false);
+            }}
+            onPluginsClick={() => {
+              setPluginsPanelOpen((o) => !o);
+              setSecretsPanelOpen(false);
+              setSystemInfoPanelOpen(false);
+              setHistoryPanelOpen(false);
+            }}
           />
           <div className="relayout-panel">
             <label className="relayout-checkbox">
@@ -659,6 +682,10 @@ function PipelineCanvasInner() {
       <SystemInfoPanel
         open={systemInfoPanelOpen}
         onClose={() => setSystemInfoPanelOpen(false)}
+      />
+      <PluginsPanel
+        open={pluginsPanelOpen}
+        onClose={() => setPluginsPanelOpen(false)}
       />
       <VersionHistoryPanel
         open={historyPanelOpen}

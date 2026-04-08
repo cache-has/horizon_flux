@@ -32,6 +32,10 @@ fn test_state() -> AppState {
             connection_string: None,
             config_source: "default".to_string(),
         },
+        plugin_registry: Arc::new(std::sync::RwLock::new(Arc::new(
+            flux_plugin_host::PluginRegistry::default(),
+        ))),
+        plugin_cwd: std::env::temp_dir(),
     }
 }
 

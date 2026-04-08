@@ -32,7 +32,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+          sudo apt-get install -y pkg-config libgtk-3-dev libglib2.0-dev \
+            libayatana-appindicator3-dev libxdo-dev
 
       # rust-embed requires the frontend/dist/ folder to exist at compile time.
       # The frontend job validates the real build; here we just need the dir.

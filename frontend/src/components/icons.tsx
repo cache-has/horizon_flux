@@ -154,21 +154,3 @@ export function IconChevronUp(props: IconProps = {}) {
   );
 }
 
-// -- Lookup maps for dynamic use -------------------------------------------
-
-import type { ReactNode } from 'react';
-
-export const roleIcon: Record<string, ReactNode> = {
-  source: <IconSource />,
-  transform: <IconTransform />,
-  sink: <IconSink />,
-};
-
-export const paletteIcon: Record<string, ReactNode> = {
-  csv: <IconFile />,
-  postgresql: <IconDatabase />,
-  rest: <IconGlobe />,
-  sql: <IconCode />,
-  python: <IconTerminal />,
-  stdout: <IconTerminal />,
-};

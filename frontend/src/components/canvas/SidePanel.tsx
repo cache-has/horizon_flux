@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { PipelineNode } from '../../types/pipeline';
-import { roleIcon } from '../icons';
+import { roleIcon } from '../iconMaps';
 import type { ApiNode, ApiColumnInfo, ApiSampleConfig } from '../../api/pipelines';
 import {
   previewPipeline,

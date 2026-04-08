@@ -3,7 +3,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { PreviewTable, classifyType, formatCell, formatColumnStatsTooltip } from './PreviewTable';
+import { PreviewTable } from './PreviewTable';
+import { classifyType, formatCell, formatColumnStatsTooltip } from './previewUtils';
 import type { ApiPreviewNodeResponse, ApiColumnStats } from '../../api/pipelines';
 
 // ---------------------------------------------------------------------------

@@ -154,3 +154,18 @@
   font-weight: 500;
   white-space: nowrap;
 }
+
+.node-palette__item-tag {
+  margin-left: auto;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #334155;
+  color: #cbd5f5;
+}
+
+.node-palette__item--plugin {
+  border-left: 2px solid #6366f1;
+}

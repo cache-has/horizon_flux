@@ -5,7 +5,7 @@ import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { PipelineNode } from '../../types/pipeline';
 import { useEnvironmentStore } from '../../stores/environmentStore';
-import { roleIcon } from '../icons';
+import { roleIcon } from '../iconMaps';
 import './PipelineNode.css';
 
 interface StatusMeta {

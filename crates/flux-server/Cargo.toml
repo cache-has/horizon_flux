@@ -8,6 +8,7 @@ license.workspace = true
 flux-engine = { workspace = true }
 flux-datafusion = { workspace = true }
 flux-connectors = { workspace = true }
+flux-plugin-host = { workspace = true }
 flux-secrets = { workspace = true }
 arrow = { workspace = true }
 axum = { workspace = true }
@@ -29,6 +30,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 flux-connectors = { workspace = true }
+flux-plugin-host = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }

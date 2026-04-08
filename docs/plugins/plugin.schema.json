@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://horizon-analytic.com/schemas/horizon-flux/plugin.schema.json",
+  "title": "Horizon Flux plugin manifest",
+  "description": "Schema for plugin.toml files loaded by the Horizon Flux plugin host. See docs/plugins/manifest.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "version",
+    "flux_plugin_protocol",
+    "flux_min_version",
+    "executable",
+    "sinks"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Lowercase plugin identifier; must match the plugin directory name."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "description": "SemVer 2.0 plugin version."
+    },
+    "author": { "type": "string" },
+    "description": { "type": "string" },
+    "license": { "type": "string", "description": "SPDX expression." },
+    "homepage": { "type": "string", "format": "uri" },
+    "flux_plugin_protocol": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Major version of the flux plugin wire protocol this plugin targets."
+    },
+    "flux_min_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "description": "Minimum flux version required, SemVer 2.0."
+    },
+    "executable": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the plugin executable, relative to the plugin directory."
+    },
+    "args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Environment variables set when spawning the plugin."
+    },
+    "sinks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/sink" }
+    }
+  },
+  "$defs": {
+    "sink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "display_name", "config_schema"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_]*$",
+          "maxLength": 64,
+          "description": "Globally unique connector type identifier."
+        },
+        "display_name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "config_schema": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to a JSON Schema describing this sink's config, relative to the plugin directory."
+        },
+        "capabilities": {
+          "type": "object",
+          "description": "Capability flags. Unknown keys are accepted and ignored to allow forward-compatible additions.",
+          "additionalProperties": true,
+          "properties": {
+            "transactional": { "type": "boolean", "default": false },
+            "upsert": { "type": "boolean", "default": false },
+            "schema_validation": { "type": "boolean", "default": false }
+          }
+        }
+      }
+    }
+  }
+}

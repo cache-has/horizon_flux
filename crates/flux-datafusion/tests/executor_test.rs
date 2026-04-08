@@ -359,6 +359,7 @@ async fn multi_input_join_transform() {
 }
 
 #[tokio::test]
+#[ignore = "requires Python with polars installed"]
 async fn python_transform_passthrough() {
     let code = r#"
 import polars as pl
@@ -391,6 +392,7 @@ def transform(inputs, params):
 }
 
 #[tokio::test]
+#[ignore = "requires Python with polars installed"]
 async fn python_transform_filter() {
     let code = r#"
 import polars as pl
@@ -421,6 +423,7 @@ def transform(inputs, params):
 }
 
 #[tokio::test]
+#[ignore = "requires Python with polars installed"]
 async fn python_transform_syntax_error() {
     let code = "def transform(inputs, params)\n    return inputs['src']"; // missing colon
     let pipeline = make_pipeline(
@@ -457,6 +460,7 @@ async fn python_transform_syntax_error() {
 }
 
 #[tokio::test]
+#[ignore = "requires Python with polars installed"]
 async fn python_transform_missing_function() {
     let code = "x = 42"; // no transform function defined
     let pipeline = make_pipeline(
@@ -493,6 +497,7 @@ async fn python_transform_missing_function() {
 }
 
 #[tokio::test]
+#[ignore = "requires Python with polars installed"]
 async fn python_transform_wrong_return_type() {
     let code = r#"
 def transform(inputs, params):
@@ -943,6 +948,7 @@ async fn no_override_when_environment_doesnt_match() {
 }
 
 #[tokio::test]
+#[ignore = "requires Python with polars installed"]
 async fn python_transform_timeout() {
     use flux_datafusion::PythonConfig;
     use flux_datafusion::python_runtime;
