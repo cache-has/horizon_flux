@@ -144,6 +144,7 @@ pub fn start(
         metadata_info,
         plugin_registry,
         plugin_cwd,
+        plugin_scan_roots: None,
     };
 
     #[cfg(feature = "tray")]

@@ -251,6 +251,12 @@ pub struct AppState {
     /// `./plugins/` resolution). Captured at startup so reload remains
     /// consistent even if the process `cwd` changes later.
     pub plugin_cwd: PathBuf,
+    /// Optional explicit override for the plugin scan roots. When `Some`,
+    /// the plugin reload endpoint scans **only** these roots and skips the
+    /// platform-derived locations entirely. Used by integration tests so
+    /// the developer machine's installed plugins do not leak in. Production
+    /// leaves this `None` to get the full default discovery behavior.
+    pub plugin_scan_roots: Option<Vec<PathBuf>>,
 }
 
 impl AppState {

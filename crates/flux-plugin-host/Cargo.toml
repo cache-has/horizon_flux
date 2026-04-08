@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+flux-plugin-protocol = { workspace = true }
 arrow = { workspace = true }
 base64 = { workspace = true }
 directories = { workspace = true }

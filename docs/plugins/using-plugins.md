@@ -111,3 +111,23 @@ Two reference plugins are maintained alongside flux:
 For the joint Postgres → Flux → OpenBoard tutorial, see
 `openboard/docs/tutorials/flux-postgres-to-dashboard.md` in the openboard
 repo.
+
+### Starting your own plugin
+
+The fastest way to get a working sink plugin in flux is the
+[`flux-plugin-template`](https://github.com/horizon-analytic/flux-plugin-template)
+repo — a pre-wired Rust scaffold (using `flux-plugin-sdk`) that ships a
+JSON Lines sink, cross-platform CI, and the manifest and config-schema
+boilerplate. Clone it as a GitHub template, change a few lines, and you have
+a working plugin installed in flux:
+
+```bash
+gh repo create my-flux-sink --template horizon-analytic/flux-plugin-template --public --clone
+cd my-flux-sink
+cargo build --release
+```
+
+For the long-form walkthrough see
+[`your-first-plugin-rust.md`](./your-first-plugin-rust.md). Non-Rust authors
+should start with [`your-first-plugin-direct.md`](./your-first-plugin-direct.md)
+and the OpenBoard plugin as a worked example.

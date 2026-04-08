@@ -14,9 +14,10 @@ path = "src/main.rs"
 [dependencies]
 arrow = { workspace = true }
 parquet = { version = "58", features = ["arrow"] }
-flux-plugin-host = { workspace = true }
+flux-plugin-sdk = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 
 [dev-dependencies]
+flux-plugin-host = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }

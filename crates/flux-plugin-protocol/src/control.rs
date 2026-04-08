@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::protocol::frame::{Frame, FrameError, MessageKind, read_frame, write_frame};
+use crate::frame::{Frame, FrameError, MessageKind, read_frame, write_frame};
 
 /// `Hello` (host → plugin) — §3.1.
 #[derive(Debug, Clone, Serialize, Deserialize)]

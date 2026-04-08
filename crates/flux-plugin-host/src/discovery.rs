@@ -125,9 +125,19 @@ impl PluginRegistry {
 /// `cwd` is used to resolve the workspace-local `./plugins/` root. Pass the
 /// flux process's working directory.
 pub fn discover_plugins(cwd: &Path) -> PluginRegistry {
-    let roots = scan_roots(cwd);
+    discover_plugins_in(&scan_roots(cwd))
+}
+
+/// Like [`discover_plugins`] but scans only the explicitly provided roots
+/// and skips all platform-derived locations (`ProjectDirs`, the legacy
+/// home dir, `HORIZON_FLUX_PLUGIN_PATH`, and the workspace `./plugins/`).
+///
+/// This is the right entry point for tests and for callers that want full
+/// control over which directories contribute plugins (e.g. an embedded
+/// flux instance shipping its own plugin set).
+pub fn discover_plugins_in(roots: &[PathBuf]) -> PluginRegistry {
     let mut registry = PluginRegistry::default();
-    for root in &roots {
+    for root in roots {
         scan_root(root, &mut registry);
     }
     registry
@@ -322,13 +332,17 @@ config_schema = "schema.json"
 
     #[test]
     fn sink_type_collision_marks_second_invalid() {
-        let cwd = tempdir().unwrap();
-        let plugins = cwd.path().join("plugins");
-        fs::create_dir_all(&plugins).unwrap();
-        write_plugin(&plugins, "alpha", &good_manifest("alpha", "shared"));
-        write_plugin(&plugins, "beta", &good_manifest("beta", "shared"));
+        // Drive `scan_root` directly so this test is fully isolated from
+        // the developer machine's real plugin install dir (`ProjectDirs`,
+        // `HORIZON_FLUX_PLUGIN_PATH`, etc.). `discover_plugins` is exercised
+        // by the other tests in this module.
+        let plugins = tempdir().unwrap();
+        write_plugin(plugins.path(), "alpha", &good_manifest("alpha", "shared"));
+        write_plugin(plugins.path(), "beta", &good_manifest("beta", "shared"));
 
-        let reg = discover_plugins(cwd.path());
+        let mut reg = PluginRegistry::default();
+        scan_root(plugins.path(), &mut reg);
+
         // One must be Ok, one Invalid. Order on disk is non-deterministic.
         let mut ok = 0;
         let mut bad = 0;

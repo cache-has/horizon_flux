@@ -43,6 +43,7 @@ fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
             flux_plugin_host::PluginRegistry::default(),
         ))),
         plugin_cwd: std::env::temp_dir(),
+        plugin_scan_roots: Some(Vec::new()),
     };
     (state, tmp)
 }
@@ -72,6 +73,7 @@ fn test_state_locked() -> (AppState, tempfile::TempDir) {
             flux_plugin_host::PluginRegistry::default(),
         ))),
         plugin_cwd: std::env::temp_dir(),
+        plugin_scan_roots: Some(Vec::new()),
     };
     (state, tmp)
 }

@@ -39,6 +39,7 @@ fn test_state() -> AppState {
             flux_plugin_host::PluginRegistry::default(),
         ))),
         plugin_cwd: std::env::temp_dir(),
+        plugin_scan_roots: Some(Vec::new()),
     }
 }
 
@@ -111,6 +112,7 @@ async fn list_connectors_empty_registry() {
             flux_plugin_host::PluginRegistry::default(),
         ))),
         plugin_cwd: std::env::temp_dir(),
+        plugin_scan_roots: Some(Vec::new()),
     };
     let app = test_router(state);
     let resp = app

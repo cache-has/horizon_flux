@@ -15,19 +15,27 @@
 //!   `tracing`.
 //! - [`session`] — sink lifecycle state machine on top of any transport.
 
-pub mod arrow_ipc;
 pub mod discovery;
 pub mod error;
 pub mod manifest;
 pub mod process;
-pub mod protocol;
 pub mod session;
 pub mod transport;
 
-pub use discovery::{DiscoveredPlugin, PluginRegistry, PluginStatus, discover_plugins};
+/// Re-export of the shared `flux-plugin-protocol` crate so existing call
+/// sites that use `flux_plugin_host::protocol::*` continue to work and so
+/// downstream code has a single import path for protocol types.
+pub use flux_plugin_protocol as protocol;
+pub use flux_plugin_protocol::arrow_ipc;
+
+pub use discovery::{
+    DiscoveredPlugin, PluginRegistry, PluginStatus, discover_plugins, discover_plugins_in,
+};
 pub use error::{Error, Result};
 pub use manifest::{Manifest, SinkCapabilities, SinkDeclaration};
 pub use process::{PluginProcess, SpawnOptions};
-pub use protocol::{Frame, FrameError, MAX_PAYLOAD_LEN, MessageKind, PROTOCOL_VERSION, control};
+pub use flux_plugin_protocol::{
+    Frame, FrameError, MAX_PAYLOAD_LEN, MessageKind, PROTOCOL_VERSION, control,
+};
 pub use session::{PluginSession, SessionError};
 pub use transport::{Transport, TransportError};

@@ -39,6 +39,7 @@ fn test_state() -> AppState {
             flux_plugin_host::PluginRegistry::default(),
         ))),
         plugin_cwd: std::env::temp_dir(),
+        plugin_scan_roots: Some(Vec::new()),
     }
 }
 

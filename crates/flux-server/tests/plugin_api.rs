@@ -11,7 +11,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use flux_datafusion::{SqliteEnvironmentStore, SqliteRunStore};
 use flux_engine::SqlitePipelineStore;
-use flux_plugin_host::{PluginRegistry, discover_plugins};
+use flux_plugin_host::{PluginRegistry, discover_plugins_in};
 use flux_server::AppState;
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -48,7 +48,11 @@ config_schema = "schema.json"
     .unwrap();
 }
 
-fn state_with_registry(cwd: std::path::PathBuf, registry: PluginRegistry) -> AppState {
+fn state_with_registry_and_roots(
+    cwd: std::path::PathBuf,
+    registry: PluginRegistry,
+    scan_roots: Vec<std::path::PathBuf>,
+) -> AppState {
     let pipelines_dir = tempfile::tempdir().unwrap().keep();
     AppState {
         pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
@@ -70,7 +74,12 @@ fn state_with_registry(cwd: std::path::PathBuf, registry: PluginRegistry) -> App
         },
         plugin_registry: Arc::new(std::sync::RwLock::new(Arc::new(registry))),
         plugin_cwd: cwd,
+        plugin_scan_roots: Some(scan_roots),
     }
+}
+
+fn state_with_registry(cwd: std::path::PathBuf, registry: PluginRegistry) -> AppState {
+    state_with_registry_and_roots(cwd, registry, Vec::new())
 }
 
 fn router(state: AppState) -> Router {
@@ -90,7 +99,7 @@ async fn list_plugins_returns_discovered() {
     let plugins_dir = cwd.path().join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
     write_plugin(&plugins_dir, "alpha", "alpha_sink");
-    let registry = discover_plugins(cwd.path());
+    let registry = discover_plugins_in(std::slice::from_ref(&plugins_dir));
 
     let state = state_with_registry(cwd.path().to_path_buf(), registry);
     let app = router(state);
@@ -117,7 +126,7 @@ async fn get_sink_schema_returns_json_schema() {
     let plugins_dir = cwd.path().join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
     write_plugin(&plugins_dir, "alpha", "alpha_sink");
-    let registry = discover_plugins(cwd.path());
+    let registry = discover_plugins_in(std::slice::from_ref(&plugins_dir));
 
     let state = state_with_registry(cwd.path().to_path_buf(), registry);
     let app = router(state);
@@ -158,8 +167,14 @@ async fn reload_picks_up_new_plugin() {
     let cwd = tempfile::tempdir().unwrap();
     let plugins_dir = cwd.path().join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
-    // Start with empty registry; cwd has no plugins yet.
-    let state = state_with_registry(cwd.path().to_path_buf(), PluginRegistry::default());
+    // Start with empty registry; cwd has no plugins yet. Pin the scan
+    // roots to the temp `plugins_dir` so the developer machine's installed
+    // plugins do not leak into the test.
+    let state = state_with_registry_and_roots(
+        cwd.path().to_path_buf(),
+        PluginRegistry::default(),
+        vec![plugins_dir.clone()],
+    );
     let app = router(state.clone());
 
     // Now add a plugin and reload.
@@ -198,7 +213,11 @@ async fn reload_broadcasts_plugin_event() {
     let cwd = tempfile::tempdir().unwrap();
     let plugins_dir = cwd.path().join("plugins");
     fs::create_dir_all(&plugins_dir).unwrap();
-    let state = state_with_registry(cwd.path().to_path_buf(), PluginRegistry::default());
+    let state = state_with_registry_and_roots(
+        cwd.path().to_path_buf(),
+        PluginRegistry::default(),
+        vec![plugins_dir.clone()],
+    );
     let mut rx = state.plugin_event_tx.subscribe();
     let app = router(state);
 

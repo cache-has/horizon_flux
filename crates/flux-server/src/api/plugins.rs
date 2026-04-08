@@ -17,7 +17,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Router, response::IntoResponse};
-use flux_plugin_host::{DiscoveredPlugin, PluginStatus, discover_plugins};
+use flux_plugin_host::{DiscoveredPlugin, PluginStatus, discover_plugins, discover_plugins_in};
 use serde::Serialize;
 use serde_json::Value;
 use tracing::info;
@@ -99,7 +99,10 @@ async fn get_sink_schema(
 
 async fn reload_plugins(State(state): State<AppState>) -> impl IntoResponse {
     info!("reloading plugin registry");
-    let new_registry = Arc::new(discover_plugins(&state.plugin_cwd));
+    let new_registry = Arc::new(match &state.plugin_scan_roots {
+        Some(roots) => discover_plugins_in(roots),
+        None => discover_plugins(&state.plugin_cwd),
+    });
     let count = new_registry.len();
     let (ok_count, invalid_count) = new_registry.iter().fold((0, 0), |(ok, inv), p| {
         match p.status {

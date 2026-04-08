@@ -4,18 +4,16 @@
 //! Reference Horizon Flux sink plugin: writes incoming Arrow record batches
 //! to a Parquet file.
 //!
-//! This binary speaks the v1 plugin protocol on stdin/stdout. It exists to
-//! validate the plugin protocol end-to-end with first-party code, and to
-//! serve as a template for third-party plugin authors. It depends only on
-//! `arrow`, `parquet`, and `flux-plugin-host` (for protocol primitives) — no
-//! transitive dependency on `flux-connectors` or any other internal crate.
+//! This is the **canonical example for plugin authors using the Rust SDK.**
+//! It depends only on `arrow`, `parquet`, and `flux-plugin-sdk` — no flux
+//! internal crates. The entire v1 wire protocol (handshake, configure,
+//! stream, commit/abort, shutdown) is handled by `flux_plugin_sdk::run`;
+//! this plugin only implements the [`Sink`] trait.
 
 use std::fs::File;
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
@@ -24,13 +22,8 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::Deserialize;
 
-use flux_plugin_host::arrow_ipc::{decode_record_batch, decode_schema_b64};
-use flux_plugin_host::protocol::control::{
-    BatchAck, CommitAck, ConfigureAck, ConfigureSink, ErrorMsg, Hello, HelloAck, Log, LogLevel,
-};
-use flux_plugin_host::protocol::{MessageKind, read_frame, write_frame};
+use flux_plugin_sdk::{PluginInfo, Sink, SinkError, WriteStats, log, run};
 
-const PROTOCOL_VERSION: u32 = 1;
 const PLUGIN_NAME: &str = "parquet";
 const PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -51,190 +44,105 @@ fn parse_compression(name: Option<&str>) -> Result<Compression, String> {
     }
 }
 
-fn write_json<W: Write, V: serde::Serialize>(w: &mut W, kind: MessageKind, v: &V) -> io::Result<()> {
-    let bytes = serde_json::to_vec(v).map_err(io::Error::other)?;
-    write_frame(w, kind, &bytes).map_err(io::Error::other)?;
-    w.flush()
+#[derive(Default)]
+struct ParquetSink {
+    writer: Option<ArrowWriter<File>>,
+    rows: u64,
+    bytes: u64,
+    started: Option<Instant>,
 }
 
-fn send_log<W: Write>(w: &mut W, level: LogLevel, message: impl Into<String>) {
-    let _ = write_json(w, MessageKind::Log, &Log { level, message: message.into() });
-}
+impl Sink for ParquetSink {
+    type Config = PluginConfig;
 
-fn send_error<W: Write>(w: &mut W, message: impl Into<String>) {
-    let _ = write_json(
-        w,
-        MessageKind::Error,
-        &ErrorMsg { message: message.into(), details: None },
-    );
-}
-
-/// Open the writer and verify the incoming schema is non-empty. Returns the
-/// active writer plus the resolved schema.
-fn open_writer(
-    config: &PluginConfig,
-    schema: Arc<Schema>,
-) -> Result<ArrowWriter<File>, String> {
-    if schema.fields().is_empty() {
-        return Err("plugin requires a non-empty input schema".into());
-    }
-    let compression = parse_compression(config.compression.as_deref())?;
-    if let Some(parent) = config.path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create parent dir '{}': {e}", parent.display()))?;
-    }
-    let file = File::create(&config.path)
-        .map_err(|e| format!("failed to create '{}': {e}", config.path.display()))?;
-    let props = WriterProperties::builder().set_compression(compression).build();
-    ArrowWriter::try_new(file, schema, Some(props))
-        .map_err(|e| format!("failed to open parquet writer: {e}"))
-}
-
-fn run() -> Result<(), String> {
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut r = stdin.lock();
-    let mut w = stdout.lock();
-
-    // 1. Handshake.
-    let frame = read_frame(&mut r).map_err(|e| format!("read hello: {e}"))?;
-    if frame.kind != MessageKind::Hello {
-        return Err(format!("expected Hello, got {:?}", frame.kind));
-    }
-    let _hello: Hello = serde_json::from_slice(&frame.payload)
-        .map_err(|e| format!("decode hello: {e}"))?;
-    write_json(
-        &mut w,
-        MessageKind::HelloAck,
-        &HelloAck {
-            protocol: PROTOCOL_VERSION,
-            plugin_name: PLUGIN_NAME.into(),
-            plugin_version: PLUGIN_VERSION.into(),
-            capabilities: Default::default(),
-        },
-    )
-    .map_err(|e| format!("write hello-ack: {e}"))?;
-
-    // 2. Configure.
-    let frame = read_frame(&mut r).map_err(|e| format!("read configure: {e}"))?;
-    if frame.kind != MessageKind::ConfigureSink {
-        return Err(format!("expected ConfigureSink, got {:?}", frame.kind));
-    }
-    let cfg_msg: ConfigureSink = serde_json::from_slice(&frame.payload)
-        .map_err(|e| format!("decode configure: {e}"))?;
-    let parsed: Result<PluginConfig, _> = serde_json::from_value(cfg_msg.config.clone());
-    let schema_decoded = decode_schema_b64(&cfg_msg.input_schema_ipc_b64);
-
-    let writer = match (parsed, schema_decoded) {
-        (Ok(config), Ok(schema)) => match open_writer(&config, schema) {
-            Ok(writer) => {
-                write_json(
-                    &mut w,
-                    MessageKind::ConfigureAck,
-                    &ConfigureAck { accepted: true, reason: None },
-                )
-                .map_err(|e| format!("write configure-ack: {e}"))?;
-                send_log(
-                    &mut w,
-                    LogLevel::Info,
-                    format!("parquet plugin writing to {}", config.path.display()),
-                );
-                writer
-            }
-            Err(reason) => {
-                let _ = write_json(
-                    &mut w,
-                    MessageKind::ConfigureAck,
-                    &ConfigureAck { accepted: false, reason: Some(reason.clone()) },
-                );
-                return Err(reason);
-            }
-        },
-        (Err(e), _) => {
-            let reason = format!("invalid plugin config: {e}");
-            let _ = write_json(
-                &mut w,
-                MessageKind::ConfigureAck,
-                &ConfigureAck { accepted: false, reason: Some(reason.clone()) },
-            );
-            return Err(reason);
+    fn configure(&mut self, config: PluginConfig, schema: &Schema) -> Result<(), SinkError> {
+        if schema.fields().is_empty() {
+            return Err(SinkError::InvalidConfig(
+                "plugin requires a non-empty input schema".into(),
+            ));
         }
-        (_, Err(e)) => {
-            let reason = format!("invalid input schema: {e}");
-            let _ = write_json(
-                &mut w,
-                MessageKind::ConfigureAck,
-                &ConfigureAck { accepted: false, reason: Some(reason.clone()) },
-            );
-            return Err(reason);
+        let compression = parse_compression(config.compression.as_deref())
+            .map_err(SinkError::InvalidConfig)?;
+        if let Some(parent) = config.path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                SinkError::InvalidConfig(format!(
+                    "failed to create parent dir '{}': {e}",
+                    parent.display()
+                ))
+            })?;
         }
-    };
+        let file = File::create(&config.path).map_err(|e| {
+            SinkError::InvalidConfig(format!(
+                "failed to create '{}': {e}",
+                config.path.display()
+            ))
+        })?;
+        let props = WriterProperties::builder()
+            .set_compression(compression)
+            .build();
+        let writer = ArrowWriter::try_new(file, std::sync::Arc::new(schema.clone()), Some(props))
+            .map_err(|e| {
+                SinkError::InvalidConfig(format!("failed to open parquet writer: {e}"))
+            })?;
+        log::info(format!(
+            "parquet plugin writing to {}",
+            config.path.display()
+        ));
+        self.writer = Some(writer);
+        self.started = Some(Instant::now());
+        Ok(())
+    }
 
-    // 3. Stream → Commit/Abort → Shutdown.
-    let started = Instant::now();
-    let mut total_rows: u64 = 0;
-    let mut total_bytes: u64 = 0;
-    let mut writer_slot = Some(writer);
-    loop {
-        let frame = read_frame(&mut r).map_err(|e| format!("read frame: {e}"))?;
-        match frame.kind {
-            MessageKind::RecordBatch => {
-                let writer = writer_slot
-                    .as_mut()
-                    .ok_or_else(|| "RecordBatch after commit".to_string())?;
-                total_bytes += frame.payload.len() as u64;
-                let batch: RecordBatch = decode_record_batch(&frame.payload)
-                    .map_err(|e| format!("decode batch: {e}"))?;
-                let rows = batch.num_rows() as u64;
-                if let Err(e) = writer.write(&batch) {
-                    return Err(format!("parquet write failed: {e}"));
-                }
-                total_rows += rows;
-                write_json(
-                    &mut w,
-                    MessageKind::BatchAck,
-                    &BatchAck { rows_accepted: rows, warning: None },
-                )
-                .map_err(|e| format!("write batch-ack: {e}"))?;
-            }
-            MessageKind::Commit => {
-                if let Some(writer) = writer_slot.take() {
-                    writer
-                        .close()
-                        .map_err(|e| format!("parquet close failed: {e}"))?;
-                }
-                let duration_ms = started.elapsed().as_millis() as u64;
-                write_json(
-                    &mut w,
-                    MessageKind::CommitAck,
-                    &CommitAck { rows: total_rows, bytes: total_bytes, duration_ms },
-                )
-                .map_err(|e| format!("write commit-ack: {e}"))?;
-            }
-            MessageKind::Abort => {
-                // Best-effort: drop the partial writer (truncates on close).
-                drop(writer_slot.take());
-                let _ = write_json(&mut w, MessageKind::AbortAck, &serde_json::json!({}));
-                return Ok(());
-            }
-            MessageKind::Shutdown => return Ok(()),
-            other => return Err(format!("unexpected frame {other:?}")),
+    fn write_batch(&mut self, batch: &RecordBatch) -> Result<(), SinkError> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| SinkError::Fatal("write_batch called before configure".into()))?;
+        writer
+            .write(batch)
+            .map_err(|e| SinkError::WriteFailed(Box::new(e)))?;
+        self.rows += batch.num_rows() as u64;
+        // Approximate on-wire bytes from the batch's in-memory footprint —
+        // good enough for the CommitAck stat, exactness is not promised.
+        self.bytes += batch.get_array_memory_size() as u64;
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<WriteStats, SinkError> {
+        if let Some(writer) = self.writer.take() {
+            writer
+                .close()
+                .map_err(|e| SinkError::WriteFailed(Box::new(e)))?;
         }
+        let duration = self
+            .started
+            .take()
+            .map(|t| t.elapsed())
+            .unwrap_or_else(|| Duration::from_millis(0));
+        Ok(WriteStats {
+            rows_written: self.rows,
+            bytes_written: self.bytes,
+            duration,
+        })
+    }
+
+    fn abort(&mut self, _reason: &str) -> Result<(), SinkError> {
+        // Drop the partial writer; the file is left as-is on disk. A more
+        // sophisticated plugin could stage to a temp file and only rename on
+        // commit.
+        drop(self.writer.take());
+        Ok(())
     }
 }
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            // Best-effort error report — host may already have closed the pipe.
-            let stdout = io::stdout();
-            let mut w = stdout.lock();
-            send_error(&mut w, e.clone());
-            eprintln!("flux-parquet-plugin: {e}");
-            ExitCode::FAILURE
-        }
-    }
+    run(
+        PluginInfo {
+            name: PLUGIN_NAME.into(),
+            version: PLUGIN_VERSION.into(),
+        },
+        ParquetSink::default(),
+    )
 }

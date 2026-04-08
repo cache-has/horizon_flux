@@ -9,6 +9,8 @@ members = [
     "crates/flux-cli",
     "crates/flux-postgres",
     "crates/flux-plugin-host",
+    "crates/flux-plugin-protocol",
+    "crates/flux-plugin-sdk",
     "examples/plugins/parquet-plugin",
 ]
 resolver = "2"
@@ -29,6 +31,8 @@ flux-server = { path = "crates/flux-server" }
 flux-tray = { path = "crates/flux-tray" }
 flux-postgres = { path = "crates/flux-postgres" }
 flux-plugin-host = { path = "crates/flux-plugin-host" }
+flux-plugin-protocol = { path = "crates/flux-plugin-protocol" }
+flux-plugin-sdk = { path = "crates/flux-plugin-sdk" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
