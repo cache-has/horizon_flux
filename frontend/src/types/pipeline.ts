@@ -60,6 +60,8 @@ export interface PipelineNodeData extends Record<string, unknown> {
   materializationPolicy?: MaterializationPolicy;
   /** Sink-only: latest run's materialization receipt — feeds the badge tooltip. */
   materializationReceipt?: MaterializationReceipt;
+  /** Resource fingerprint from lineage bindings (source/sink nodes only). */
+  resourceFingerprint?: string;
 }
 
 /** A pipeline node is a React Flow Node carrying our custom data. */

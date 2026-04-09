@@ -3,11 +3,15 @@
 
 //! SQLite-backed storage for pipeline execution history.
 
-use crate::error::{IncrementalStateError, RunStoreError};
+use crate::error::{IncrementalStateError, LineageStoreError, RunStoreError};
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
-use crate::storage::{IncrementalStateStorage, RunStorage};
+use crate::storage::{
+    IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage, StoredResourceBinding,
+};
 use flux_engine::NodeId;
+use flux_engine::lineage::BindingDirection;
+use flux_engine::lineage::ResourceFingerprint;
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
@@ -105,7 +109,36 @@ impl SqliteRunStore {
 
             CREATE INDEX IF NOT EXISTS idx_incremental_schema_history_node
                 ON incremental_schema_history
-                   (pipeline_id, node_id, environment, recorded_at DESC);",
+                   (pipeline_id, node_id, environment, recorded_at DESC);
+
+            -- Cross-pipeline lineage: static resource bindings (planning doc 31).
+            CREATE TABLE IF NOT EXISTS pipeline_resource_bindings (
+                pipeline_id          TEXT NOT NULL,
+                node_id              TEXT NOT NULL,
+                direction            TEXT NOT NULL,
+                resource_fingerprint TEXT NOT NULL,
+                environment          TEXT NOT NULL,
+                updated_at           INTEGER NOT NULL,
+                PRIMARY KEY (pipeline_id, node_id, environment)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_prb_fingerprint
+                ON pipeline_resource_bindings (resource_fingerprint, environment);
+
+            -- Cross-pipeline lineage: runtime-observed resource accesses (planning doc 31).
+            CREATE TABLE IF NOT EXISTS lineage_observations (
+                pipeline_id          TEXT NOT NULL,
+                node_id              TEXT NOT NULL,
+                run_id               TEXT NOT NULL,
+                direction            TEXT NOT NULL,
+                resource_fingerprint TEXT NOT NULL,
+                environment          TEXT NOT NULL,
+                observed_at          INTEGER NOT NULL,
+                PRIMARY KEY (run_id, node_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_lo_fingerprint
+                ON lineage_observations (resource_fingerprint, environment, observed_at);",
         )?;
         // Idempotent migration: older databases created before doc 27 don't
         // have the receipt column. SQLite has no `ADD COLUMN IF NOT EXISTS`,
@@ -124,10 +157,7 @@ impl SqliteRunStore {
         }
 
         // Idempotent migration: add test_results JSON column (doc 30).
-        let alter2 = conn.execute(
-            "ALTER TABLE pipeline_runs ADD COLUMN test_results TEXT",
-            [],
-        );
+        let alter2 = conn.execute("ALTER TABLE pipeline_runs ADD COLUMN test_results TEXT", []);
         if let Err(rusqlite::Error::SqliteFailure(_, Some(msg))) = &alter2 {
             if !msg.contains("duplicate column") {
                 alter2.map(|_| ())?;
@@ -290,8 +320,9 @@ impl RunStorage for SqliteRunStore {
         results: &[TestResultSummary],
     ) -> Result<(), RunStoreError> {
         let conn = self.conn.lock().unwrap();
-        let json = serde_json::to_string(results)
-            .map_err(|e| RunStoreError::Database(format!("failed to serialize test results: {e}")))?;
+        let json = serde_json::to_string(results).map_err(|e| {
+            RunStoreError::Database(format!("failed to serialize test results: {e}"))
+        })?;
         conn.execute(
             "UPDATE pipeline_runs SET test_results = ?1 WHERE id = ?2",
             params![json, run_id.0.to_string()],
@@ -587,6 +618,173 @@ impl IncrementalStateStorage for SqliteRunStore {
     }
 }
 
+impl LineageStorage for SqliteRunStore {
+    fn save_bindings(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        bindings: &[StoredResourceBinding],
+    ) -> Result<(), LineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Atomic replace: delete existing, then insert new.
+        conn.execute(
+            "DELETE FROM pipeline_resource_bindings
+             WHERE pipeline_id = ?1 AND environment = ?2",
+            params![pipeline_id, environment],
+        )?;
+        for b in bindings {
+            conn.execute(
+                "INSERT INTO pipeline_resource_bindings
+                    (pipeline_id, node_id, direction, resource_fingerprint, environment, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    b.pipeline_id,
+                    b.node_id,
+                    b.direction.to_string(),
+                    b.resource_fingerprint.0,
+                    b.environment,
+                    b.updated_at_ms,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn load_bindings(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+    ) -> Result<Vec<StoredResourceBinding>, LineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT pipeline_id, node_id, direction, resource_fingerprint, environment, updated_at
+             FROM pipeline_resource_bindings
+             WHERE pipeline_id = ?1 AND environment = ?2
+             ORDER BY node_id",
+        )?;
+        let mut rows = stmt.query(params![pipeline_id, environment])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_binding(row)?);
+        }
+        Ok(out)
+    }
+
+    fn all_bindings(
+        &self,
+        environment: &str,
+    ) -> Result<Vec<StoredResourceBinding>, LineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT pipeline_id, node_id, direction, resource_fingerprint, environment, updated_at
+             FROM pipeline_resource_bindings
+             WHERE environment = ?1
+             ORDER BY pipeline_id, node_id",
+        )?;
+        let mut rows = stmt.query(params![environment])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_binding(row)?);
+        }
+        Ok(out)
+    }
+
+    fn delete_bindings(&self, pipeline_id: &str) -> Result<(), LineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM pipeline_resource_bindings WHERE pipeline_id = ?1",
+            params![pipeline_id],
+        )?;
+        Ok(())
+    }
+
+    fn record_observation(
+        &self,
+        observation: &LineageObservation,
+    ) -> Result<(), LineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO lineage_observations
+                (pipeline_id, node_id, run_id, direction, resource_fingerprint, environment,
+                 observed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                observation.pipeline_id,
+                observation.node_id,
+                observation.run_id,
+                observation.direction.to_string(),
+                observation.resource_fingerprint.0,
+                observation.environment,
+                observation.observed_at_ms,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn query_observations(
+        &self,
+        environment: &str,
+        since_ms: i64,
+    ) -> Result<Vec<LineageObservation>, LineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT pipeline_id, node_id, run_id, direction, resource_fingerprint, environment,
+                    observed_at
+             FROM lineage_observations
+             WHERE environment = ?1 AND observed_at >= ?2
+             ORDER BY observed_at DESC",
+        )?;
+        let mut rows = stmt.query(params![environment, since_ms])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_observation(row)?);
+        }
+        Ok(out)
+    }
+
+    fn enforce_retention(&self, older_than_ms: i64) -> Result<u64, LineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute(
+            "DELETE FROM lineage_observations WHERE observed_at < ?1",
+            params![older_than_ms],
+        )?;
+        Ok(deleted as u64)
+    }
+}
+
+fn row_to_binding(row: &rusqlite::Row<'_>) -> Result<StoredResourceBinding, LineageStoreError> {
+    let direction_str: String = row.get(2)?;
+    let direction = match direction_str.as_str() {
+        "source" => BindingDirection::Source,
+        _ => BindingDirection::Sink,
+    };
+    Ok(StoredResourceBinding {
+        pipeline_id: row.get(0)?,
+        node_id: row.get(1)?,
+        direction,
+        resource_fingerprint: ResourceFingerprint::new(row.get::<_, String>(3)?),
+        environment: row.get(4)?,
+        updated_at_ms: row.get(5)?,
+    })
+}
+
+fn row_to_observation(row: &rusqlite::Row<'_>) -> Result<LineageObservation, LineageStoreError> {
+    let direction_str: String = row.get(3)?;
+    let direction = match direction_str.as_str() {
+        "source" => BindingDirection::Source,
+        _ => BindingDirection::Sink,
+    };
+    Ok(LineageObservation {
+        pipeline_id: row.get(0)?,
+        node_id: row.get(1)?,
+        run_id: row.get(2)?,
+        direction,
+        resource_fingerprint: ResourceFingerprint::new(row.get::<_, String>(4)?),
+        environment: row.get(5)?,
+        observed_at_ms: row.get(6)?,
+    })
+}
+
 fn row_to_incremental_state(
     row: &rusqlite::Row<'_>,
 ) -> Result<IncrementalState, IncrementalStateError> {
@@ -822,5 +1020,146 @@ mod tests {
         assert!(!tr.assertions[1].passed);
         assert_eq!(tr.assertions[1].violation_count, 3);
         assert_eq!(tr.assertions[1].violating_rows.len(), 1);
+    }
+
+    // -- Lineage storage tests (planning doc 31) ---------------------------
+
+    #[test]
+    fn lineage_bindings_round_trip() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        // Empty store returns empty vec.
+        let bindings = store.load_bindings("p1", "dev").unwrap();
+        assert!(bindings.is_empty());
+
+        // Save bindings for pipeline p1, env dev.
+        let b1 = StoredResourceBinding {
+            pipeline_id: "p1".into(),
+            node_id: "src".into(),
+            direction: BindingDirection::Source,
+            resource_fingerprint: ResourceFingerprint::new("postgres://host:5432/db/public.orders"),
+            environment: "dev".into(),
+            updated_at_ms: 1_700_000_000_000,
+        };
+        let b2 = StoredResourceBinding {
+            pipeline_id: "p1".into(),
+            node_id: "sink".into(),
+            direction: BindingDirection::Sink,
+            resource_fingerprint: ResourceFingerprint::new("file:///data/output.csv"),
+            environment: "dev".into(),
+            updated_at_ms: 1_700_000_000_000,
+        };
+        store
+            .save_bindings("p1", "dev", &[b1.clone(), b2.clone()])
+            .unwrap();
+
+        let loaded = store.load_bindings("p1", "dev").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].node_id, "sink"); // sorted by node_id
+        assert_eq!(loaded[1].node_id, "src");
+
+        // Environment isolation.
+        assert!(store.load_bindings("p1", "prod").is_ok());
+        assert!(store.load_bindings("p1", "prod").unwrap().is_empty());
+
+        // all_bindings returns everything in the environment.
+        let all = store.all_bindings("dev").unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Atomic replace: save new set, old ones disappear.
+        let b3 = StoredResourceBinding {
+            pipeline_id: "p1".into(),
+            node_id: "new_sink".into(),
+            direction: BindingDirection::Sink,
+            resource_fingerprint: ResourceFingerprint::new("s3://bucket/path/"),
+            environment: "dev".into(),
+            updated_at_ms: 1_700_000_100_000,
+        };
+        store.save_bindings("p1", "dev", &[b3]).unwrap();
+        let loaded = store.load_bindings("p1", "dev").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].node_id, "new_sink");
+
+        // Delete.
+        store.delete_bindings("p1").unwrap();
+        assert!(store.load_bindings("p1", "dev").unwrap().is_empty());
+    }
+
+    #[test]
+    fn lineage_observations_round_trip() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let obs1 = LineageObservation {
+            pipeline_id: "p1".into(),
+            node_id: "src".into(),
+            run_id: "run-1".into(),
+            direction: BindingDirection::Source,
+            resource_fingerprint: ResourceFingerprint::new("postgres://host:5432/db/public.orders"),
+            environment: "dev".into(),
+            observed_at_ms: 1_700_000_000_000,
+        };
+        let obs2 = LineageObservation {
+            pipeline_id: "p2".into(),
+            node_id: "sink".into(),
+            run_id: "run-2".into(),
+            direction: BindingDirection::Sink,
+            resource_fingerprint: ResourceFingerprint::new("postgres://host:5432/db/public.orders"),
+            environment: "dev".into(),
+            observed_at_ms: 1_700_000_100_000,
+        };
+
+        store.record_observation(&obs1).unwrap();
+        store.record_observation(&obs2).unwrap();
+
+        // Query with since_ms before both observations.
+        let all = store.query_observations("dev", 0).unwrap();
+        assert_eq!(all.len(), 2);
+        // Ordered by observed_at DESC.
+        assert_eq!(all[0].run_id, "run-2");
+        assert_eq!(all[1].run_id, "run-1");
+
+        // Query with since_ms between observations.
+        let recent = store.query_observations("dev", 1_700_000_050_000).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].run_id, "run-2");
+
+        // Environment isolation.
+        let prod = store.query_observations("prod", 0).unwrap();
+        assert!(prod.is_empty());
+    }
+
+    #[test]
+    fn lineage_retention_enforcement() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let old_obs = LineageObservation {
+            pipeline_id: "p1".into(),
+            node_id: "src".into(),
+            run_id: "old-run".into(),
+            direction: BindingDirection::Source,
+            resource_fingerprint: ResourceFingerprint::new("file:///data/old.csv"),
+            environment: "dev".into(),
+            observed_at_ms: 1_000_000_000_000, // old
+        };
+        let new_obs = LineageObservation {
+            pipeline_id: "p1".into(),
+            node_id: "src".into(),
+            run_id: "new-run".into(),
+            direction: BindingDirection::Source,
+            resource_fingerprint: ResourceFingerprint::new("file:///data/new.csv"),
+            environment: "dev".into(),
+            observed_at_ms: 1_700_000_000_000, // recent
+        };
+
+        store.record_observation(&old_obs).unwrap();
+        store.record_observation(&new_obs).unwrap();
+
+        // Enforce retention: delete observations older than 1_500_000_000_000.
+        let deleted = store.enforce_retention(1_500_000_000_000).unwrap();
+        assert_eq!(deleted, 1);
+
+        let remaining = store.query_observations("dev", 0).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].run_id, "new-run");
     }
 }

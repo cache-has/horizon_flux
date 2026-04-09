@@ -119,6 +119,32 @@ pub enum IncrementalStateError {
     },
 }
 
+/// Errors from the lineage store (planning doc 31).
+#[derive(Debug, thiserror::Error)]
+pub enum LineageStoreError {
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    #[error("database error: {0}")]
+    Database(String),
+}
+
+/// Errors from the backfill store (planning doc 33).
+#[derive(Debug, thiserror::Error)]
+pub enum BackfillStoreError {
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    #[error("backfill not found: {0}")]
+    NotFound(String),
+
+    #[error("invalid status: {0}")]
+    InvalidStatus(String),
+
+    #[error("database error: {0}")]
+    Database(String),
+}
+
 /// Errors from the environment system.
 #[derive(Debug, thiserror::Error)]
 pub enum EnvironmentError {

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+pub mod backfill;
+pub mod backfill_store;
 pub mod column_stats;
 pub mod environment;
 pub mod error;
@@ -27,7 +29,9 @@ pub mod watermark;
 
 pub use column_stats::{ColumnStats, compute_column_stats};
 pub use environment::{Environment, SqliteEnvironmentStore, TableOverride};
-pub use error::IncrementalStateError;
+pub use backfill::{BackfillError, BackfillEvent, BackfillRunOptions};
+pub use backfill_store::SqliteBackfillStore;
+pub use error::{BackfillStoreError, IncrementalStateError, LineageStoreError};
 pub use executor::{ExecutionOptions, PipelineExecutor, SecretResolver};
 pub use friendly_sql::{PreprocessError, preprocess_sql};
 pub use incremental_state::{IncrementalSchemaRecord, IncrementalState};
@@ -47,7 +51,10 @@ pub use run::{
 pub use run_store::SqliteRunStore;
 pub use session::{SessionFactory, SessionFactoryConfig};
 pub use stats::NodeStats;
-pub use storage::{EnvironmentStorage, IncrementalStateStorage, RunStorage};
+pub use storage::{
+    BackfillStorage, EnvironmentStorage, IncrementalStateStorage, LineageObservation,
+    LineageStorage, RunStorage, StoredResourceBinding,
+};
 pub use test_assertion::{AssertionResult, TestNodeResult};
 pub use udfs::{UdfDefinition, UdfError, UdfRegistry};
 

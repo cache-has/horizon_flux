@@ -50,6 +50,14 @@ pub struct ConfigureSink {
     pub materialization: Option<Value>,
 }
 
+/// `DeclareResource` (plugin → host) — §3.11. Sent optionally after a
+/// successful `ConfigureAck` to declare the resource fingerprint this sink
+/// will write to. Enables cross-pipeline lineage tracking for plugin sinks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeclareResource {
+    pub resource_fingerprint: String,
+}
+
 /// `ConfigureAck` (plugin → host) — §3.4.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigureAck {
@@ -225,6 +233,21 @@ mod tests {
         let back: CommitAck = serde_json::from_slice(legacy).unwrap();
         assert_eq!(back.rows_updated, 0);
         assert_eq!(back.rows_deleted, 0);
+    }
+
+    #[test]
+    fn declare_resource_round_trip() {
+        let dr = DeclareResource {
+            resource_fingerprint: "postgres://db.example.com:5432/analytics/public.orders".into(),
+        };
+        let mut buf = Vec::new();
+        write_json_frame(&mut buf, MessageKind::DeclareResource, &dr).unwrap();
+        let mut cur = Cursor::new(buf);
+        let got: DeclareResource = read_json_frame(&mut cur, MessageKind::DeclareResource).unwrap();
+        assert_eq!(
+            got.resource_fingerprint,
+            "postgres://db.example.com:5432/analytics/public.orders"
+        );
     }
 
     #[test]

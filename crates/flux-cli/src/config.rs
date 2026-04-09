@@ -140,6 +140,9 @@ pub struct MetadataStores {
     pub run_store: Arc<dyn flux_datafusion::RunStorage>,
     pub environment_store: Arc<dyn flux_datafusion::EnvironmentStorage>,
     pub incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage>,
+    pub lineage_store: Arc<dyn flux_datafusion::LineageStorage>,
+    pub trigger_store: Arc<dyn flux_scheduler::TriggerStorage>,
+    pub backfill_store: Arc<dyn flux_datafusion::BackfillStorage>,
 }
 
 /// Open the metadata stores according to the resolved backend.
@@ -161,25 +164,38 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
         flux_engine::SqlitePipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
             .context("failed to open pipeline store")?,
     );
-    // The run store backs both `RunStorage` and `IncrementalStateStorage` —
-    // they share the same SQLite file because the incremental state tables
-    // live alongside `pipeline_runs` / `node_run_stats` (planning doc 27).
+    // The run store backs `RunStorage`, `IncrementalStateStorage`, and
+    // `LineageStorage` — they share the same SQLite file because the
+    // lineage and incremental state tables live alongside `pipeline_runs` /
+    // `node_run_stats` (planning docs 27, 31).
     let run_store_concrete = Arc::new(
         flux_datafusion::SqliteRunStore::open(&data_dir.join("runs.db"))
             .context("failed to open run store")?,
     );
     let run_store: Arc<dyn flux_datafusion::RunStorage> = run_store_concrete.clone();
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
-        run_store_concrete;
+        run_store_concrete.clone();
+    let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete;
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
         flux_datafusion::SqliteEnvironmentStore::open(&data_dir.join("environments.db"))
             .context("failed to open environment store")?,
+    );
+    let trigger_store: Arc<dyn flux_scheduler::TriggerStorage> = Arc::new(
+        flux_scheduler::SqliteTriggerStore::open(&data_dir.join("triggers.db"))
+            .context("failed to open trigger store")?,
+    );
+    let backfill_store: Arc<dyn flux_datafusion::BackfillStorage> = Arc::new(
+        flux_datafusion::SqliteBackfillStore::open(&data_dir.join("backfills.db"))
+            .context("failed to open backfill store")?,
     );
     Ok(MetadataStores {
         pipeline_store,
         run_store,
         environment_store,
         incremental_state_store,
+        lineage_store,
+        trigger_store,
+        backfill_store,
     })
 }
 
@@ -211,11 +227,24 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
     let run_store_concrete = Arc::new(flux_postgres::PostgresRunStore::new(pool.clone()));
     let run_store: Arc<dyn flux_datafusion::RunStorage> = run_store_concrete.clone();
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
-        run_store_concrete;
+        run_store_concrete.clone();
+    let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete;
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
         flux_postgres::PostgresEnvironmentStore::new(pool)
             .map_err(|e| anyhow::anyhow!("{e}"))
             .context("failed to initialize PostgreSQL environment store")?,
+    );
+
+    // Trigger and backfill stores remain SQLite-backed even with PostgreSQL
+    // metadata. The tables live in a local file alongside the data directory.
+    let data_dir = data_dir().context("could not determine data directory for trigger store")?;
+    let trigger_store: Arc<dyn flux_scheduler::TriggerStorage> = Arc::new(
+        flux_scheduler::SqliteTriggerStore::open(&data_dir.join("triggers.db"))
+            .context("failed to open trigger store")?,
+    );
+    let backfill_store: Arc<dyn flux_datafusion::BackfillStorage> = Arc::new(
+        flux_datafusion::SqliteBackfillStore::open(&data_dir.join("backfills.db"))
+            .context("failed to open backfill store")?,
     );
 
     Ok(MetadataStores {
@@ -223,6 +252,9 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
         run_store,
         environment_store,
         incremental_state_store,
+        lineage_store,
+        trigger_store,
+        backfill_store,
     })
 }
 

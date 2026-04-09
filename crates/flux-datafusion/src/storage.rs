@@ -9,9 +9,16 @@
 //! [`SqliteEnvironmentStore`](crate::environment::SqliteEnvironmentStore).
 
 use crate::environment::{Environment, TableOverride};
-use crate::error::{EnvironmentError, IncrementalStateError, RunStoreError};
+use crate::error::{
+    BackfillStoreError, EnvironmentError, IncrementalStateError, LineageStoreError, RunStoreError,
+};
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
+use flux_engine::backfill::{
+    Backfill, BackfillId, BackfillIteration, BackfillProgress, BackfillStatus, IterationStatus,
+};
+use flux_engine::lineage::{BindingDirection, ResourceFingerprint};
+use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 /// Backend-agnostic storage interface for pipeline execution history.
@@ -166,4 +173,150 @@ pub trait IncrementalStateStorage: Send + Sync {
         &self,
         record: &IncrementalSchemaRecord,
     ) -> Result<(), IncrementalStateError>;
+}
+
+// ---------------------------------------------------------------------------
+// LineageStorage (planning doc 31)
+// ---------------------------------------------------------------------------
+
+/// A persisted resource binding from a pipeline node to an external resource.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredResourceBinding {
+    pub pipeline_id: String,
+    pub node_id: String,
+    pub direction: BindingDirection,
+    pub resource_fingerprint: ResourceFingerprint,
+    pub environment: String,
+    pub updated_at_ms: i64,
+}
+
+/// A runtime-observed lineage event: a source read or sink write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageObservation {
+    pub pipeline_id: String,
+    pub node_id: String,
+    pub run_id: String,
+    pub direction: BindingDirection,
+    pub resource_fingerprint: ResourceFingerprint,
+    pub environment: String,
+    pub observed_at_ms: i64,
+}
+
+/// Backend-agnostic storage interface for cross-pipeline lineage metadata
+/// (planning doc 31).
+///
+/// Stores two kinds of data:
+/// - **Resource bindings** — static mappings from pipeline nodes to external
+///   resources, updated on every pipeline save.
+/// - **Lineage observations** — runtime-observed resource accesses, recorded
+///   on every successful source read and sink write.
+///
+/// Implementations must be safe to share across threads (`Send + Sync`).
+pub trait LineageStorage: Send + Sync {
+    /// Replace all resource bindings for a pipeline in the given environment.
+    ///
+    /// Deletes any existing bindings for `(pipeline_id, environment)` and
+    /// inserts the new set. This is an atomic replace: a pipeline save
+    /// recomputes all fingerprints and stores them in one shot.
+    fn save_bindings(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        bindings: &[StoredResourceBinding],
+    ) -> Result<(), LineageStoreError>;
+
+    /// Load all resource bindings for a specific pipeline and environment.
+    fn load_bindings(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+    ) -> Result<Vec<StoredResourceBinding>, LineageStoreError>;
+
+    /// Load all resource bindings across all pipelines in an environment.
+    fn all_bindings(
+        &self,
+        environment: &str,
+    ) -> Result<Vec<StoredResourceBinding>, LineageStoreError>;
+
+    /// Delete all bindings for a pipeline (all environments).
+    fn delete_bindings(&self, pipeline_id: &str) -> Result<(), LineageStoreError>;
+
+    /// Record an observed lineage event (source read or sink write).
+    fn record_observation(&self, observation: &LineageObservation)
+    -> Result<(), LineageStoreError>;
+
+    /// Query observations within a time window for an environment.
+    fn query_observations(
+        &self,
+        environment: &str,
+        since_ms: i64,
+    ) -> Result<Vec<LineageObservation>, LineageStoreError>;
+
+    /// Delete observations older than the given timestamp.
+    /// Returns the number of rows deleted.
+    fn enforce_retention(&self, older_than_ms: i64) -> Result<u64, LineageStoreError>;
+}
+
+// ---------------------------------------------------------------------------
+// BackfillStorage (planning doc 33)
+// ---------------------------------------------------------------------------
+
+/// Backend-agnostic storage interface for backfill metadata.
+///
+/// Implementations must be safe to share across threads (`Send + Sync`).
+pub trait BackfillStorage: Send + Sync {
+    /// Insert a new backfill record.
+    fn create_backfill(&self, backfill: &Backfill) -> Result<(), BackfillStoreError>;
+
+    /// Insert a batch of iteration records for a backfill.
+    fn create_iterations(
+        &self,
+        iterations: &[BackfillIteration],
+    ) -> Result<(), BackfillStoreError>;
+
+    /// Load a backfill by ID.
+    fn get_backfill(&self, id: &BackfillId) -> Result<Option<Backfill>, BackfillStoreError>;
+
+    /// List backfills, optionally filtered by pipeline and/or status.
+    fn list_backfills(
+        &self,
+        pipeline_id: Option<&str>,
+        status: Option<BackfillStatus>,
+        limit: u32,
+    ) -> Result<Vec<Backfill>, BackfillStoreError>;
+
+    /// Load all iterations for a backfill.
+    fn list_iterations(
+        &self,
+        backfill_id: &BackfillId,
+    ) -> Result<Vec<BackfillIteration>, BackfillStoreError>;
+
+    /// Update the top-level backfill status and optional timestamps.
+    fn update_backfill_status(
+        &self,
+        id: &BackfillId,
+        status: BackfillStatus,
+        started_at: Option<&str>,
+        completed_at: Option<&str>,
+    ) -> Result<(), BackfillStoreError>;
+
+    /// Update a single iteration's status, run_id, error, and timestamps.
+    #[allow(clippy::too_many_arguments)]
+    fn update_iteration(
+        &self,
+        backfill_id: &BackfillId,
+        iteration_index: u32,
+        status: IterationStatus,
+        run_id: Option<&str>,
+        error: Option<&str>,
+        started_at: Option<&str>,
+        completed_at: Option<&str>,
+    ) -> Result<(), BackfillStoreError>;
+
+    /// Compute aggregated progress for a backfill.
+    fn get_progress(&self, backfill_id: &BackfillId)
+        -> Result<BackfillProgress, BackfillStoreError>;
+
+    /// Delete a backfill and its iterations.
+    fn delete_backfill(&self, id: &BackfillId) -> Result<bool, BackfillStoreError>;
 }

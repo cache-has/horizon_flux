@@ -55,9 +55,9 @@ use thiserror::Error;
 
 use flux_plugin_protocol::arrow_ipc::{ArrowIpcError, decode_record_batch, decode_schema_b64};
 use flux_plugin_protocol::{
-    Abort, BatchAck, CommitAck, ConfigureAck, ConfigureSink, ControlError, ErrorMsg, Frame, Hello,
-    HelloAck, MessageKind, PROTOCOL_VERSION, read_frame, read_json_frame, write_frame,
-    write_json_frame,
+    Abort, BatchAck, CommitAck, ConfigureAck, ConfigureSink, ControlError, DeclareResource,
+    ErrorMsg, Frame, Hello, HelloAck, MessageKind, PROTOCOL_VERSION, read_frame, read_json_frame,
+    write_frame, write_json_frame,
 };
 
 pub mod log;
@@ -117,6 +117,19 @@ pub trait Sink: Send {
     fn abort(&mut self, reason: &str) -> Result<(), SinkError> {
         let _ = reason;
         Ok(())
+    }
+
+    /// Returns a canonical, secret-free fingerprint identifying the resource
+    /// this sink writes to. Enables cross-pipeline lineage tracking.
+    ///
+    /// Return `None` (the default) if the sink does not write to an
+    /// identifiable resource or does not wish to participate in lineage.
+    ///
+    /// Called once after [`configure`](Self::configure) succeeds. The
+    /// returned fingerprint is sent to the host via `DeclareResource`
+    /// (protocol kind `0x15`).
+    fn resource_fingerprint(&self) -> Option<String> {
+        None
     }
 }
 
@@ -319,6 +332,16 @@ where
         )?;
         writer.flush()?;
         return Ok(());
+    }
+    // Declare the resource fingerprint for lineage, if the sink provides one.
+    if let Some(fp) = sink.resource_fingerprint() {
+        write_json_frame(
+            writer,
+            MessageKind::DeclareResource,
+            &DeclareResource {
+                resource_fingerprint: fp,
+            },
+        )?;
     }
     write_json_frame(
         writer,
@@ -532,6 +555,88 @@ mod tests {
         assert_eq!(commit_ack.rows, 3);
         assert_eq!(commit_ack.bytes, 42);
         assert_eq!(commit_ack.duration_ms, 7);
+    }
+
+    /// A sink that declares a resource fingerprint for lineage.
+    #[derive(Default)]
+    struct LineageSink {
+        rows: u64,
+    }
+
+    impl Sink for LineageSink {
+        type Config = serde_json::Value;
+        fn configure(&mut self, _: serde_json::Value, _: &Schema) -> Result<(), SinkError> {
+            Ok(())
+        }
+        fn write_batch(&mut self, b: &RecordBatch) -> Result<(), SinkError> {
+            self.rows += b.num_rows() as u64;
+            Ok(())
+        }
+        fn commit(&mut self) -> Result<WriteStats, SinkError> {
+            Ok(WriteStats {
+                rows_written: self.rows,
+                bytes_written: 0,
+                duration: Duration::from_millis(1),
+            })
+        }
+        fn resource_fingerprint(&self) -> Option<String> {
+            Some("postgres://db:5432/app/public.events".into())
+        }
+    }
+
+    #[test]
+    fn declare_resource_sent_when_fingerprint_provided() {
+        let mut input = Vec::new();
+        write_json_frame(
+            &mut input,
+            MessageKind::Hello,
+            &Hello {
+                protocol: PROTOCOL_VERSION,
+                flux_version: "test".into(),
+            },
+        )
+        .unwrap();
+        write_json_frame(
+            &mut input,
+            MessageKind::ConfigureSink,
+            &ConfigureSink {
+                sink_type: "lineage".into(),
+                config: serde_json::json!({}),
+                input_schema_ipc_b64: encode_schema_b64(&schema()).unwrap(),
+                materialization: None,
+            },
+        )
+        .unwrap();
+        let bytes = encode_record_batch(&batch()).unwrap();
+        write_frame(&mut input, MessageKind::RecordBatch, &bytes).unwrap();
+        write_json_frame(&mut input, MessageKind::Commit, &serde_json::json!({})).unwrap();
+        write_json_frame(&mut input, MessageKind::Shutdown, &serde_json::json!({})).unwrap();
+
+        let mut output: Vec<u8> = Vec::new();
+        run_io(
+            PluginInfo {
+                name: "lineage".into(),
+                version: "0.1.0".into(),
+            },
+            LineageSink::default(),
+            &mut Cursor::new(input),
+            &mut output,
+        )
+        .unwrap();
+
+        // Replay responses: HelloAck → DeclareResource → ConfigureAck → BatchAck → CommitAck
+        let mut out = Cursor::new(output);
+        let _: HelloAck = read_json_frame(&mut out, MessageKind::HelloAck).unwrap();
+        let dr: DeclareResource = read_json_frame(&mut out, MessageKind::DeclareResource).unwrap();
+        assert_eq!(
+            dr.resource_fingerprint,
+            "postgres://db:5432/app/public.events"
+        );
+        let cfg_ack: ConfigureAck = read_json_frame(&mut out, MessageKind::ConfigureAck).unwrap();
+        assert!(cfg_ack.accepted);
+        let _: BatchAck = read_json_frame(&mut out, MessageKind::BatchAck).unwrap();
+        let commit: CommitAck = read_json_frame(&mut out, MessageKind::CommitAck).unwrap();
+        assert_eq!(commit.rows, 3);
     }
 
     struct RejectingSink;

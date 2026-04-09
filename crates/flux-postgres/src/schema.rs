@@ -122,6 +122,35 @@ CREATE TABLE IF NOT EXISTS table_overrides (
     table_name  TEXT NOT NULL,
     PRIMARY KEY (environment, schema_name, table_name)
 );
+
+-- Cross-pipeline lineage: static resource bindings (planning doc 31).
+CREATE TABLE IF NOT EXISTS pipeline_resource_bindings (
+    pipeline_id          TEXT   NOT NULL,
+    node_id              TEXT   NOT NULL,
+    direction            TEXT   NOT NULL,
+    resource_fingerprint TEXT   NOT NULL,
+    environment          TEXT   NOT NULL,
+    updated_at           BIGINT NOT NULL,
+    PRIMARY KEY (pipeline_id, node_id, environment)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prb_fingerprint
+    ON pipeline_resource_bindings (resource_fingerprint, environment);
+
+-- Cross-pipeline lineage: runtime-observed resource accesses (planning doc 31).
+CREATE TABLE IF NOT EXISTS lineage_observations (
+    pipeline_id          TEXT   NOT NULL,
+    node_id              TEXT   NOT NULL,
+    run_id               TEXT   NOT NULL,
+    direction            TEXT   NOT NULL,
+    resource_fingerprint TEXT   NOT NULL,
+    environment          TEXT   NOT NULL,
+    observed_at          BIGINT NOT NULL,
+    PRIMARY KEY (run_id, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lo_fingerprint
+    ON lineage_observations (resource_fingerprint, environment, observed_at);
 "#;
 
 /// Ensure the database schema is up to date.

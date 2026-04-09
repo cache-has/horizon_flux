@@ -19,7 +19,10 @@ import {
   type SimulationLinkDatum,
 } from 'd3-force';
 
-import type { PipelineNodeData } from '../types/pipeline';
+/** Minimal data contract for nodes used with this hook. */
+export interface ForceLayoutNodeData extends Record<string, unknown> {
+  pinnedPosition: boolean;
+}
 
 /** d3-force simulation node that carries React Flow node data. */
 export interface SimNode extends SimulationNodeDatum {
@@ -160,10 +163,10 @@ export interface UseForceLayoutOptions {
  * Runs simulation when nodes are initialized and when the graph structure
  * changes (node/edge count). Respects pinned nodes via fx/fy.
  */
-export function useForceLayout(
-  nodes: Node<PipelineNodeData>[],
+export function useForceLayout<T extends ForceLayoutNodeData = ForceLayoutNodeData>(
+  nodes: Node<T>[],
   edges: Edge[],
-  setNodes: (updater: (current: Node<PipelineNodeData>[]) => Node<PipelineNodeData>[]) => void,
+  setNodes: (updater: (current: Node<T>[]) => Node<T>[]) => void,
   options: UseForceLayoutOptions = {},
 ) {
   const { enabled = true, onSettled } = options;
@@ -194,7 +197,7 @@ export function useForceLayout(
 
   const runSimulation = useCallback(
     (
-      rfNodes: Node<PipelineNodeData>[],
+      rfNodes: Node<T>[],
       rfEdges: Edge[],
       ignorePin = false,
     ) => {

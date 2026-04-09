@@ -325,6 +325,54 @@ function PluginsButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function LineageButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="Project lineage view"
+    >
+      Lineage
+    </button>
+  );
+}
+
+function TriggersButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="Manage triggers"
+    >
+      Triggers
+    </button>
+  );
+}
+
+function BackfillsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="Manage backfills"
+    >
+      Backfills
+    </button>
+  );
+}
+
+function CatalogButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="Resource catalog"
+    >
+      Catalog
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Toolbar
 // ---------------------------------------------------------------------------
@@ -334,11 +382,19 @@ export function CanvasToolbar({
   onSystemInfoClick,
   onHistoryClick,
   onPluginsClick,
+  onLineageClick,
+  onTriggersClick,
+  onBackfillsClick,
+  onCatalogClick,
 }: {
   onSecretsClick?: () => void;
   onSystemInfoClick?: () => void;
   onHistoryClick?: () => void;
   onPluginsClick?: () => void;
+  onLineageClick?: () => void;
+  onTriggersClick?: () => void;
+  onBackfillsClick?: () => void;
+  onCatalogClick?: () => void;
 }) {
   return (
     <div className="canvas-toolbar">
@@ -346,6 +402,10 @@ export function CanvasToolbar({
       <div className="canvas-toolbar__separator" />
       <EnvironmentSelector />
       <div className="canvas-toolbar__spacer" />
+      {onLineageClick && <LineageButton onClick={onLineageClick} />}
+      {onCatalogClick && <CatalogButton onClick={onCatalogClick} />}
+      {onTriggersClick && <TriggersButton onClick={onTriggersClick} />}
+      {onBackfillsClick && <BackfillsButton onClick={onBackfillsClick} />}
       {onHistoryClick && <HistoryButton onClick={onHistoryClick} />}
       {onPluginsClick && <PluginsButton onClick={onPluginsClick} />}
       {onSystemInfoClick && <SystemInfoButton onClick={onSystemInfoClick} />}

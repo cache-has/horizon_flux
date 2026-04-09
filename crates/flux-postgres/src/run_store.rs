@@ -5,11 +5,14 @@
 
 use crate::block_on;
 use deadpool_postgres::Pool;
-use flux_datafusion::error::{IncrementalStateError, RunStoreError};
+use flux_datafusion::error::{IncrementalStateError, LineageStoreError, RunStoreError};
 use flux_datafusion::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use flux_datafusion::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
-use flux_datafusion::storage::{IncrementalStateStorage, RunStorage};
+use flux_datafusion::storage::{
+    IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage, StoredResourceBinding,
+};
 use flux_engine::NodeId;
+use flux_engine::lineage::{BindingDirection, ResourceFingerprint};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -108,8 +111,9 @@ impl RunStorage for PostgresRunStore {
     ) -> Result<(), RunStoreError> {
         block_on(async {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
-            let json = serde_json::to_string(results)
-                .map_err(|e| RunStoreError::Database(format!("failed to serialize test results: {e}")))?;
+            let json = serde_json::to_string(results).map_err(|e| {
+                RunStoreError::Database(format!("failed to serialize test results: {e}"))
+            })?;
             client
                 .execute(
                     "UPDATE pipeline_runs SET test_results = $1 WHERE id = $2",
@@ -544,6 +548,225 @@ impl IncrementalStateStorage for PostgresRunStore {
                 .map_err(inc_err)?;
             Ok(())
         })
+    }
+}
+
+fn lineage_err(e: impl std::fmt::Display) -> LineageStoreError {
+    LineageStoreError::Database(e.to_string())
+}
+
+impl LineageStorage for PostgresRunStore {
+    fn save_bindings(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        bindings: &[StoredResourceBinding],
+    ) -> Result<(), LineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(lineage_err)?;
+            client
+                .execute(
+                    "DELETE FROM pipeline_resource_bindings
+                     WHERE pipeline_id = $1 AND environment = $2",
+                    &[&pipeline_id, &environment],
+                )
+                .await
+                .map_err(lineage_err)?;
+            for b in bindings {
+                client
+                    .execute(
+                        "INSERT INTO pipeline_resource_bindings
+                            (pipeline_id, node_id, direction, resource_fingerprint, environment,
+                             updated_at)
+                         VALUES ($1, $2, $3, $4, $5, $6)",
+                        &[
+                            &b.pipeline_id,
+                            &b.node_id,
+                            &b.direction.to_string(),
+                            &b.resource_fingerprint.0,
+                            &b.environment,
+                            &b.updated_at_ms,
+                        ],
+                    )
+                    .await
+                    .map_err(lineage_err)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn load_bindings(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+    ) -> Result<Vec<StoredResourceBinding>, LineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(lineage_err)?;
+            let rows = client
+                .query(
+                    "SELECT pipeline_id, node_id, direction, resource_fingerprint, environment,
+                            updated_at
+                     FROM pipeline_resource_bindings
+                     WHERE pipeline_id = $1 AND environment = $2
+                     ORDER BY node_id",
+                    &[&pipeline_id, &environment],
+                )
+                .await
+                .map_err(lineage_err)?;
+            Ok(rows.iter().map(pg_row_to_binding).collect())
+        })
+    }
+
+    fn all_bindings(
+        &self,
+        environment: &str,
+    ) -> Result<Vec<StoredResourceBinding>, LineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(lineage_err)?;
+            let rows = client
+                .query(
+                    "SELECT pipeline_id, node_id, direction, resource_fingerprint, environment,
+                            updated_at
+                     FROM pipeline_resource_bindings
+                     WHERE environment = $1
+                     ORDER BY pipeline_id, node_id",
+                    &[&environment],
+                )
+                .await
+                .map_err(lineage_err)?;
+            Ok(rows.iter().map(pg_row_to_binding).collect())
+        })
+    }
+
+    fn delete_bindings(&self, pipeline_id: &str) -> Result<(), LineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(lineage_err)?;
+            client
+                .execute(
+                    "DELETE FROM pipeline_resource_bindings WHERE pipeline_id = $1",
+                    &[&pipeline_id],
+                )
+                .await
+                .map_err(lineage_err)?;
+            Ok(())
+        })
+    }
+
+    fn record_observation(
+        &self,
+        observation: &LineageObservation,
+    ) -> Result<(), LineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(lineage_err)?;
+            client
+                .execute(
+                    "INSERT INTO lineage_observations
+                        (pipeline_id, node_id, run_id, direction, resource_fingerprint,
+                         environment, observed_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     ON CONFLICT (run_id, node_id) DO UPDATE SET
+                        pipeline_id          = EXCLUDED.pipeline_id,
+                        direction            = EXCLUDED.direction,
+                        resource_fingerprint = EXCLUDED.resource_fingerprint,
+                        environment          = EXCLUDED.environment,
+                        observed_at          = EXCLUDED.observed_at",
+                    &[
+                        &observation.pipeline_id,
+                        &observation.node_id,
+                        &observation.run_id,
+                        &observation.direction.to_string(),
+                        &observation.resource_fingerprint.0,
+                        &observation.environment,
+                        &observation.observed_at_ms,
+                    ],
+                )
+                .await
+                .map_err(lineage_err)?;
+            Ok(())
+        })
+    }
+
+    fn query_observations(
+        &self,
+        environment: &str,
+        since_ms: i64,
+    ) -> Result<Vec<LineageObservation>, LineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(lineage_err)?;
+            let rows = client
+                .query(
+                    "SELECT pipeline_id, node_id, run_id, direction, resource_fingerprint,
+                            environment, observed_at
+                     FROM lineage_observations
+                     WHERE environment = $1 AND observed_at >= $2
+                     ORDER BY observed_at DESC",
+                    &[&environment, &since_ms],
+                )
+                .await
+                .map_err(lineage_err)?;
+            Ok(rows.iter().map(pg_row_to_observation).collect())
+        })
+    }
+
+    fn enforce_retention(&self, older_than_ms: i64) -> Result<u64, LineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(lineage_err)?;
+            let deleted = client
+                .execute(
+                    "DELETE FROM lineage_observations WHERE observed_at < $1",
+                    &[&older_than_ms],
+                )
+                .await
+                .map_err(lineage_err)?;
+            Ok(deleted)
+        })
+    }
+}
+
+fn pg_row_to_binding(row: &tokio_postgres::Row) -> StoredResourceBinding {
+    let direction_str: String = row.get(2);
+    let direction = match direction_str.as_str() {
+        "source" => BindingDirection::Source,
+        _ => BindingDirection::Sink,
+    };
+    StoredResourceBinding {
+        pipeline_id: row.get(0),
+        node_id: row.get(1),
+        direction,
+        resource_fingerprint: ResourceFingerprint::new(row.get::<_, String>(3)),
+        environment: row.get(4),
+        updated_at_ms: row.get(5),
+    }
+}
+
+fn pg_row_to_observation(row: &tokio_postgres::Row) -> LineageObservation {
+    let direction_str: String = row.get(3);
+    let direction = match direction_str.as_str() {
+        "source" => BindingDirection::Source,
+        _ => BindingDirection::Sink,
+    };
+    LineageObservation {
+        pipeline_id: row.get(0),
+        node_id: row.get(1),
+        run_id: row.get(2),
+        direction,
+        resource_fingerprint: ResourceFingerprint::new(row.get::<_, String>(4)),
+        environment: row.get(5),
+        observed_at_ms: row.get(6),
     }
 }
 

@@ -72,6 +72,7 @@ version without disturbing the framing layer.
 | `0x02` | HelloAck      | plugin → host  | JSON               |
 | `0x10` | ConfigureSink | host → plugin  | JSON               |
 | `0x11` | ConfigureAck  | plugin → host  | JSON               |
+| `0x15` | DeclareResource | plugin → host | JSON              |
 | `0x20` | RecordBatch   | host → plugin  | Arrow IPC stream   |
 | `0x21` | BatchAck      | plugin → host  | JSON               |
 | `0x30` | Commit        | host → plugin  | JSON (`{}`)        |
@@ -209,6 +210,25 @@ to send `Shutdown` (or `SIGKILL` if shutdown also fails).
 Payload is `{}`. The plugin must exit with status `0` within the shutdown
 timeout (default 5s) or be killed.
 
+### 3.11 `DeclareResource` (plugin → host)
+
+```json
+{ "resource_fingerprint": "postgres://db.example.com:5432/analytics/public.orders" }
+```
+
+Optional. Sent after configuration succeeds (before `ConfigureAck` or
+immediately after) to declare the canonical, secret-free identifier of the
+resource this sink writes to. The host uses this fingerprint for cross-pipeline
+lineage tracking (see `planning/31-cross-pipeline-lineage.md`).
+
+Plugins that do not send `DeclareResource` do not participate in static
+lineage; their cross-pipeline relationships can still be discovered via
+runtime-observed lineage.
+
+The fingerprint must follow the same canonicalization rules as built-in
+connectors: absolute paths, lowercased hostnames, no credentials. See
+`crates/flux-connectors/src/fingerprint.rs` for examples.
+
 ## 4. Data Payloads (Arrow IPC)
 
 `RecordBatch` frames carry the bytes of an Arrow IPC **stream-format**
@@ -233,6 +253,8 @@ host                                   plugin
  |◀--------------------------------------|
  |  ConfigureSink (0x10)                 |
  |--------------------------------------▶|
+ |              DeclareResource (0x15)?  |  ← optional
+ |◀--------------------------------------|
  |                       ConfigureAck    |
  |◀--------------------------------------|
  |  RecordBatch (0x20)   ─┐              |

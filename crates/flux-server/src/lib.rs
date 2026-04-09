@@ -18,7 +18,7 @@ pub mod static_files;
 pub mod ws;
 
 pub use error::ServerError;
-pub use state::{AppState, PluginEvent};
+pub use state::{AppState, CatalogEvent, PluginEvent};
 
 use std::net::IpAddr;
 use std::process;
@@ -69,7 +69,15 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
         .nest("/environments", api::environments::router())
         .nest("/secrets", api::secrets::router())
         .nest("/system", api::system::router())
-        .nest("/plugins", api::plugins::router());
+        .nest("/plugins", api::plugins::router())
+        .nest("/lineage", api::lineage::router())
+        .nest("/triggers", api::triggers::router())
+        .nest("/backfills", api::backfills::router())
+        .nest("/catalog", api::catalog::router());
+
+    // Webhook trigger endpoints live outside /api — they're called by
+    // external systems, not the frontend.
+    let webhook_routes = Router::new().nest("/webhook", api::webhook::router());
 
     // CORS: allow localhost origins for single-user mode.
     let cors = CorsLayer::new()
@@ -84,6 +92,7 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
 
     let app = Router::new()
         .nest("/api", api_routes)
+        .nest("/triggers", webhook_routes)
         .route("/ws", get(ws::ws_handler))
         .with_state(app_state)
         .layer(cors);

@@ -296,6 +296,9 @@ async fn snapshot_diff(
         full_refresh: false,
         bootstrap_incremental: false,
         dry_run_no_sinks: true,
+        lineage_store: None,
+        fingerprint_fn: None,
+        pipeline_id: None,
     };
     let (pipeline_result, _run) = PipelineExecutor::execute(
         &record.pipeline,

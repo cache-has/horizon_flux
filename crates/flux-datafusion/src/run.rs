@@ -62,6 +62,13 @@ pub enum ExecutionEvent {
         status: RunStatus,
         duration_ms: u64,
     },
+    /// A trigger was created, updated, enabled, disabled, or deleted.
+    TriggerChanged {
+        trigger_id: String,
+        action: String,
+    },
+    /// Backfill progress event (planning doc 33).
+    Backfill(crate::backfill::BackfillEvent),
 }
 
 /// Unique identifier for a pipeline run.

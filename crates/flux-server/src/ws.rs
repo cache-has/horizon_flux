@@ -35,10 +35,32 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     debug!("WebSocket client connected");
     let mut rx = state.event_tx.subscribe();
     let mut plugin_rx = state.plugin_event_tx.subscribe();
+    let mut catalog_rx = state.catalog_event_tx.subscribe();
     let mut filter: Option<HashSet<RunId>> = None;
 
     loop {
         tokio::select! {
+            // Catalog events (metadata annotation changes). Not subject to
+            // run-id filtering.
+            result = catalog_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        match serde_json::to_string(&event) {
+                            Ok(json) => {
+                                if socket.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => warn!("Failed to serialize catalog event: {e}"),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("WebSocket client lagged, dropped {n} catalog events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+
             // Plugin lifecycle events. Not subject to run-id filtering.
             result = plugin_rx.recv() => {
                 match result {
@@ -128,6 +150,8 @@ fn event_matches_filter(event: &ExecutionEvent, ids: &HashSet<RunId>) -> bool {
         | ExecutionEvent::TestNodePassed { run_id, .. }
         | ExecutionEvent::TestNodeFailed { run_id, .. }
         | ExecutionEvent::RunCompleted { run_id, .. } => run_id,
+        // Trigger and backfill events are not scoped to a run — always pass through.
+        ExecutionEvent::TriggerChanged { .. } | ExecutionEvent::Backfill(_) => return true,
     };
     ids.contains(run_id)
 }

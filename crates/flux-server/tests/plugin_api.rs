@@ -3,13 +3,14 @@
 
 //! Integration tests for the plugins API.
 
+use flux_scheduler;
 use std::fs;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use flux_datafusion::{SqliteEnvironmentStore, SqliteRunStore};
+use flux_datafusion::{SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore};
 use flux_engine::SqlitePipelineStore;
 use flux_plugin_host::{PluginRegistry, discover_plugins_in};
 use flux_server::AppState;
@@ -58,6 +59,7 @@ fn state_with_registry_and_roots(
         pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         incremental_state_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
+        lineage_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(flux_connectors::ConnectorRegistry::new()),
         environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(std::sync::Mutex::new(
@@ -74,8 +76,13 @@ fn state_with_registry_and_roots(
             config_source: "default".to_string(),
         },
         plugin_registry: Arc::new(std::sync::RwLock::new(Arc::new(registry))),
+        backfill_store: Arc::new(SqliteBackfillStore::open_in_memory().unwrap()),
+        trigger_store: Arc::new(flux_scheduler::SqliteTriggerStore::open_in_memory().unwrap()),
+        scheduler: None,
         plugin_cwd: cwd,
         plugin_scan_roots: Some(scan_roots),
+        metadata_dir: None,
+        catalog_event_tx: AppState::new_catalog_event_channel(),
     }
 }
 

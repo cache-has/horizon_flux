@@ -11,6 +11,7 @@ members = [
     "crates/flux-plugin-host",
     "crates/flux-plugin-protocol",
     "crates/flux-plugin-sdk",
+    "crates/flux-scheduler",
     "examples/plugins/parquet-plugin",
 ]
 resolver = "2"
@@ -33,6 +34,7 @@ flux-postgres = { path = "crates/flux-postgres" }
 flux-plugin-host = { path = "crates/flux-plugin-host" }
 flux-plugin-protocol = { path = "crates/flux-plugin-protocol" }
 flux-plugin-sdk = { path = "crates/flux-plugin-sdk" }
+flux-scheduler = { path = "crates/flux-scheduler" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -52,12 +54,15 @@ sqlparser = { version = "0.61", features = ["visitor"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 
 # Database
 rusqlite = { version = "0.39", features = ["bundled"] }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
 deadpool-postgres = "0.14"
 chrono = "0.4"
+chrono-tz = "0.10"
+croner = "3"
 
 # Error handling
 thiserror = "2"
@@ -91,6 +96,7 @@ toml = "0.8"
 
 # Filesystem
 dirs = "6"
+glob = "0.3"
 directories = "5"
 semver = "1"
 dotenvy = "0.15"

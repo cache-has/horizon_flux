@@ -52,6 +52,7 @@ pub(crate) struct Stores {
     pub(crate) pipeline_store: Arc<dyn flux_engine::PipelineStorage>,
     pub(crate) run_store: Arc<dyn flux_datafusion::RunStorage>,
     pub(crate) incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage>,
+    pub(crate) lineage_store: Arc<dyn flux_datafusion::LineageStorage>,
     pub(crate) connector_registry: flux_connectors::ConnectorRegistry,
     pub(crate) output_cache: flux_datafusion::OutputCache,
 }
@@ -74,6 +75,7 @@ pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
         pipeline_store: meta.pipeline_store,
         run_store: meta.run_store,
         incremental_state_store: meta.incremental_state_store,
+        lineage_store: meta.lineage_store,
         connector_registry,
         output_cache,
     })
@@ -291,6 +293,9 @@ async fn execute_pipeline(
         full_refresh,
         bootstrap_incremental,
         dry_run_no_sinks: false,
+        lineage_store: Some(Arc::clone(&stores.lineage_store)),
+        fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
+        pipeline_id: Some(record.id.0.to_string()),
     };
 
     let result =
@@ -410,6 +415,9 @@ fn print_progress_event(event: &flux_datafusion::ExecutionEvent) {
                 colored_status,
                 color::dim(&format_duration_ms(*duration_ms))
             );
+        }
+        ExecutionEvent::TriggerChanged { .. } | ExecutionEvent::Backfill(_) => {
+            // Not relevant to CLI pipeline run output.
         }
     }
 }
@@ -970,6 +978,9 @@ async fn execute_tests(
             full_refresh: false,
             bootstrap_incremental: false,
             dry_run_no_sinks: true,
+            lineage_store: None,
+            fingerprint_fn: None,
+            pipeline_id: None,
         };
 
         let exec_result =

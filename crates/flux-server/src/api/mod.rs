@@ -3,14 +3,19 @@
 
 //! API route modules and shared types.
 
+pub mod backfills;
+pub mod catalog;
 pub mod connectors;
 pub mod environments;
+pub mod lineage;
 pub mod pipelines;
 pub mod plugins;
 pub mod preview;
 pub mod secrets;
 pub mod snapshot;
 pub mod system;
+pub mod triggers;
+pub mod webhook;
 
 use axum::Json;
 use axum::http::StatusCode;

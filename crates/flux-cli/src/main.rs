@@ -7,10 +7,13 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+mod backfill;
+mod catalog;
 pub mod color;
 pub mod config;
 mod environment;
 mod incremental;
+mod lineage;
 mod metadata;
 mod pipeline;
 mod plugin;
@@ -18,6 +21,7 @@ mod secret;
 mod server;
 mod snapshot;
 mod snippet;
+mod trigger;
 mod udf;
 
 /// Exit code for pipeline execution failures (distinct from general errors).
@@ -196,6 +200,26 @@ enum Command {
         #[command(subcommand)]
         action: snippet::SnippetAction,
     },
+    /// Cross-pipeline lineage: graph, upstream/downstream, impact, cycles, orphans.
+    Lineage {
+        #[command(subcommand)]
+        action: lineage::LineageAction,
+    },
+    /// Resource catalog: list, show, search, describe, validate.
+    Catalog {
+        #[command(subcommand)]
+        action: catalog::CatalogAction,
+    },
+    /// Manage scheduling triggers (cron, interval, file arrival, webhook, pipeline completion).
+    Trigger {
+        #[command(subcommand)]
+        action: Box<trigger::TriggerAction>,
+    },
+    /// Backfill a pipeline across a range of parameter values.
+    Backfill {
+        #[command(subcommand)]
+        action: backfill::BackfillAction,
+    },
     /// Run data quality tests in a pipeline (skip sink writes).
     Test {
         /// Pipeline name or UUID (omit when using --all).
@@ -355,6 +379,22 @@ fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()>
 
         Some(Command::Snippet { action }) => {
             snippet::handle(action, format).context("snippet command failed")
+        }
+
+        Some(Command::Lineage { action }) => {
+            lineage::handle(action, format, metadata_url).context("lineage command failed")
+        }
+
+        Some(Command::Catalog { action }) => {
+            catalog::handle(action, format, metadata_url).context("catalog command failed")
+        }
+
+        Some(Command::Trigger { action }) => {
+            trigger::handle(*action, format, metadata_url).context("trigger command failed")
+        }
+
+        Some(Command::Backfill { action }) => {
+            backfill::handle(action, format, metadata_url).context("backfill command failed")
         }
 
         Some(Command::Test {
@@ -1349,6 +1389,216 @@ mod tests {
     }
 
     #[test]
+    fn parse_lineage_subcommands() {
+        for args in [
+            vec!["horizon-flux", "lineage", "graph"],
+            vec!["horizon-flux", "lineage", "graph", "--dot"],
+            vec!["horizon-flux", "lineage", "graph", "--env", "prod"],
+            vec!["horizon-flux", "lineage", "upstream", "my-pipe"],
+            vec![
+                "horizon-flux",
+                "lineage",
+                "downstream",
+                "my-pipe",
+                "-e",
+                "dev",
+            ],
+            vec!["horizon-flux", "lineage", "impact", "my-pipe"],
+            vec!["horizon-flux", "lineage", "cycles"],
+            vec!["horizon-flux", "lineage", "orphans", "--env", "prod"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.command, Some(Command::Lineage { .. })));
+        }
+    }
+
+    #[test]
+    fn parse_trigger_list() {
+        let cli = Cli::try_parse_from(["horizon-flux", "trigger", "list"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Trigger { .. })));
+    }
+
+    #[test]
+    fn parse_trigger_list_with_filters() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "trigger",
+            "list",
+            "--pipeline",
+            "my-pipe",
+            "--env",
+            "prod",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Trigger { action }) => match *action {
+                trigger::TriggerAction::List { pipeline, env } => {
+                    assert_eq!(pipeline.as_deref(), Some("my-pipe"));
+                    assert_eq!(env.as_deref(), Some("prod"));
+                }
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Trigger"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_show() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "trigger",
+            "show",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Trigger { action }) => match *action {
+                trigger::TriggerAction::Show { trigger_id } => {
+                    assert_eq!(trigger_id, "550e8400-e29b-41d4-a716-446655440000");
+                }
+                _ => panic!("expected Show"),
+            },
+            _ => panic!("expected Trigger"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_enable_disable() {
+        for (sub, check_enable) in [("enable", true), ("disable", false)] {
+            let cli = Cli::try_parse_from([
+                "horizon-flux",
+                "trigger",
+                sub,
+                "550e8400-e29b-41d4-a716-446655440000",
+            ])
+            .unwrap();
+            match cli.command {
+                Some(Command::Trigger { action }) => {
+                    if check_enable {
+                        assert!(matches!(*action, trigger::TriggerAction::Enable { .. }));
+                    } else {
+                        assert!(matches!(*action, trigger::TriggerAction::Disable { .. }));
+                    }
+                }
+                _ => panic!("expected Trigger"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_trigger_create_cron() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "trigger",
+            "create",
+            "--pipeline",
+            "etl",
+            "--kind",
+            "cron",
+            "--expression",
+            "0 */6 * * *",
+            "--env",
+            "prod",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Trigger { action }) => match *action {
+                trigger::TriggerAction::Create {
+                    pipeline,
+                    kind,
+                    expression,
+                    env,
+                    ..
+                } => {
+                    assert_eq!(pipeline, "etl");
+                    assert_eq!(kind, "cron");
+                    assert_eq!(expression.as_deref(), Some("0 */6 * * *"));
+                    assert_eq!(env, "prod");
+                }
+                _ => panic!("expected Create"),
+            },
+            _ => panic!("expected Trigger"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_delete() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "trigger",
+            "delete",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Trigger { action }) => {
+                assert!(matches!(*action, trigger::TriggerAction::Delete { .. }));
+            }
+            _ => panic!("expected Trigger"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_history() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "trigger",
+            "history",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "--limit",
+            "25",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Trigger { action }) => match *action {
+                trigger::TriggerAction::History { trigger_id, limit } => {
+                    assert_eq!(trigger_id, "550e8400-e29b-41d4-a716-446655440000");
+                    assert_eq!(limit, 25);
+                }
+                _ => panic!("expected History"),
+            },
+            _ => panic!("expected Trigger"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_history_default_limit() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "trigger",
+            "history",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Trigger { action }) => match *action {
+                trigger::TriggerAction::History { limit, .. } => {
+                    assert_eq!(limit, 50);
+                }
+                _ => panic!("expected History"),
+            },
+            _ => panic!("expected Trigger"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_fire() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "trigger",
+            "fire",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Trigger { action }) => {
+                assert!(matches!(*action, trigger::TriggerAction::Fire { .. }));
+            }
+            _ => panic!("expected Trigger"),
+        }
+    }
+
+    #[test]
     fn parse_test_all() {
         let cli = Cli::try_parse_from(["horizon-flux", "test", "--all"]).unwrap();
         match cli.command {
@@ -1358,5 +1608,144 @@ mod tests {
             }
             _ => panic!("expected Test"),
         }
+    }
+
+    #[test]
+    fn parse_backfill_start_date_range() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "backfill",
+            "start",
+            "my-pipeline",
+            "--env",
+            "prod",
+            "--date-range",
+            "2024-01-01..2024-01-31",
+            "--granularity",
+            "day",
+            "--var-mapping",
+            "run_date=$iteration.start",
+            "--concurrency",
+            "4",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Backfill { action }) => match action {
+                backfill::BackfillAction::Start {
+                    pipeline,
+                    env,
+                    date_range,
+                    granularity,
+                    concurrency,
+                    ..
+                } => {
+                    assert_eq!(pipeline, "my-pipeline");
+                    assert_eq!(env, "prod");
+                    assert_eq!(date_range.as_deref(), Some("2024-01-01..2024-01-31"));
+                    assert_eq!(granularity, "day");
+                    assert_eq!(concurrency, 4);
+                }
+                _ => panic!("expected Start"),
+            },
+            _ => panic!("expected Backfill"),
+        }
+    }
+
+    #[test]
+    fn parse_backfill_start_list() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "backfill",
+            "start",
+            "my-pipeline",
+            "--list",
+            "US,EU,APAC",
+            "--var-mapping",
+            "region=$iteration.value",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Backfill { action }) => match action {
+                backfill::BackfillAction::Start { list, .. } => {
+                    assert_eq!(list.as_deref(), Some("US,EU,APAC"));
+                }
+                _ => panic!("expected Start"),
+            },
+            _ => panic!("expected Backfill"),
+        }
+    }
+
+    #[test]
+    fn parse_backfill_list() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "backfill",
+            "list",
+            "--pipeline",
+            "my-pipe",
+            "--status",
+            "running",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Backfill { action }) => match action {
+                backfill::BackfillAction::List {
+                    pipeline, status, ..
+                } => {
+                    assert_eq!(pipeline.as_deref(), Some("my-pipe"));
+                    assert_eq!(status.as_deref(), Some("running"));
+                }
+                _ => panic!("expected List"),
+            },
+            _ => panic!("expected Backfill"),
+        }
+    }
+
+    #[test]
+    fn parse_backfill_status() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "backfill",
+            "status",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::Backfill { .. })));
+    }
+
+    #[test]
+    fn parse_backfill_resume() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "backfill",
+            "resume",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::Backfill { .. })));
+    }
+
+    #[test]
+    fn parse_backfill_cancel() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "backfill",
+            "cancel",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::Backfill { .. })));
+    }
+
+    #[test]
+    fn parse_backfill_delete() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "backfill",
+            "delete",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::Backfill { .. })));
     }
 }

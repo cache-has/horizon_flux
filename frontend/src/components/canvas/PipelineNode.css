@@ -152,6 +152,33 @@
   pointer-events: auto;
 }
 
+/* Catalog resource badge (doc 34) */
+.pipeline-node__catalog-badge {
+  position: absolute;
+  bottom: -6px;
+  left: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--bg, #fff);
+  border-radius: 50%;
+  background: #6366f1;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.pipeline-node__catalog-badge:hover {
+  background: #4f46e5;
+  transform: scale(1.15);
+}
+
 /* Hover tooltip */
 .pipeline-node__tooltip {
   margin-top: 6px;

@@ -8,8 +8,12 @@
 
 import { useEffect, useRef } from 'react';
 import type { MaterializationReceipt } from '../api/pipelines';
+import type { BackfillProgress } from '../api/backfills';
 import { usePipelineStore } from '../stores/pipelineStore';
 import { usePluginStore } from '../stores/pluginStore';
+import { useTriggerStore } from '../stores/triggerStore';
+import { useBackfillStore } from '../stores/backfillStore';
+import { useCatalogStore } from '../stores/catalogStore';
 
 /** Matches the backend's ExecutionEvent variants (serialized as tagged JSON). */
 interface NodeStartedEvent {
@@ -70,6 +74,64 @@ interface PluginRegistryReloadedEvent {
   invalid_count: number;
 }
 
+interface TriggerChangedEvent {
+  type: 'trigger_changed';
+  trigger_id: string;
+  action: string;
+}
+
+interface BackfillStartedEvent {
+  type: 'backfill_started';
+  backfill_id: string;
+  total_iterations: number;
+}
+
+interface IterationStartedEvent {
+  type: 'iteration_started';
+  backfill_id: string;
+  iteration_index: number;
+  iteration_key: string;
+}
+
+interface IterationCompletedEvent {
+  type: 'iteration_completed';
+  backfill_id: string;
+  iteration_index: number;
+  iteration_key: string;
+  run_id: string;
+}
+
+interface IterationFailedEvent {
+  type: 'iteration_failed';
+  backfill_id: string;
+  iteration_index: number;
+  iteration_key: string;
+  error: string;
+}
+
+interface IterationSkippedEvent {
+  type: 'iteration_skipped';
+  backfill_id: string;
+  iteration_index: number;
+  iteration_key: string;
+}
+
+interface BackfillCompletedEvent {
+  type: 'backfill_completed';
+  backfill_id: string;
+  progress: BackfillProgress;
+}
+
+interface BackfillCancelledEvent {
+  type: 'backfill_cancelled';
+  backfill_id: string;
+}
+
+interface MetadataUpdatedEvent {
+  type: 'metadata_updated';
+  fingerprint: string;
+}
+
 type ExecutionEvent =
   | RunStartedEvent
   | NodeStartedEvent
@@ -78,7 +140,16 @@ type ExecutionEvent =
   | TestNodePassedEvent
   | TestNodeFailedEvent
   | RunCompletedEvent
-  | PluginRegistryReloadedEvent;
+  | PluginRegistryReloadedEvent
+  | TriggerChangedEvent
+  | BackfillStartedEvent
+  | IterationStartedEvent
+  | IterationCompletedEvent
+  | IterationFailedEvent
+  | IterationSkippedEvent
+  | BackfillCompletedEvent
+  | BackfillCancelledEvent
+  | MetadataUpdatedEvent;
 
 export function useExecutionEvents() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -136,6 +207,61 @@ export function useExecutionEvents() {
               // (NodePalette / PluginsPanel) reflects the new registry without
               // requiring the user to reopen the panel.
               void usePluginStore.getState().fetchPlugins();
+              break;
+            case 'trigger_changed':
+              useTriggerStore.getState().handleTriggerChanged(
+                event.trigger_id,
+                event.action,
+              );
+              break;
+            case 'iteration_started':
+              useBackfillStore.getState().updateIterationStatus(
+                event.backfill_id,
+                event.iteration_index,
+                'running',
+              );
+              break;
+            case 'iteration_completed':
+              useBackfillStore.getState().updateIterationStatus(
+                event.backfill_id,
+                event.iteration_index,
+                'succeeded',
+                { run_id: event.run_id },
+              );
+              break;
+            case 'iteration_failed':
+              useBackfillStore.getState().updateIterationStatus(
+                event.backfill_id,
+                event.iteration_index,
+                'failed',
+                { error: event.error },
+              );
+              break;
+            case 'iteration_skipped':
+              useBackfillStore.getState().updateIterationStatus(
+                event.backfill_id,
+                event.iteration_index,
+                'skipped',
+              );
+              break;
+            case 'backfill_completed':
+              useBackfillStore.getState().updateBackfillStatus(
+                event.backfill_id,
+                'completed',
+                event.progress,
+              );
+              break;
+            case 'backfill_cancelled':
+              useBackfillStore.getState().updateBackfillStatus(
+                event.backfill_id,
+                'cancelled',
+              );
+              break;
+            case 'backfill_started':
+              // Backfill list will auto-refresh via polling
+              break;
+            case 'metadata_updated':
+              useCatalogStore.getState().handleMetadataUpdated(event.fingerprint);
               break;
           }
         } catch {

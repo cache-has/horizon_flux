@@ -12,6 +12,7 @@ pub mod cloud_store;
 pub mod config;
 pub mod file_sink;
 pub mod file_source;
+pub mod fingerprint;
 mod parquet_snapshot;
 pub mod plugin_sink;
 pub mod postgres_sink;

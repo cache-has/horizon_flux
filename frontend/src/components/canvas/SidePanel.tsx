@@ -11,16 +11,23 @@ import {
   updatePipeline,
   fetchPipelineRuns,
   fetchRunIncrementalStats,
+  listPipelines,
   type ApiPreviewNodeResponse,
   type ApiNodeRunStats,
   type ApiPipelineRun,
   type MaterializationReceipt,
 } from '../../api/pipelines';
 import { buildApiPipeline } from '../../stores/pipelineStore';
+import { useEnvironmentStore } from '../../stores/environmentStore';
 import { PreviewTable } from './PreviewTable';
 import { SampleConfigDropdown } from './SampleConfigDropdown';
 import { SchemaDiffViewer } from './SchemaDiffViewer';
 import { computeSchemaDiff, type SchemaDiff } from './schemaDiff';
+import {
+  fetchUpstream,
+  fetchDownstream,
+  type LineageDirectionResponse,
+} from '../../api/lineage';
 import './SidePanel.css';
 
 // ---------------------------------------------------------------------------
@@ -819,10 +826,134 @@ function InlineName({ name, onRename }: InlineNameProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Lineage section (cross-pipeline upstream/downstream)
+// ---------------------------------------------------------------------------
+
+function LineageSection({
+  pipelineId,
+  environment,
+  onNavigate,
+}: {
+  pipelineId: string;
+  environment: string;
+  onNavigate?: (id: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(true);
+  const [upstream, setUpstream] = useState<LineageDirectionResponse | null>(null);
+  const [downstream, setDownstream] = useState<LineageDirectionResponse | null>(null);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
+  const [loading, setLoading] = useState(false);
+  const fetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (collapsed || fetchedRef.current) return;
+    fetchedRef.current = true;
+
+    async function load() {
+      setLoading(true);
+      try {
+        const [up, down, pipelines] = await Promise.all([
+          fetchUpstream(pipelineId, environment),
+          fetchDownstream(pipelineId, environment),
+          listPipelines(1000, 0),
+        ]);
+        setUpstream(up);
+        setDownstream(down);
+        const nameMap = new Map<string, string>();
+        for (const p of pipelines.data) {
+          nameMap.set(p.id, p.pipeline.name);
+        }
+        setNames(nameMap);
+      } catch {
+        // Lineage data unavailable — silently degrade
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
+  }, [collapsed, pipelineId, environment]);
+
+  // Reset when pipeline changes — use a ref to track previous pipelineId
+  // so we avoid calling setState synchronously in an effect.
+  const prevPipelineIdRef = useRef(pipelineId);
+  if (prevPipelineIdRef.current !== pipelineId) {
+    prevPipelineIdRef.current = pipelineId;
+    fetchedRef.current = false;
+    setUpstream(null);
+    setDownstream(null);
+    setCollapsed(true);
+  }
+
+  const upstreamIds = upstream?.transitive ?? [];
+  const downstreamIds = downstream?.transitive ?? [];
+  const hasLineage = upstreamIds.length > 0 || downstreamIds.length > 0;
+
+  return (
+    <div className="side-panel__section">
+      <div
+        className="side-panel__section-title side-panel__section-title--clickable"
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        Lineage {collapsed ? '\u25B6' : '\u25BC'}
+      </div>
+      {!collapsed && (
+        <>
+          {loading && (
+            <span className="side-panel__empty">Loading lineage...</span>
+          )}
+          {!loading && !hasLineage && (
+            <span className="side-panel__empty">
+              No cross-pipeline lineage detected
+            </span>
+          )}
+          {!loading && upstreamIds.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div className="side-panel__kv-key" style={{ marginBottom: 4 }}>
+                Upstream ({upstreamIds.length})
+              </div>
+              {upstreamIds.map((id) => (
+                <div
+                  key={id}
+                  className="side-panel__lineage-item"
+                  onClick={() => onNavigate?.(id)}
+                  role={onNavigate ? 'button' : undefined}
+                  tabIndex={onNavigate ? 0 : undefined}
+                >
+                  {names.get(id) ?? id}
+                </div>
+              ))}
+            </div>
+          )}
+          {!loading && downstreamIds.length > 0 && (
+            <div>
+              <div className="side-panel__kv-key" style={{ marginBottom: 4 }}>
+                Downstream ({downstreamIds.length})
+              </div>
+              {downstreamIds.map((id) => (
+                <div
+                  key={id}
+                  className="side-panel__lineage-item"
+                  onClick={() => onNavigate?.(id)}
+                  role={onNavigate ? 'button' : undefined}
+                  tabIndex={onNavigate ? 0 : undefined}
+                >
+                  {names.get(id) ?? id}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main SidePanel component
 // ---------------------------------------------------------------------------
 
-export function SidePanel() {
+export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id: string) => void } = {}) {
   const selectedNodeId = usePipelineStore((s) => s.selectedNodeId);
   const nodes = usePipelineStore((s) => s.nodes);
   const edges = usePipelineStore((s) => s.edges);
@@ -835,6 +966,8 @@ export function SidePanel() {
   const setNodes = usePipelineStore((s) => s.setNodes);
   const markDirty = usePipelineStore((s) => s.markDirty);
   const updateNodeConfig = usePipelineStore((s) => s.updateNodeConfig);
+
+  const activeEnvironment = useEnvironmentStore((s) => s.activeEnvironment);
 
   const [preview, setPreview] = useState<Map<string, ApiPreviewNodeResponse>>(new Map());
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -1146,6 +1279,13 @@ export function SidePanel() {
             )}
             {selectedNode.data.role === 'test' && (
               <TestContent {...contentProps} />
+            )}
+            {pipelineId && pipelineId !== 'demo' && (
+              <LineageSection
+                pipelineId={pipelineId}
+                environment={activeEnvironment}
+                onNavigate={onNavigateToPipeline}
+              />
             )}
           </div>
 

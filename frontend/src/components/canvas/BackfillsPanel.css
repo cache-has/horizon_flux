@@ -1,0 +1,281 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+/* Backfill card */
+.backfills-panel__card {
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.backfills-panel__card:hover {
+  border-color: #334155;
+}
+
+.backfills-panel__card-time {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+/* Status badges */
+.backfills-panel__status-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.backfills-panel__status-badge--pending {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.backfills-panel__status-badge--running {
+  background: #1e3a5f;
+  color: #93c5fd;
+}
+
+.backfills-panel__status-badge--completed {
+  background: #065f46;
+  color: #d1fae5;
+}
+
+.backfills-panel__status-badge--succeeded {
+  background: #065f46;
+  color: #d1fae5;
+}
+
+.backfills-panel__status-badge--failed {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.backfills-panel__status-badge--cancelled {
+  background: #78350f;
+  color: #fde68a;
+}
+
+/* Progress bar */
+.backfills-panel__progress {
+  margin: 10px 0;
+}
+
+.backfills-panel__progress-bar {
+  height: 6px;
+  background: #1e293b;
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+}
+
+.backfills-panel__progress-bar--mini {
+  height: 4px;
+  flex: 1;
+}
+
+.backfills-panel__progress-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.backfills-panel__progress-fill--succeeded {
+  background: #22c55e;
+}
+
+.backfills-panel__progress-fill--failed {
+  background: #ef4444;
+}
+
+.backfills-panel__progress-fill--running {
+  background: #3b82f6;
+}
+
+.backfills-panel__progress-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+/* Mini progress in card */
+.backfills-panel__mini-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.backfills-panel__mini-label {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+/* Detail view */
+.backfills-panel__back-btn {
+  background: none;
+  border: none;
+  color: #818cf8;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 0;
+  margin-bottom: 12px;
+}
+
+.backfills-panel__back-btn:hover {
+  color: #a5b4fc;
+}
+
+.backfills-panel__detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.backfills-panel__detail-id {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.backfills-panel__detail-meta {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 2px;
+}
+
+/* Iterations table */
+.backfills-panel__iterations {
+  margin-top: 12px;
+}
+
+.backfills-panel__iter-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.backfills-panel__iter-table th {
+  text-align: left;
+  color: #94a3b8;
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  padding: 4px 6px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.backfills-panel__iter-table td {
+  padding: 4px 6px;
+  color: #e2e8f0;
+  border-bottom: 1px solid #0f172a;
+}
+
+.backfills-panel__iter-key {
+  font-family: ui-monospace, monospace;
+}
+
+.backfills-panel__iter-run {
+  font-family: ui-monospace, monospace;
+  color: #818cf8;
+}
+
+.backfills-panel__iter-time {
+  color: #64748b;
+}
+
+/* Iteration status badges */
+.backfills-panel__iter-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: 2px;
+}
+
+.backfills-panel__iter-badge--pending {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.backfills-panel__iter-badge--running {
+  background: #1e3a5f;
+  color: #93c5fd;
+}
+
+.backfills-panel__iter-badge--succeeded {
+  background: #065f46;
+  color: #d1fae5;
+}
+
+.backfills-panel__iter-badge--failed {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.backfills-panel__iter-badge--skipped {
+  background: #3f3f46;
+  color: #d4d4d8;
+}
+
+/* Error section */
+.backfills-panel__errors {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #1e293b;
+}
+
+.backfills-panel__errors-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fca5a5;
+  margin: 0 0 6px;
+}
+
+.backfills-panel__error-entry {
+  font-size: 11px;
+  color: #fca5a5;
+  margin-bottom: 4px;
+  display: flex;
+  gap: 6px;
+}
+
+.backfills-panel__error-key {
+  font-family: ui-monospace, monospace;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+/* Editor additions */
+.backfills-panel__row-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.backfills-panel__textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.backfills-panel__checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.backfills-panel__checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.backfills-panel__checkbox-label input[type="checkbox"] {
+  accent-color: #818cf8;
+}

@@ -1,9 +1,12 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+pub mod backfill;
+pub mod catalog;
 pub mod dag;
 pub mod edge;
 pub mod error;
+pub mod lineage;
 pub mod materialization;
 pub mod node;
 pub mod pipeline;
@@ -20,8 +23,21 @@ pub fn version() -> &'static str {
 }
 
 // Re-export primary types at crate root for ergonomic imports.
+pub use catalog::{
+    AnnotationFile, AnnotationOwner, AnnotationResource, AutoDerivedFacts, Catalog, CatalogEntry,
+    CatalogError, CatalogWarning, ColumnAnnotation, MergedColumn, ResourceAnnotation, SchemaColumn,
+    SearchIndex,
+};
+pub use backfill::{
+    Backfill, BackfillId, BackfillIteration, BackfillProgress, BackfillStatus, DateGranularity,
+    ExpandedIteration, IterationStatus, RangeDefinition, RangeError,
+};
 pub use edge::Edge;
 pub use error::{DagError, EngineError, ImportError, ImportWarnings, ValidationError};
+pub use lineage::{
+    BindingDirection, EdgeSource, FingerprintFn, LineageEdge, LineageGraph, ResourceBinding,
+    ResourceFingerprint,
+};
 pub use materialization::{
     ChangeDetection, FirstRun, HardDeletes, MaterializationError, MaterializationPolicy,
     OnSchemaChange, ReadMode, SnapshotPolicy, Watermark, WatermarkType, WriteStrategy,

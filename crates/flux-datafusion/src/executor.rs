@@ -19,7 +19,7 @@ use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus, TestResul
 use crate::schema_diff::{SchemaAction, apply_policy, compute_schema_diff, schema_fingerprint};
 use crate::session::SessionFactory;
 use crate::stats::NodeStats;
-use crate::storage::{IncrementalStateStorage, RunStorage};
+use crate::storage::{IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage};
 use crate::udfs::UdfRegistry;
 use crate::watermark::{
     build_filter_expr, fold_max_watermark, scalar_to_stored, stored_to_scalar,
@@ -122,6 +122,15 @@ pub struct ExecutionOptions {
     /// so callers can read the staged batches that *would* have been written.
     /// Used by `flux snapshot diff` (doc 28) to drive a true dry-run.
     pub dry_run_no_sinks: bool,
+    /// Optional lineage store for recording runtime-observed lineage
+    /// (planning doc 31). When `Some`, the executor records an observation
+    /// for every successful source read and sink write.
+    pub lineage_store: Option<Arc<dyn LineageStorage>>,
+    /// Fingerprint function for computing resource identifiers during
+    /// lineage observation recording (planning doc 31).
+    pub fingerprint_fn: Option<flux_engine::FingerprintFn>,
+    /// Pipeline ID string for lineage observation recording.
+    pub pipeline_id: Option<String>,
 }
 
 impl Default for ExecutionOptions {
@@ -139,6 +148,9 @@ impl Default for ExecutionOptions {
             full_refresh: false,
             bootstrap_incremental: false,
             dry_run_no_sinks: false,
+            lineage_store: None,
+            fingerprint_fn: None,
+            pipeline_id: None,
         }
     }
 }
@@ -566,6 +578,52 @@ impl PipelineExecutor {
                         let _ = store.save_node_stats(&run.id, &node_run_stats);
                     }
                     run.node_stats.push(node_run_stats);
+
+                    // Doc 31: record lineage observation for source/sink nodes.
+                    if let (Some(lineage_store), Some(fp_fn), Some(pid)) = (
+                        &options.lineage_store,
+                        &options.fingerprint_fn,
+                        &options.pipeline_id,
+                    ) {
+                        let obs = match &node.kind {
+                            NodeKind::Source(src) => {
+                                fp_fn(&src.connector, &src.config).map(|fp| LineageObservation {
+                                    pipeline_id: pid.clone(),
+                                    node_id: node_id.0.clone(),
+                                    run_id: run.id.0.to_string(),
+                                    direction: flux_engine::BindingDirection::Source,
+                                    resource_fingerprint: fp,
+                                    environment: options.environment.clone(),
+                                    observed_at_ms: node_end_wall
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_millis()
+                                        as i64,
+                                })
+                            }
+                            NodeKind::Sink(sink) => {
+                                fp_fn(&sink.connector, &sink.config).map(|fp| LineageObservation {
+                                    pipeline_id: pid.clone(),
+                                    node_id: node_id.0.clone(),
+                                    run_id: run.id.0.to_string(),
+                                    direction: flux_engine::BindingDirection::Sink,
+                                    resource_fingerprint: fp,
+                                    environment: options.environment.clone(),
+                                    observed_at_ms: node_end_wall
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_millis()
+                                        as i64,
+                                })
+                            }
+                            _ => None,
+                        };
+                        if let Some(obs) = obs {
+                            if let Err(e) = lineage_store.record_observation(&obs) {
+                                warn!(node = %node_id, error = %e, "failed to record lineage observation");
+                            }
+                        }
+                    }
 
                     emit(
                         &options.progress,

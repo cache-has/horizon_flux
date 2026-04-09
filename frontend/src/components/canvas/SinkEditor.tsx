@@ -10,6 +10,7 @@ import { JsonSchemaForm } from './JsonSchemaForm';
 import { MaterializationEditor } from './MaterializationEditor';
 import { SnapshotHistoryPanel } from './SnapshotHistoryPanel';
 import { SnapshotDiffPanel } from './SnapshotDiffPanel';
+import { ImpactAnalysisModal } from './ImpactAnalysisModal';
 import { usePluginStore } from '../../stores/pluginStore';
 import { getPluginSinkSchema } from '../../api/plugins';
 import './connector-editor.css';
@@ -33,6 +34,8 @@ export interface SinkEditorProps {
   pipelineId?: string;
   /** Default environment for incremental state operations. */
   environment?: string;
+  /** Navigate to another pipeline (used by impact analysis). */
+  onNavigateToPipeline?: (pipelineId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +386,9 @@ export function SinkEditor({
   pipelineId,
   environment,
   apiNode,
+  onNavigateToPipeline,
 }: SinkEditorProps) {
+  const [showImpactModal, setShowImpactModal] = useState(false);
   const norm = normalizeConnector(connector);
   const format = config.format as string | undefined;
   const effectiveFileType = norm === 'parquet' || format === 'parquet' ? 'parquet' : 'csv';
@@ -488,6 +493,24 @@ export function SinkEditor({
           environment={environment}
           policy={materialization}
         />
+      )}
+
+      {pipelineId && pipelineId !== 'demo' && (
+        <div className="connector-editor__section">
+          <button
+            className="connector-editor__test-btn"
+            onClick={() => setShowImpactModal(true)}
+          >
+            Impact Analysis
+          </button>
+          <ImpactAnalysisModal
+            open={showImpactModal}
+            pipelineId={pipelineId}
+            environment={environment ?? 'default'}
+            onClose={() => setShowImpactModal(false)}
+            onNavigate={onNavigateToPipeline}
+          />
+        </div>
       )}
 
       <EnvironmentOverrides config={config} onChange={onConfigChange} />

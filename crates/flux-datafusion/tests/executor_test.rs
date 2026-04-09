@@ -692,6 +692,9 @@ async fn execute_with_run_store_persists_history() {
         full_refresh: false,
         bootstrap_incremental: false,
         dry_run_no_sinks: false,
+        lineage_store: None,
+        fingerprint_fn: None,
+        pipeline_id: None,
     };
 
     let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -744,6 +747,9 @@ async fn failed_run_persists_error() {
         full_refresh: false,
         bootstrap_incremental: false,
         dry_run_no_sinks: false,
+        lineage_store: None,
+        fingerprint_fn: None,
+        pipeline_id: None,
     };
 
     let err = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -817,6 +823,9 @@ async fn cancellation_stops_execution() {
         full_refresh: false,
         bootstrap_incremental: false,
         dry_run_no_sinks: false,
+        lineage_store: None,
+        fingerprint_fn: None,
+        pipeline_id: None,
     };
 
     // Set cancel before execution so it triggers after the first node.

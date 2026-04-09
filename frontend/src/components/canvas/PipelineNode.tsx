@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { memo, useState } from 'react';
+import { memo, useState, useCallback } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { PipelineNode } from '../../types/pipeline';
 import { useEnvironmentStore } from '../../stores/environmentStore';
+import { useCatalogNavigation } from '../../contexts/CatalogNavigationContext';
 import { roleIcon } from '../iconMaps';
 import './PipelineNode.css';
 
@@ -32,6 +33,42 @@ function EnvironmentBadge({ envOverridden }: { envOverridden: boolean }) {
     : 'pipeline-node__env-badge pipeline-node__env-badge--fallthrough';
 
   return <span className={className} title={tooltip} />;
+}
+
+/** Small clickable badge linking a source/sink node to its catalog entry. */
+function ResourceBadge({
+  fingerprint,
+  role,
+}: {
+  fingerprint: string;
+  role: string;
+}) {
+  const navigateToCatalog = useCatalogNavigation();
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigateToCatalog?.(fingerprint);
+    },
+    [fingerprint, navigateToCatalog],
+  );
+
+  if (!navigateToCatalog) return null;
+
+  const tooltip =
+    role === 'source'
+      ? `View source resource in catalog`
+      : `View sink resource in catalog`;
+
+  return (
+    <button
+      className="pipeline-node__catalog-badge"
+      title={tooltip}
+      onClick={handleClick}
+      type="button"
+    >
+      {'⛁'}
+    </button>
+  );
 }
 
 function formatDuration(ms: number): string {
@@ -161,6 +198,13 @@ export const PipelineNodeComponent = memo(function PipelineNodeComponent({
         </div>
       )}
       <EnvironmentBadge envOverridden={data.envOverridden} />
+      {data.resourceFingerprint != null &&
+        (data.role === 'source' || data.role === 'sink') && (
+        <ResourceBadge
+          fingerprint={data.resourceFingerprint}
+          role={data.role}
+        />
+      )}
       {data.role !== 'sink' && data.role !== 'test' && (
         <Handle type="source" position={Position.Right} />
       )}

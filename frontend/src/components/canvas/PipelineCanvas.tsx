@@ -45,9 +45,13 @@ import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 import { SecretsPanel } from './SecretsPanel';
 import { SystemInfoPanel } from './SystemInfoPanel';
 import { PluginsPanel } from './PluginsPanel';
+import { TriggersPanel } from './TriggersPanel';
+import { BackfillsPanel } from './BackfillsPanel';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { useEnvironmentStore } from '../../stores/environmentStore';
+import { useResourceBindings } from '../../hooks/useResourceBindings';
+import { CatalogNavigationContext } from '../../contexts/CatalogNavigationContext';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
@@ -65,7 +69,15 @@ const defaultEdgeOptions = {
   animated: false,
 };
 
-function PipelineCanvasInner() {
+function PipelineCanvasInner({
+  onLineageClick,
+  onCatalogClick,
+  onNavigateToPipeline,
+}: {
+  onLineageClick?: () => void;
+  onCatalogClick?: (fingerprint?: string) => void;
+  onNavigateToPipeline?: (id: string) => void;
+}) {
   const rawNodes = usePipelineStore((s) => s.nodes);
   const rawEdges = usePipelineStore((s) => s.edges);
   const collapsedSnippetGroups = usePipelineStore((s) => s.collapsedSnippetGroups);
@@ -100,6 +112,8 @@ function PipelineCanvasInner() {
   const [systemInfoPanelOpen, setSystemInfoPanelOpen] = useState(false);
   const [pluginsPanelOpen, setPluginsPanelOpen] = useState(false);
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
+  const [triggersPanelOpen, setTriggersPanelOpen] = useState(false);
+  const [backfillsPanelOpen, setBackfillsPanelOpen] = useState(false);
 
   // Keyboard shortcuts: Escape to close side panel, Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo
   useEffect(() => {
@@ -144,6 +158,17 @@ function PipelineCanvasInner() {
     }
   }, [tableOverrides, activeEnvironment]);
 
+  // Inject resource fingerprints from lineage bindings into node data
+  useResourceBindings();
+
+  // Catalog navigation callback for resource badges on nodes
+  const handleCatalogNavigate = useCallback(
+    (fingerprint: string) => {
+      onCatalogClick?.(fingerprint);
+    },
+    [onCatalogClick],
+  );
+
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
 
@@ -166,7 +191,8 @@ function PipelineCanvasInner() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const setNodesForLayout = setNodes as any;
 
-  const { rerun, rerunAll } = useForceLayout(nodes, edges, setNodesForLayout, {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { rerun, rerunAll } = useForceLayout(nodes as any, edges, setNodesForLayout, {
     // Skip simulation if pipeline was loaded with saved positions
     enabled: !simulationHasRun,
     onSettled: handleSettled,
@@ -567,6 +593,7 @@ function PipelineCanvasInner() {
   );
 
   return (
+    <CatalogNavigationContext.Provider value={handleCatalogNavigate}>
     <div className="pipeline-canvas" ref={reactFlowWrapper}>
       <NodePalette
         collapsed={paletteCollapsed}
@@ -625,29 +652,55 @@ function PipelineCanvasInner() {
         />
         <Panel position="top-right" className="toolbar-panel">
           <CanvasToolbar
+            onLineageClick={onLineageClick}
+            onCatalogClick={onCatalogClick}
+            onTriggersClick={() => {
+              setTriggersPanelOpen((o) => !o);
+              setSecretsPanelOpen(false);
+              setSystemInfoPanelOpen(false);
+              setHistoryPanelOpen(false);
+              setPluginsPanelOpen(false);
+              setBackfillsPanelOpen(false);
+            }}
+            onBackfillsClick={() => {
+              setBackfillsPanelOpen((o) => !o);
+              setSecretsPanelOpen(false);
+              setSystemInfoPanelOpen(false);
+              setHistoryPanelOpen(false);
+              setPluginsPanelOpen(false);
+              setTriggersPanelOpen(false);
+            }}
             onSecretsClick={() => {
               setSecretsPanelOpen((o) => !o);
               setSystemInfoPanelOpen(false);
               setHistoryPanelOpen(false);
               setPluginsPanelOpen(false);
+              setTriggersPanelOpen(false);
+              setBackfillsPanelOpen(false);
             }}
             onSystemInfoClick={() => {
               setSystemInfoPanelOpen((o) => !o);
               setSecretsPanelOpen(false);
               setHistoryPanelOpen(false);
               setPluginsPanelOpen(false);
+              setTriggersPanelOpen(false);
+              setBackfillsPanelOpen(false);
             }}
             onHistoryClick={() => {
               setHistoryPanelOpen((o) => !o);
               setSecretsPanelOpen(false);
               setSystemInfoPanelOpen(false);
               setPluginsPanelOpen(false);
+              setTriggersPanelOpen(false);
+              setBackfillsPanelOpen(false);
             }}
             onPluginsClick={() => {
               setPluginsPanelOpen((o) => !o);
               setSecretsPanelOpen(false);
               setSystemInfoPanelOpen(false);
               setHistoryPanelOpen(false);
+              setTriggersPanelOpen(false);
+              setBackfillsPanelOpen(false);
             }}
           />
           <div className="relayout-panel">
@@ -684,7 +737,7 @@ function PipelineCanvasInner() {
         onCancel={cancelDelete}
       />
 
-      <SidePanel />
+      <SidePanel onNavigateToPipeline={onNavigateToPipeline} />
       <EnvironmentManagementPanel />
       <SecretsPanel
         open={secretsPanelOpen}
@@ -698,20 +751,41 @@ function PipelineCanvasInner() {
         open={pluginsPanelOpen}
         onClose={() => setPluginsPanelOpen(false)}
       />
+      <TriggersPanel
+        open={triggersPanelOpen}
+        onClose={() => setTriggersPanelOpen(false)}
+      />
+      <BackfillsPanel
+        open={backfillsPanelOpen}
+        onClose={() => setBackfillsPanelOpen(false)}
+      />
       <VersionHistoryPanel
         open={historyPanelOpen}
         onClose={() => setHistoryPanelOpen(false)}
       />
       <NodeEditorModal />
     </div>
+    </CatalogNavigationContext.Provider>
   );
 }
 
 /** PipelineCanvas wraps the inner component with ReactFlowProvider. */
-export function PipelineCanvas() {
+export function PipelineCanvas({
+  onLineageClick,
+  onCatalogClick,
+  onNavigateToPipeline,
+}: {
+  onLineageClick?: () => void;
+  onCatalogClick?: (fingerprint?: string) => void;
+  onNavigateToPipeline?: (id: string) => void;
+} = {}) {
   return (
     <ReactFlowProvider>
-      <PipelineCanvasInner />
+      <PipelineCanvasInner
+        onLineageClick={onLineageClick}
+        onCatalogClick={onCatalogClick}
+        onNavigateToPipeline={onNavigateToPipeline}
+      />
     </ReactFlowProvider>
   );
 }

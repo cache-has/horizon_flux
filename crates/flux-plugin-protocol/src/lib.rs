@@ -21,8 +21,8 @@ pub mod control;
 pub mod frame;
 
 pub use control::{
-    Abort, BatchAck, CommitAck, ConfigureAck, ConfigureSink, ControlError, ErrorMsg, Hello,
-    HelloAck, Log, LogLevel, read_json_frame, write_json_frame,
+    Abort, BatchAck, CommitAck, ConfigureAck, ConfigureSink, ControlError, DeclareResource,
+    ErrorMsg, Hello, HelloAck, Log, LogLevel, read_json_frame, write_json_frame,
 };
 pub use frame::{Frame, FrameError, MAX_PAYLOAD_LEN, MessageKind, read_frame, write_frame};
 

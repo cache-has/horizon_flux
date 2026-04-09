@@ -18,7 +18,8 @@ use tracing::warn;
 
 use crate::arrow_ipc::{ArrowIpcError, encode_record_batch, encode_schema_b64};
 use crate::protocol::control::{
-    Abort, BatchAck, ConfigureAck, ConfigureSink, ControlError, ErrorMsg, Hello, HelloAck,
+    Abort, BatchAck, ConfigureAck, ConfigureSink, ControlError, DeclareResource, ErrorMsg, Hello,
+    HelloAck,
 };
 use crate::protocol::{Frame, MessageKind};
 use crate::transport::{Transport, TransportError};
@@ -84,6 +85,9 @@ pub struct PluginSession<T: Transport> {
     host_protocol: u32,
     flux_version: String,
     plugin_info: Option<HelloAck>,
+    /// Resource fingerprint declared by the plugin via `DeclareResource`
+    /// (kind 0x15). `None` if the plugin does not participate in lineage.
+    declared_resource: Option<String>,
 }
 
 impl<T: Transport> PluginSession<T> {
@@ -94,11 +98,19 @@ impl<T: Transport> PluginSession<T> {
             host_protocol,
             flux_version: flux_version.into(),
             plugin_info: None,
+            declared_resource: None,
         }
     }
 
     pub fn plugin_info(&self) -> Option<&HelloAck> {
         self.plugin_info.as_ref()
+    }
+
+    /// Returns the resource fingerprint declared by the plugin via
+    /// `DeclareResource`, or `None` if the plugin does not participate
+    /// in lineage tracking.
+    pub fn declared_resource(&self) -> Option<&str> {
+        self.declared_resource.as_deref()
     }
 
     /// Step 1: send `Hello`, expect `HelloAck`, validate protocol version.
@@ -230,14 +242,21 @@ impl<T: Transport> PluginSession<T> {
     }
 
     fn recv(&mut self, timeout: Duration, phase: &'static str) -> Result<Frame, SessionError> {
-        let frame = self.transport.recv(timeout, phase)?;
-        if frame.kind == MessageKind::Error {
-            let err: ErrorMsg = serde_json::from_slice(&frame.payload)?;
-            return Err(SessionError::PluginError {
-                message: err.message,
-            });
+        loop {
+            let frame = self.transport.recv(timeout, phase)?;
+            if frame.kind == MessageKind::Error {
+                let err: ErrorMsg = serde_json::from_slice(&frame.payload)?;
+                return Err(SessionError::PluginError {
+                    message: err.message,
+                });
+            }
+            if frame.kind == MessageKind::DeclareResource {
+                let dr: DeclareResource = serde_json::from_slice(&frame.payload)?;
+                self.declared_resource = Some(dr.resource_fingerprint);
+                continue;
+            }
+            return Ok(frame);
         }
-        Ok(frame)
     }
 
     fn expect_json<V: for<'de> serde::Deserialize<'de>>(
@@ -265,7 +284,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::protocol::control::{CommitAck, Hello as _Hello};
+    use crate::protocol::control::{CommitAck, DeclareResource, Hello as _Hello};
     use crate::transport::mock::MockTransport;
 
     fn schema() -> Schema {
@@ -408,6 +427,73 @@ mod tests {
         let mut session = PluginSession::new(MockTransport::new(incoming), 1, "0");
         let err = session.handshake().unwrap_err();
         assert!(matches!(err, SessionError::PluginError { .. }));
+    }
+
+    #[test]
+    fn declare_resource_captured_transparently() {
+        let s = schema();
+        let incoming = vec![
+            json_frame(
+                MessageKind::HelloAck,
+                &HelloAck {
+                    protocol: 1,
+                    plugin_name: "lineage".into(),
+                    plugin_version: "0.1.0".into(),
+                    capabilities: Default::default(),
+                },
+            ),
+            // Plugin sends DeclareResource before ConfigureAck.
+            json_frame(
+                MessageKind::DeclareResource,
+                &DeclareResource {
+                    resource_fingerprint: "postgres://db:5432/app/public.events".into(),
+                },
+            ),
+            json_frame(
+                MessageKind::ConfigureAck,
+                &ConfigureAck {
+                    accepted: true,
+                    reason: None,
+                },
+            ),
+            json_frame(
+                MessageKind::BatchAck,
+                &BatchAck {
+                    rows_accepted: 3,
+                    warning: None,
+                },
+            ),
+            json_frame(
+                MessageKind::CommitAck,
+                &CommitAck {
+                    rows: 3,
+                    bytes: 50,
+                    duration_ms: 1,
+                    rows_updated: 0,
+                    rows_deleted: 0,
+                },
+            ),
+        ];
+        let transport = MockTransport::new(incoming);
+        let mut session = PluginSession::new(transport, 1, "0.0.0-test");
+
+        session.handshake().unwrap();
+        assert!(session.declared_resource().is_none());
+
+        session
+            .configure("lineage_sink", json!({}), &s, None)
+            .unwrap();
+        // DeclareResource was intercepted during configure.
+        assert_eq!(
+            session.declared_resource(),
+            Some("postgres://db:5432/app/public.events")
+        );
+
+        let ack = session.send_batch(&batch(&s)).unwrap();
+        assert_eq!(ack.rows_accepted, 3);
+        let commit = session.commit().unwrap();
+        assert_eq!(commit.rows, 3);
+        session.shutdown().unwrap();
     }
 
     // Suppress unused-import warning when control re-export changes.

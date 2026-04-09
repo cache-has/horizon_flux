@@ -5,11 +5,12 @@
 
 use flux_connectors::ConnectorRegistry;
 use flux_datafusion::{
-    EnvironmentStorage, ExecutionEvent, IncrementalStateStorage, OutputCache, RunStorage,
-    SecretResolver, SessionFactory,
+    BackfillStorage, EnvironmentStorage, ExecutionEvent, IncrementalStateStorage, LineageStorage,
+    OutputCache, RunStorage, SecretResolver, SessionFactory,
 };
 use flux_engine::PipelineStorage;
 use flux_plugin_host::PluginRegistry;
+use flux_scheduler::{Scheduler, TriggerStorage};
 use flux_secrets::SecretStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,6 +46,21 @@ pub enum PluginEvent {
         invalid_count: usize,
     },
 }
+
+/// Catalog lifecycle events broadcast over the WebSocket so the frontend can
+/// react to metadata annotation changes without polling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CatalogEvent {
+    /// A resource's annotation metadata was created or updated.
+    MetadataUpdated {
+        /// The resource fingerprint whose metadata changed.
+        fingerprint: String,
+    },
+}
+
+/// Capacity for the catalog event broadcast channel.
+const CATALOG_EVENT_CHANNEL_CAPACITY: usize = 32;
 
 /// How long the secret store stays unlocked without activity (30 minutes).
 const SECRET_AUTO_LOCK_SECS: u64 = 30 * 60;
@@ -230,6 +246,9 @@ pub struct AppState {
     /// Incremental sink materialization state (planning doc 27). Backed by
     /// the same database as `run_store` for both SQLite and PostgreSQL.
     pub incremental_state_store: Arc<dyn IncrementalStateStorage>,
+    /// Cross-pipeline lineage storage (planning doc 31). Backed by the same
+    /// database as `run_store` for both SQLite and PostgreSQL.
+    pub lineage_store: Arc<dyn LineageStorage>,
     pub connector_registry: Arc<ConnectorRegistry>,
     pub environment_store: Arc<dyn EnvironmentStorage>,
     /// Secret store session with unlock/lock lifecycle and auto-lock timeout.
@@ -251,6 +270,13 @@ pub struct AppState {
     /// `POST /api/plugins/reload` endpoint can swap it without restarting
     /// the server. Handlers should clone the inner `Arc` for cheap reads.
     pub plugin_registry: Arc<RwLock<Arc<PluginRegistry>>>,
+    /// Backfill metadata storage (planning doc 33).
+    pub backfill_store: Arc<dyn BackfillStorage>,
+    /// Trigger storage for the scheduler (planning doc 32).
+    pub trigger_store: Arc<dyn TriggerStorage>,
+    /// Scheduler instance for firing triggers (sensors, webhook, completion).
+    /// `None` when the scheduler is not enabled (e.g. in test harnesses).
+    pub scheduler: Option<Arc<Scheduler>>,
     /// Working directory used for plugin discovery (workspace-local
     /// `./plugins/` resolution). Captured at startup so reload remains
     /// consistent even if the process `cwd` changes later.
@@ -261,6 +287,12 @@ pub struct AppState {
     /// the developer machine's installed plugins do not leak in. Production
     /// leaves this `None` to get the full default discovery behavior.
     pub plugin_scan_roots: Option<Vec<PathBuf>>,
+    /// Path to the `metadata/` directory for resource catalog annotations
+    /// (planning doc 34). `None` disables the catalog feature.
+    pub metadata_dir: Option<PathBuf>,
+    /// Broadcast channel for catalog events (metadata annotation changes).
+    /// WebSocket clients receive these alongside execution and plugin events.
+    pub catalog_event_tx: broadcast::Sender<CatalogEvent>,
 }
 
 impl AppState {
@@ -272,6 +304,11 @@ impl AppState {
     /// Create a new broadcast sender for plugin lifecycle events.
     pub fn new_plugin_event_channel() -> broadcast::Sender<PluginEvent> {
         broadcast::channel(PLUGIN_EVENT_CHANNEL_CAPACITY).0
+    }
+
+    /// Create a new broadcast sender for catalog events.
+    pub fn new_catalog_event_channel() -> broadcast::Sender<CatalogEvent> {
+        broadcast::channel(CATALOG_EVENT_CHANNEL_CAPACITY).0
     }
 
     /// Build a [`SecretResolver`] backed by the current secret session.

@@ -12,16 +12,56 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use flux_datafusion::{
-    ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, UdfRegistry,
-    compute_column_stats,
+    ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, StoredResourceBinding,
+    UdfRegistry, compute_column_stats,
 };
+use flux_engine::lineage::BindingDirection;
+use flux_engine::node::NodeKind;
 use flux_engine::pipeline_store::PipelineId;
 use flux_engine::{NodeId, Pipeline, SampleConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::error;
+
+/// Compute and persist static resource bindings for a pipeline (doc 31).
+///
+/// Called after create/update to keep the `pipeline_resource_bindings` table
+/// in sync. Errors are logged but not propagated — lineage is best-effort
+/// and must not block pipeline saves.
+fn refresh_lineage_bindings(state: &AppState, pipeline_id: &PipelineId, pipeline: &Pipeline) {
+    let env = &pipeline.default_environment;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let pid = pipeline_id.0.to_string();
+
+    let mut bindings = Vec::new();
+    for node in &pipeline.nodes {
+        let (connector, config, direction) = match &node.kind {
+            NodeKind::Source(src) => (&src.connector, &src.config, BindingDirection::Source),
+            NodeKind::Sink(sink) => (&sink.connector, &sink.config, BindingDirection::Sink),
+            _ => continue,
+        };
+        if let Some(fp) = flux_connectors::fingerprint::fingerprint(connector, config) {
+            bindings.push(StoredResourceBinding {
+                pipeline_id: pid.clone(),
+                node_id: node.id.0.clone(),
+                direction,
+                resource_fingerprint: fp,
+                environment: env.clone(),
+                updated_at_ms: now_ms,
+            });
+        }
+    }
+
+    if let Err(e) = state.lineage_store.save_bindings(&pid, env, &bindings) {
+        tracing::warn!(pipeline = %pipeline.name, error = %e, "failed to update lineage bindings");
+    }
+}
 
 /// Build the `/pipelines` sub-router.
 pub fn router() -> Router<AppState> {
@@ -241,6 +281,8 @@ async fn create_pipeline(
         }
     })?;
 
+    refresh_lineage_bindings(&state, &record.id, &record.pipeline);
+
     Ok((StatusCode::CREATED, Json(PipelineResponse::from(record))))
 }
 
@@ -299,6 +341,8 @@ async fn update_pipeline(
     if let Err(e) = state.output_cache.invalidate_changed(&record.pipeline) {
         tracing::warn!(pipeline = %record.pipeline.name, error = %e, "cache invalidation failed");
     }
+
+    refresh_lineage_bindings(&state, &record.id, &record.pipeline);
 
     Ok(Json(PipelineResponse::from(record)))
 }
@@ -389,6 +433,11 @@ async fn delete_pipeline(
         }
     })?;
 
+    // Clean up lineage bindings — best-effort.
+    if let Err(e) = state.lineage_store.delete_bindings(&id) {
+        tracing::warn!(pipeline = %id, error = %e, "failed to delete lineage bindings");
+    }
+
     // Clean up cached outputs — best-effort.
     if let Some(name) = pipeline_name {
         if let Err(e) = state.output_cache.delete_pipeline(&name) {
@@ -444,6 +493,9 @@ async fn run_pipeline(
         full_refresh: false,
         bootstrap_incremental: false,
         dry_run_no_sinks: false,
+        lineage_store: Some(Arc::clone(&state.lineage_store)),
+        fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
+        pipeline_id: Some(pipeline_id.0.to_string()),
     };
 
     let (result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
