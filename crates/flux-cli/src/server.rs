@@ -82,6 +82,7 @@ pub fn start(
 
     let pipeline_store = stores.pipeline_store;
     let run_store = stores.run_store;
+    let incremental_state_store = stores.incremental_state_store;
     let connector_registry = Arc::new(flux_connectors::default_registry());
     let environment_store = stores.environment_store;
 
@@ -134,6 +135,7 @@ pub fn start(
     let app_state = flux_server::AppState {
         pipeline_store,
         run_store,
+        incremental_state_store,
         connector_registry,
         environment_store,
         secret_session: Arc::new(std::sync::Mutex::new(secret_session)),

@@ -9,8 +9,89 @@
 
 use crate::dag;
 use crate::error::{ImportError, ValidationError};
+use crate::materialization::{MaterializationPolicy, WriteStrategy, validate_policy};
+use crate::node::NodeKind;
 use crate::pipeline::{Pipeline, VariableType};
 use std::collections::HashSet;
+
+/// Rewrite any sink still carrying the legacy `PostgresWriteMode` shape into a
+/// modern `materialization` block. Mutates `pipeline` in place and emits a
+/// one-line `INFO` log per migrated sink.
+///
+/// The legacy field lives inside the sink's opaque JSON `config` value (it
+/// pre-dates doc 27 and the `materialization` block); we detect it there,
+/// translate per the doc-27 migration table, and strip it from the config so
+/// the post-migration form is canonical and round-trippable.
+///
+/// Mapping (see `planning/27-incremental-materializations.md`):
+///
+/// | Legacy `write_mode`            | New materialization                                            |
+/// |--------------------------------|----------------------------------------------------------------|
+/// | `insert` / `append`            | `{ write_strategy: append }`                                   |
+/// | `upsert` (+ `conflict_keys`)   | `{ write_strategy: merge, unique_keys: <conflict_keys> }`      |
+/// | `truncate_insert`              | `{ write_strategy: truncate_insert }`                          |
+pub fn migrate_legacy_sinks(pipeline: &mut Pipeline) {
+    for node in pipeline.nodes.iter_mut() {
+        let NodeKind::Sink(sink) = &mut node.kind else {
+            continue;
+        };
+        // Only act on Postgres sinks (the only legacy carrier).
+        if sink.connector != "postgresql" && sink.connector != "postgres" {
+            continue;
+        }
+        // Already migrated.
+        if sink.materialization.is_some() {
+            continue;
+        }
+        let Some(obj) = sink.config.as_object_mut() else {
+            continue;
+        };
+        let Some(legacy) = obj.remove("write_mode") else {
+            continue;
+        };
+        let legacy_str = legacy.as_str().unwrap_or("").to_string();
+
+        let (strategy, unique_keys) = match legacy_str.as_str() {
+            "insert" | "append" => (WriteStrategy::Append, None),
+            "upsert" => {
+                // Pull conflict_keys out of the config and into unique_keys.
+                let keys = obj
+                    .get("conflict_keys")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                obj.remove("conflict_keys");
+                (WriteStrategy::Merge, Some(keys))
+            }
+            "truncate_insert" => (WriteStrategy::TruncateInsert, None),
+            other => {
+                // Unknown legacy value — put it back so import fails loudly
+                // downstream, rather than silently dropping data.
+                obj.insert("write_mode".into(), serde_json::Value::String(other.into()));
+                continue;
+            }
+        };
+
+        let policy = MaterializationPolicy {
+            write_strategy: strategy,
+            unique_keys,
+            ..MaterializationPolicy::default()
+        };
+
+        tracing::info!(
+            sink = %node.id.0,
+            from = %legacy_str,
+            to = ?strategy,
+            "upgraded sink from legacy WriteMode to materialization.write_strategy"
+        );
+
+        sink.materialization = Some(policy);
+    }
+}
 
 /// Validate a pipeline for import. Returns `Ok(())` if valid, or an
 /// `ImportError::Validation` containing all detected problems.
@@ -54,6 +135,19 @@ pub fn validate_import(pipeline: &Pipeline) -> Result<(), ImportError> {
                     environment: env_name.clone(),
                     node_id: node_id.clone(),
                 });
+            }
+        }
+    }
+
+    // --- Sink materialization policies ---
+    for node in &pipeline.nodes {
+        if let NodeKind::Sink(sink) = &node.kind {
+            if let Some(policy) = &sink.materialization {
+                if let Err(mat_errors) = validate_policy(node.id.0.as_str(), policy) {
+                    for e in mat_errors {
+                        errors.push(ValidationError::Materialization(e));
+                    }
+                }
             }
         }
     }
@@ -119,6 +213,7 @@ mod tests {
             kind: NodeKind::Sink(SinkConfig {
                 connector: "stdout".into(),
                 config: serde_json::Value::Null,
+                materialization: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -273,6 +368,68 @@ mod tests {
         let json = serde_json::to_string_pretty(&p).unwrap();
         let err = Pipeline::from_json(&json).unwrap_err();
         assert!(matches!(err, crate::error::ImportError::Validation(_)));
+    }
+
+    #[test]
+    fn legacy_postgres_upsert_migrates_to_merge() {
+        let mut p = valid_pipeline();
+        // Replace the sink with a legacy postgres shape.
+        let pg_legacy = serde_json::json!({
+            "connection_string": "host=localhost",
+            "table": "users",
+            "write_mode": "upsert",
+            "conflict_keys": ["id", "tenant"],
+        });
+        p.nodes[1].kind = NodeKind::Sink(SinkConfig {
+            connector: "postgresql".into(),
+            config: pg_legacy,
+            materialization: None,
+        });
+
+        migrate_legacy_sinks(&mut p);
+
+        let NodeKind::Sink(sink) = &p.nodes[1].kind else {
+            panic!()
+        };
+        let mat = sink.materialization.as_ref().unwrap();
+        assert!(matches!(
+            mat.write_strategy,
+            crate::materialization::WriteStrategy::Merge
+        ));
+        assert_eq!(
+            mat.unique_keys.as_deref(),
+            Some(&["id".into(), "tenant".into()][..])
+        );
+        // Legacy fields should have been stripped from the opaque config.
+        let cfg_obj = sink.config.as_object().unwrap();
+        assert!(!cfg_obj.contains_key("write_mode"));
+        assert!(!cfg_obj.contains_key("conflict_keys"));
+        // And the migrated pipeline should validate.
+        validate_import(&p).unwrap();
+    }
+
+    #[test]
+    fn legacy_postgres_truncate_insert_migrates() {
+        let mut p = valid_pipeline();
+        p.nodes[1].kind = NodeKind::Sink(SinkConfig {
+            connector: "postgres".into(), // alias also recognized
+            config: serde_json::json!({
+                "connection_string": "host=localhost",
+                "table": "t",
+                "write_mode": "truncate_insert",
+            }),
+            materialization: None,
+        });
+        migrate_legacy_sinks(&mut p);
+        let NodeKind::Sink(sink) = &p.nodes[1].kind else {
+            panic!()
+        };
+        let mat = sink.materialization.as_ref().unwrap();
+        assert!(matches!(
+            mat.write_strategy,
+            crate::materialization::WriteStrategy::TruncateInsert
+        ));
+        validate_import(&p).unwrap();
     }
 
     #[test]

@@ -39,6 +39,12 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** Truncate a watermark display value so the tooltip doesn't blow up. */
+function shortWatermark(value: string): string {
+  if (value.length <= 24) return value;
+  return `${value.slice(0, 21)}\u2026`;
+}
+
 export const PipelineNodeComponent = memo(function PipelineNodeComponent({
   data,
 }: NodeProps<PipelineNode>) {
@@ -46,11 +52,19 @@ export const PipelineNodeComponent = memo(function PipelineNodeComponent({
   const status = statusIndicators[data.status] ?? statusIndicators.idle;
   const [hovered, setHovered] = useState(false);
 
+  const isIncrementalSink =
+    data.role === 'sink' &&
+    data.materializationPolicy?.read_mode === 'incremental';
+  const receipt = data.materializationReceipt;
+  const watermarkAfter = receipt?.watermark_after;
+  const watermarkColumn = data.materializationPolicy?.watermark?.column;
+
   const hasStats =
     data.rowCount != null ||
     data.schemaSummary != null ||
     data.lastRunDurationMs != null ||
-    data.errorMessage != null;
+    data.errorMessage != null ||
+    isIncrementalSink;
 
   return (
     <div
@@ -71,8 +85,36 @@ export const PipelineNodeComponent = memo(function PipelineNodeComponent({
           {status.icon}
         </span>
       </div>
+      {isIncrementalSink && (
+        <span
+          className="pipeline-node__inc-badge"
+          title={
+            watermarkAfter
+              ? `Incremental — last watermark ${watermarkColumn ?? ''} = ${watermarkAfter.value}`
+              : 'Incremental — no runs yet'
+          }
+        >
+          INC
+        </span>
+      )}
       {hovered && hasStats && (
         <div className="pipeline-node__tooltip">
+          {isIncrementalSink && (
+            <div className="pipeline-node__tooltip-row">
+              <span className="pipeline-node__tooltip-key">Watermark</span>
+              <span>
+                {watermarkAfter
+                  ? `${watermarkColumn ?? ''} \u2264 ${shortWatermark(watermarkAfter.value)}`
+                  : `${watermarkColumn ?? ''} (no runs yet)`}
+              </span>
+            </div>
+          )}
+          {receipt != null && receipt.rows_filtered_by_watermark > 0 && (
+            <div className="pipeline-node__tooltip-row">
+              <span className="pipeline-node__tooltip-key">Filtered</span>
+              <span>{receipt.rows_filtered_by_watermark.toLocaleString()}</span>
+            </div>
+          )}
           {data.errorMessage != null && (
             <div className="pipeline-node__tooltip-error">
               {data.errorMessage}

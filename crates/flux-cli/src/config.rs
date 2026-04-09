@@ -139,6 +139,7 @@ pub struct MetadataStores {
     pub pipeline_store: Arc<dyn flux_engine::PipelineStorage>,
     pub run_store: Arc<dyn flux_datafusion::RunStorage>,
     pub environment_store: Arc<dyn flux_datafusion::EnvironmentStorage>,
+    pub incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage>,
 }
 
 /// Open the metadata stores according to the resolved backend.
@@ -160,10 +161,16 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
         flux_engine::SqlitePipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
             .context("failed to open pipeline store")?,
     );
-    let run_store: Arc<dyn flux_datafusion::RunStorage> = Arc::new(
+    // The run store backs both `RunStorage` and `IncrementalStateStorage` —
+    // they share the same SQLite file because the incremental state tables
+    // live alongside `pipeline_runs` / `node_run_stats` (planning doc 27).
+    let run_store_concrete = Arc::new(
         flux_datafusion::SqliteRunStore::open(&data_dir.join("runs.db"))
             .context("failed to open run store")?,
     );
+    let run_store: Arc<dyn flux_datafusion::RunStorage> = run_store_concrete.clone();
+    let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
+        run_store_concrete;
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
         flux_datafusion::SqliteEnvironmentStore::open(&data_dir.join("environments.db"))
             .context("failed to open environment store")?,
@@ -172,6 +179,7 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
         pipeline_store,
         run_store,
         environment_store,
+        incremental_state_store,
     })
 }
 
@@ -200,8 +208,10 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
 
     let pipeline_store: Arc<dyn flux_engine::PipelineStorage> =
         Arc::new(flux_postgres::PostgresPipelineStore::new(pool.clone()));
-    let run_store: Arc<dyn flux_datafusion::RunStorage> =
-        Arc::new(flux_postgres::PostgresRunStore::new(pool.clone()));
+    let run_store_concrete = Arc::new(flux_postgres::PostgresRunStore::new(pool.clone()));
+    let run_store: Arc<dyn flux_datafusion::RunStorage> = run_store_concrete.clone();
+    let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
+        run_store_concrete;
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
         flux_postgres::PostgresEnvironmentStore::new(pool)
             .map_err(|e| anyhow::anyhow!("{e}"))
@@ -212,6 +222,7 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
         pipeline_store,
         run_store,
         environment_store,
+        incremental_state_store,
     })
 }
 

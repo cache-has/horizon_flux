@@ -26,6 +26,7 @@ fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
     let state = AppState {
         pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
+        incremental_state_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(Mutex::new(SecretSession::new_unlocked(store, secrets_path))),
@@ -56,6 +57,7 @@ fn test_state_locked() -> (AppState, tempfile::TempDir) {
     let state = AppState {
         pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
+        incremental_state_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(Mutex::new(SecretSession::new(secrets_path))),

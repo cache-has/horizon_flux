@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import type { MaterializationReceipt } from '../api/pipelines';
 import { usePipelineStore } from '../stores/pipelineStore';
 import { usePluginStore } from '../stores/pluginStore';
 
@@ -23,6 +24,8 @@ interface NodeCompletedEvent {
   node_id: string;
   rows_out: number;
   duration_ms: number;
+  /** Doc 27: present for sink nodes that performed a materialized write. */
+  materialization_receipt?: MaterializationReceipt;
 }
 
 interface NodeFailedEvent {
@@ -89,6 +92,9 @@ export function useExecutionEvents() {
               break;
             case 'node_completed':
               store.setNodeStatus(event.node_id, 'success');
+              if (event.materialization_receipt) {
+                store.setNodeReceipt(event.node_id, event.materialization_receipt);
+              }
               break;
             case 'node_failed':
               store.setNodeStatus(event.node_id, 'error', event.error);

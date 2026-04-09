@@ -9,7 +9,8 @@
 //! [`SqliteEnvironmentStore`](crate::environment::SqliteEnvironmentStore).
 
 use crate::environment::{Environment, TableOverride};
-use crate::error::{EnvironmentError, RunStoreError};
+use crate::error::{EnvironmentError, IncrementalStateError, RunStoreError};
+use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus};
 use std::time::SystemTime;
 
@@ -95,4 +96,67 @@ pub trait EnvironmentStorage: Send + Sync {
         &self,
         environment: &str,
     ) -> Result<Vec<TableOverride>, EnvironmentError>;
+}
+
+/// Backend-agnostic storage interface for incremental sink materialization
+/// state (planning doc 27).
+///
+/// One row of [`IncrementalState`] is kept per
+/// `(pipeline_id, node_id, environment)`. Schema observations are appended to
+/// a separate history table and queried via [`latest_schema`].
+///
+/// Implementations must be safe to share across threads (`Send + Sync`).
+pub trait IncrementalStateStorage: Send + Sync {
+    /// Load the latest state for a node, or `None` if no run has been recorded.
+    fn load_state(
+        &self,
+        pipeline_id: &str,
+        node_id: &str,
+        environment: &str,
+    ) -> Result<Option<IncrementalState>, IncrementalStateError>;
+
+    /// Upsert the latest state for a node.
+    ///
+    /// This is intended to be called immediately after a successful sink
+    /// commit. Full transactional coupling with the sink write is tracked
+    /// separately in planning doc 27 alongside the executor coordinator task.
+    fn save_state(&self, state: &IncrementalState) -> Result<(), IncrementalStateError>;
+
+    /// Delete the state for a node, forcing the next run to be a first run.
+    /// Returns `true` if a row was actually removed.
+    fn reset_state(
+        &self,
+        pipeline_id: &str,
+        node_id: &str,
+        environment: &str,
+    ) -> Result<bool, IncrementalStateError>;
+
+    /// List all incremental state, optionally filtered by environment.
+    fn list_states(
+        &self,
+        environment: Option<&str>,
+    ) -> Result<Vec<IncrementalState>, IncrementalStateError>;
+
+    /// Append a schema observation to the history table.
+    fn record_schema(&self, record: &IncrementalSchemaRecord) -> Result<(), IncrementalStateError>;
+
+    /// Fetch the most recent schema observation for a node, if any.
+    fn latest_schema(
+        &self,
+        pipeline_id: &str,
+        node_id: &str,
+        environment: &str,
+    ) -> Result<Option<IncrementalSchemaRecord>, IncrementalStateError>;
+
+    /// Backfill a state row from a remote metadata store, preserving its
+    /// original values. Skips the row if one already exists for the same key.
+    fn import_state(&self, state: &IncrementalState) -> Result<(), IncrementalStateError>;
+
+    /// Backfill a schema observation from a remote metadata store. Skips the
+    /// row if one with the same `(pipeline_id, node_id, environment, run_id)`
+    /// already exists.
+    fn import_schema_record(
+        &self,
+        record: &IncrementalSchemaRecord,
+    ) -> Result<(), IncrementalStateError>;
 }

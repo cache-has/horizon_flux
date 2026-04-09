@@ -20,6 +20,7 @@ fn test_state() -> AppState {
     AppState {
         pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
+        incremental_state_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(std::sync::Mutex::new(

@@ -4,11 +4,12 @@
 //! Shared application state for all API handlers.
 
 use flux_connectors::ConnectorRegistry;
-use flux_plugin_host::PluginRegistry;
 use flux_datafusion::{
-    EnvironmentStorage, ExecutionEvent, OutputCache, RunStorage, SecretResolver, SessionFactory,
+    EnvironmentStorage, ExecutionEvent, IncrementalStateStorage, OutputCache, RunStorage,
+    SecretResolver, SessionFactory,
 };
 use flux_engine::PipelineStorage;
+use flux_plugin_host::PluginRegistry;
 use flux_secrets::SecretStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -226,6 +227,9 @@ pub fn redact_connection_string(conn: &str) -> String {
 pub struct AppState {
     pub pipeline_store: Arc<dyn PipelineStorage>,
     pub run_store: Arc<dyn RunStorage>,
+    /// Incremental sink materialization state (planning doc 27). Backed by
+    /// the same database as `run_store` for both SQLite and PostgreSQL.
+    pub incremental_state_store: Arc<dyn IncrementalStateStorage>,
     pub connector_registry: Arc<ConnectorRegistry>,
     pub environment_store: Arc<dyn EnvironmentStorage>,
     /// Secret store session with unlock/lock lifecycle and auto-lock timeout.

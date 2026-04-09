@@ -39,6 +39,15 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/preview", post(preview_pipeline))
         .route("/{id}/runs", get(list_runs))
         .route("/{id}/runs/{run_id}", get(get_run))
+        .route(
+            "/{id}/runs/{run_id}/incremental-stats",
+            get(get_run_incremental_stats),
+        )
+        .route("/{id}/incremental-state", get(list_incremental_state))
+        .route(
+            "/{id}/nodes/{node_id}/incremental/reset",
+            post(reset_incremental_state),
+        )
         .route("/{id}/versions", get(list_versions))
         .route(
             "/{id}/versions/{version}",
@@ -366,6 +375,10 @@ async fn run_pipeline(
         variable_overrides: req.variables,
         secret_resolver: state.secret_resolver(),
         session_factory: state.session_factory.clone(),
+        incremental_state_store: Some(Arc::clone(&state.incremental_state_store)),
+        full_refresh: false,
+        bootstrap_incremental: false,
+        dry_run_no_sinks: false,
     };
 
     let (result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
@@ -534,6 +547,127 @@ async fn get_run(
         .ok_or_else(|| ApiError::not_found("run", &run_id_str))?;
 
     Ok(Json(serde_json::to_value(&run).unwrap()))
+}
+
+// ---------------------------------------------------------------------------
+// Incremental materialization state handlers (planning doc 27)
+// ---------------------------------------------------------------------------
+
+/// Optional `?env=` query parameter for incremental endpoints.
+#[derive(Debug, Default, Deserialize)]
+struct EnvQuery {
+    #[serde(default)]
+    env: Option<String>,
+}
+
+/// `GET /api/pipelines/:id/incremental-state` — list incremental state for
+/// every node of a pipeline. Optional `?env=` filter.
+async fn list_incremental_state(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<EnvQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let _record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let states = state
+        .incremental_state_store
+        .list_states(q.env.as_deref())
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let pid_str = pipeline_id.to_string();
+    let filtered: Vec<_> = states
+        .into_iter()
+        .filter(|s| s.pipeline_id == pid_str)
+        .collect();
+
+    Ok(Json(serde_json::json!({ "states": filtered })))
+}
+
+/// `POST /api/pipelines/:id/nodes/:node_id/incremental/reset` — reset
+/// incremental state for one node. Optional `?env=` (defaults to `"default"`).
+async fn reset_incremental_state(
+    State(state): State<AppState>,
+    Path((id, node_id)): Path<(String, String)>,
+    Query(q): Query<EnvQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let _record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let env = q.env.as_deref().unwrap_or("default");
+    let removed = state
+        .incremental_state_store
+        .reset_state(&pipeline_id.to_string(), &node_id, env)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    if !removed {
+        return Err(ApiError::not_found(
+            "incremental state",
+            &format!("{id}/{node_id}@{env}"),
+        ));
+    }
+
+    Ok(Json(serde_json::json!({
+        "pipeline_id": id,
+        "node_id": node_id,
+        "environment": env,
+        "reset": true,
+    })))
+}
+
+/// `GET /api/pipelines/:id/runs/:run_id/incremental-stats` — project the
+/// `MaterializationReceipt` for every sink node in a single run.
+async fn get_run_incremental_stats(
+    State(state): State<AppState>,
+    Path((id, run_id_str)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let _record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let run_uuid = uuid::Uuid::parse_str(&run_id_str)
+        .map_err(|_| ApiError::bad_request(format!("invalid run ID: {run_id_str}")))?;
+    let run_id = RunId(run_uuid);
+
+    let run = state
+        .run_store
+        .get_run(&run_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("run", &run_id_str))?;
+
+    let stats: Vec<serde_json::Value> = run
+        .node_stats
+        .iter()
+        .filter_map(|n| {
+            n.materialization_receipt.as_ref().map(|r| {
+                serde_json::json!({
+                    "node_id": n.node_id,
+                    "rows_in": n.rows_in,
+                    "rows_out": n.rows_out,
+                    "duration_ms": n.duration_ms(),
+                    "receipt": r,
+                })
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "run_id": run_id_str,
+        "pipeline_id": id,
+        "environment": run.environment,
+        "nodes": stats,
+    })))
 }
 
 // ---------------------------------------------------------------------------

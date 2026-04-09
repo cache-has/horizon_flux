@@ -36,9 +36,15 @@ fn build_mock_plugin() -> PathBuf {
                 .join("target")
         });
     let bin = if cfg!(windows) {
-        target_dir.join("debug").join("examples").join("mock-plugin.exe")
+        target_dir
+            .join("debug")
+            .join("examples")
+            .join("mock-plugin.exe")
     } else {
-        target_dir.join("debug").join("examples").join("mock-plugin")
+        target_dir
+            .join("debug")
+            .join("examples")
+            .join("mock-plugin")
     };
     assert!(bin.is_file(), "expected built binary at {}", bin.display());
     bin
@@ -93,7 +99,9 @@ config_schema = "schema.json"
     assert_eq!(ack.plugin_name, "mock");
 
     let schema = Schema::new(vec![Field::new("v", DataType::Int32, false)]);
-    session.configure("mock_sink", json!({}), &schema).unwrap();
+    session
+        .configure("mock_sink", json!({}), &schema, None)
+        .unwrap();
 
     let batch = RecordBatch::try_new(
         Arc::new(schema.clone()),

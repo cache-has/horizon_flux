@@ -21,7 +21,10 @@ pub enum TransportError {
     Closed,
 
     #[error("timed out waiting for {phase} after {timeout:?}")]
-    Timeout { phase: &'static str, timeout: Duration },
+    Timeout {
+        phase: &'static str,
+        timeout: Duration,
+    },
 
     #[error(transparent)]
     Frame(#[from] FrameError),

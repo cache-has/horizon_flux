@@ -86,8 +86,60 @@ pub struct SinkCapabilities {
     pub upsert: bool,
     #[serde(default)]
     pub schema_validation: bool,
+    /// Materialization strategies the plugin supports (doc 27 / doc 24 §3.1).
+    /// Omitted = plugin only supports `write_strategy: append`.
+    #[serde(default)]
+    pub materialization: Option<MaterializationCapabilities>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, toml::Value>,
+}
+
+/// Per-strategy capability flags echoed by `[sinks.capabilities.materialization]`
+/// in `plugin.toml`. See `planning/24-plugin-system.md` §3.1.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializationCapabilities {
+    #[serde(default)]
+    pub append: bool,
+    #[serde(default)]
+    pub merge: bool,
+    #[serde(default)]
+    pub delete_insert: bool,
+    #[serde(default)]
+    pub insert_overwrite: bool,
+    #[serde(default)]
+    pub truncate_insert: bool,
+    /// SCD2 snapshot materialization (doc 28). When `true`, the plugin
+    /// implements stage-diff-merge with `flux_valid_from`/`flux_valid_to`/
+    /// `flux_is_current`/`flux_scd_id` metadata columns and accepts the
+    /// `snapshot:` sub-block from the `MaterializationPolicy` forwarded via
+    /// `ConfigureSink.materialization`.
+    #[serde(default)]
+    pub snapshot: bool,
+    /// Subset of {`fail`, `ignore`, `append_new_columns`, `sync_all_columns`}.
+    #[serde(default)]
+    pub on_schema_change: Vec<String>,
+}
+
+impl MaterializationCapabilities {
+    /// True if the plugin declares support for the named write strategy.
+    /// Strategy names use the canonical snake_case form ("append", "merge", ...).
+    pub fn supports_strategy(&self, strategy: &str) -> bool {
+        match strategy {
+            "append" => self.append,
+            "merge" => self.merge,
+            "delete_insert" => self.delete_insert,
+            "insert_overwrite" => self.insert_overwrite,
+            "truncate_insert" => self.truncate_insert,
+            "snapshot" => self.snapshot,
+            _ => false,
+        }
+    }
+
+    /// True if the plugin declares support for the named on_schema_change policy.
+    pub fn supports_on_schema_change(&self, policy: &str) -> bool {
+        self.on_schema_change.iter().any(|p| p == policy)
+    }
 }
 
 impl Manifest {
@@ -118,10 +170,7 @@ impl Manifest {
         };
 
         if !name_re().is_match(&self.name) {
-            return Err(bad(format!(
-                "name `{}` must match [a-z0-9_-]+",
-                self.name
-            )));
+            return Err(bad(format!("name `{}` must match [a-z0-9_-]+", self.name)));
         }
         Version::parse(&self.version)
             .map_err(|e| bad(format!("version `{}` is not SemVer: {e}", self.version)))?;
@@ -256,6 +305,32 @@ executable = "x"
 "#;
         let err = Manifest::from_str(bad, &p()).unwrap_err();
         assert!(format!("{err}").contains("[[sinks]]"));
+    }
+
+    #[test]
+    fn snapshot_capability_round_trips_and_supports_strategy() {
+        let toml = format!(
+            "{GOOD}\n[sinks.capabilities.materialization]\nappend = true\nsnapshot = true\n"
+        );
+        let m = Manifest::from_str(&toml, &p()).unwrap();
+        let caps = m.sinks[0]
+            .capabilities
+            .materialization
+            .as_ref()
+            .expect("materialization block parsed");
+        assert!(caps.snapshot);
+        assert!(caps.supports_strategy("snapshot"));
+        assert!(caps.supports_strategy("append"));
+        assert!(!caps.supports_strategy("merge"));
+    }
+
+    #[test]
+    fn snapshot_defaults_to_false_when_omitted() {
+        let toml = format!("{GOOD}\n[sinks.capabilities.materialization]\nappend = true\n");
+        let m = Manifest::from_str(&toml, &p()).unwrap();
+        let caps = m.sinks[0].capabilities.materialization.as_ref().unwrap();
+        assert!(!caps.snapshot);
+        assert!(!caps.supports_strategy("snapshot"));
     }
 
     #[test]

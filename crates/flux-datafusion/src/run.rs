@@ -6,6 +6,7 @@
 //! These types use wall-clock [`std::time::SystemTime`] (not [`std::time::Instant`])
 //! so they can be serialized and persisted to SQLite.
 
+use crate::provider::MaterializationReceipt;
 use flux_engine::NodeId;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
@@ -31,6 +32,11 @@ pub enum ExecutionEvent {
         node_id: NodeId,
         rows_out: u64,
         duration_ms: u64,
+        /// Materialization receipt for sink nodes (doc 27). `None` for
+        /// source/transform nodes; populated for every successful sink write.
+        /// Boxed to keep `ExecutionEvent` small (clippy::large_enum_variant).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        materialization_receipt: Option<Box<MaterializationReceipt>>,
     },
     NodeFailed {
         run_id: RunId,
@@ -110,6 +116,11 @@ pub struct NodeRunStats {
     pub rows_in: u64,
     pub rows_out: u64,
     pub error: Option<String>,
+    /// Sink-only: structured materialization receipt (doc 27). `None` for
+    /// source/transform nodes and for sinks that haven't yet been re-run
+    /// since this field was introduced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization_receipt: Option<MaterializationReceipt>,
 }
 
 impl NodeRunStats {

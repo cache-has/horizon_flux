@@ -91,14 +91,16 @@ impl PipelineSink for SpySink {
         _config: &SinkConfig,
         data: Vec<RecordBatch>,
         _options: &WriteOptions,
-    ) -> Result<WriteStats, ProviderError> {
+        ctx: &flux_datafusion::provider::MaterializationContext,
+    ) -> Result<flux_datafusion::provider::MaterializationReceipt, ProviderError> {
         self.called.store(true, Ordering::Relaxed);
         let rows: u64 = data.iter().map(|b| b.num_rows() as u64).sum();
-        Ok(WriteStats {
+        let stats = WriteStats {
             rows_written: rows,
             bytes_written: 0,
             duration: Duration::ZERO,
-        })
+        };
+        Ok(flux_datafusion::provider::MaterializationReceipt::from_write_stats(&stats, ctx))
     }
 
     fn validate_config(&self, _config: &SinkConfig) -> Result<(), ProviderError> {
@@ -142,6 +144,7 @@ fn sink_node(id: &str) -> Node {
         name: id.to_string(),
         kind: NodeKind::Sink(SinkConfig {
             connector: "mock".into(),
+            materialization: None,
             config: serde_json::Value::Null,
         }),
         position: Position::default(),

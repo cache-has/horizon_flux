@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use crate::materialization::MaterializationPolicy;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -117,6 +118,11 @@ pub struct SinkConfig {
     /// Connector-specific configuration (opaque JSON).
     #[serde(default)]
     pub config: serde_json::Value,
+    /// Optional materialization policy. When omitted, the sink behaves as
+    /// `mode: "full"` (current behavior — every run overwrites/appends blindly).
+    /// See `planning/14-pipeline-format.md` and `planning/27-incremental-materializations.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization: Option<MaterializationPolicy>,
 }
 
 /// 2D position on the canvas.
@@ -193,6 +199,7 @@ mod tests {
         let kind = NodeKind::Sink(SinkConfig {
             connector: "postgresql".into(),
             config: serde_json::json!({"table": "output"}),
+            materialization: None,
         });
         let json = serde_json::to_value(&kind).unwrap();
         assert_eq!(json["type"], "sink");

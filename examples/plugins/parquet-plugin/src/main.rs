@@ -61,8 +61,8 @@ impl Sink for ParquetSink {
                 "plugin requires a non-empty input schema".into(),
             ));
         }
-        let compression = parse_compression(config.compression.as_deref())
-            .map_err(SinkError::InvalidConfig)?;
+        let compression =
+            parse_compression(config.compression.as_deref()).map_err(SinkError::InvalidConfig)?;
         if let Some(parent) = config.path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -74,18 +74,15 @@ impl Sink for ParquetSink {
             })?;
         }
         let file = File::create(&config.path).map_err(|e| {
-            SinkError::InvalidConfig(format!(
-                "failed to create '{}': {e}",
-                config.path.display()
-            ))
+            SinkError::InvalidConfig(format!("failed to create '{}': {e}", config.path.display()))
         })?;
         let props = WriterProperties::builder()
             .set_compression(compression)
             .build();
         let writer = ArrowWriter::try_new(file, std::sync::Arc::new(schema.clone()), Some(props))
             .map_err(|e| {
-                SinkError::InvalidConfig(format!("failed to open parquet writer: {e}"))
-            })?;
+            SinkError::InvalidConfig(format!("failed to open parquet writer: {e}"))
+        })?;
         log::info(format!(
             "parquet plugin writing to {}",
             config.path.display()

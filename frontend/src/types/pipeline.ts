@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import type { Node, Edge } from '@xyflow/react';
+import type {
+  MaterializationPolicy,
+  MaterializationReceipt,
+} from '../api/pipelines';
 
 /** The three fundamental node roles in a pipeline DAG. */
 export type NodeRole = 'source' | 'transform' | 'sink';
@@ -32,6 +36,10 @@ export interface PipelineNodeData extends Record<string, unknown> {
   lastRunDurationMs?: number;
   /** Error message from the last execution (set when status is 'error'). */
   errorMessage?: string;
+  /** Sink-only: declared materialization policy (drives the incremental badge). */
+  materializationPolicy?: MaterializationPolicy;
+  /** Sink-only: latest run's materialization receipt — feeds the badge tooltip. */
+  materializationReceipt?: MaterializationReceipt;
 }
 
 /** A pipeline node is a React Flow Node carrying our custom data. */

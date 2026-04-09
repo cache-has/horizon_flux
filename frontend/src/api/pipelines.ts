@@ -15,6 +15,102 @@ export interface ApiPosition {
   y: number;
 }
 
+// ---------------------------------------------------------------------------
+// Sink materialization policy (mirrors `flux-engine::materialization`)
+// ---------------------------------------------------------------------------
+
+export type ReadMode = 'full' | 'incremental';
+
+export type WriteStrategy =
+  | 'append'
+  | 'merge'
+  | 'delete_insert'
+  | 'insert_overwrite'
+  | 'truncate_insert'
+  | 'snapshot';
+
+export type ChangeDetection = 'check' | 'timestamp';
+
+export type HardDeletes = 'ignore' | 'invalidate' | 'delete';
+
+/**
+ * Snapshot-specific sub-block (mirrors `flux-engine::materialization::SnapshotPolicy`).
+ * Only meaningful when `write_strategy: 'snapshot'`.
+ */
+export interface SnapshotPolicy {
+  change_detection?: ChangeDetection;
+  /** Required for `change_detection: 'check'`. Use `["*"]` to track all columns. */
+  check_columns?: string[];
+  /** Required for `change_detection: 'timestamp'`. */
+  updated_at_column?: string;
+  hard_deletes?: HardDeletes;
+}
+
+export type WatermarkType = 'timestamp' | 'int64' | 'string';
+
+export type OnSchemaChange = 'fail' | 'ignore' | 'append_new_columns' | 'sync_all_columns';
+
+export type FirstRun = 'full' | 'fail';
+
+export interface Watermark {
+  column: string;
+  type: WatermarkType;
+}
+
+/** Sink materialization block. Sibling of `config` on a sink node. */
+export interface MaterializationPolicy {
+  read_mode?: ReadMode;
+  write_strategy?: WriteStrategy;
+  watermark?: Watermark;
+  unique_keys?: string[];
+  partition_column?: string;
+  on_schema_change?: OnSchemaChange;
+  first_run?: FirstRun;
+  /** ISO 8601 duration. Only meaningful under incremental + timestamp. */
+  lookback?: string;
+  /** Required iff `write_strategy: 'snapshot'`. */
+  snapshot?: SnapshotPolicy;
+}
+
+/** Serialized watermark value from a sink write (mirrors backend `WatermarkValue`). */
+export interface WatermarkValue {
+  value: string;
+  type: WatermarkType;
+}
+
+/** Schema field summary used inside `SchemaDiff`. */
+export interface SchemaField {
+  name: string;
+  data_type: string;
+}
+
+export interface SchemaTypeChange {
+  name: string;
+  before: string;
+  after: string;
+}
+
+export interface SchemaDiff {
+  added?: SchemaField[];
+  removed?: SchemaField[];
+  type_changed?: SchemaTypeChange[];
+}
+
+/** A sink write receipt (mirrors backend `MaterializationReceipt`). */
+export interface MaterializationReceipt {
+  write_strategy: WriteStrategy;
+  read_mode: ReadMode;
+  rows_scanned: number;
+  rows_filtered_by_watermark: number;
+  rows_written: number;
+  rows_inserted: number;
+  rows_updated: number;
+  rows_deleted: number;
+  watermark_before?: WatermarkValue;
+  watermark_after?: WatermarkValue;
+  schema_diff?: SchemaDiff;
+}
+
 /** A backend pipeline node (tagged union via `type` field). */
 export interface ApiNode {
   id: string;
@@ -25,6 +121,8 @@ export interface ApiNode {
   /** Source/sink fields */
   connector?: string;
   config?: unknown;
+  /** Sink-only: optional materialization policy. */
+  materialization?: MaterializationPolicy;
   /** Transform fields */
   mode?: 'sql' | 'python';
   code?: string;
@@ -136,6 +234,130 @@ export async function listPipelines(
   const res = await fetch(`${BASE}?limit=${limit}&offset=${offset}`);
   if (!res.ok) {
     throw new Error(`Failed to list pipelines: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot SCD2 read endpoints (planning doc 28)
+// ---------------------------------------------------------------------------
+
+export interface SnapshotHistoryVersion {
+  flux_scd_id: string;
+  flux_valid_from: string;
+  flux_valid_to: string | null;
+  flux_is_current: boolean;
+  comparison: Record<string, string>;
+}
+
+export interface SnapshotHistoryResponse {
+  node_id: string;
+  table: string;
+  unique_keys: string[];
+  comparison_columns: string[];
+  key: Record<string, string>;
+  version_count: number;
+  versions: SnapshotHistoryVersion[];
+}
+
+/**
+ * Fetch SCD2 history for a single business key on a snapshot sink.
+ * v1 supports postgresql sinks only — other connectors return a 400
+ * with an actionable error message.
+ */
+export async function fetchSnapshotHistory(
+  pipelineId: string,
+  nodeId: string,
+  key: Record<string, string>,
+  environment?: string,
+): Promise<SnapshotHistoryResponse> {
+  const res = await fetch(
+    `${BASE}/${pipelineId}/nodes/${encodeURIComponent(nodeId)}/snapshot/history`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, environment }),
+    },
+  );
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: string; details?: string };
+      if (body?.error) {
+        detail = body.details ? `${body.error} — ${body.details}` : body.error;
+      }
+    } catch {
+      // body wasn't JSON; keep status text
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot diff preview (planning doc 28)
+// ---------------------------------------------------------------------------
+
+export type SnapshotDiffClassification = 'unchanged' | 'changed' | 'new' | 'gone';
+
+export interface SnapshotDiffSample {
+  classification: SnapshotDiffClassification;
+  unique_key: string[];
+}
+
+export interface SnapshotDiffStats {
+  unchanged: number;
+  changed: number;
+  new_versions: number;
+  gone: number;
+}
+
+export interface SnapshotDiffResponse {
+  node_id: string;
+  table: string;
+  environment: string;
+  unique_keys: string[];
+  comparison_columns: string[];
+  stats: SnapshotDiffStats;
+  sample: SnapshotDiffSample[];
+  staged_row_count: number;
+  sample_truncated: boolean;
+  staged_row_cap: number;
+  cached: boolean;
+}
+
+/**
+ * Fetch a dry-run snapshot diff: runs the upstream DAG with sink writes
+ * disabled, then classifies every staged business key against the target's
+ * `flux_is_current` slice. v1 supports postgresql sinks only.
+ */
+export async function fetchSnapshotDiff(
+  pipelineId: string,
+  nodeId: string,
+  options?: { environment?: string; variables?: Record<string, unknown> },
+): Promise<SnapshotDiffResponse> {
+  const res = await fetch(
+    `${BASE}/${pipelineId}/nodes/${encodeURIComponent(nodeId)}/snapshot/diff`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        environment: options?.environment,
+        variables: options?.variables ?? {},
+      }),
+    },
+  );
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: string; details?: string };
+      if (body?.error) {
+        detail = body.details ? `${body.error} — ${body.details}` : body.error;
+      }
+    } catch {
+      // body wasn't JSON; keep status text
+    }
+    throw new Error(detail);
   }
   return res.json();
 }
@@ -456,6 +678,86 @@ function timestampDurationMs(start?: ApiTimestamp, end?: ApiTimestamp): number {
   const startMs = start.secs_since_epoch * 1000 + start.nanos_since_epoch / 1_000_000;
   const endMs = end.secs_since_epoch * 1000 + end.nanos_since_epoch / 1_000_000;
   return Math.round(endMs - startMs);
+}
+
+// ---------------------------------------------------------------------------
+// Incremental state (doc 27)
+// ---------------------------------------------------------------------------
+
+/** A persisted incremental state row (mirrors backend `IncrementalState`). */
+export interface ApiIncrementalState {
+  pipeline_id: string;
+  node_id: string;
+  environment: string;
+  watermark_column: string;
+  watermark_value: string;
+  watermark_type: WatermarkType;
+  last_run_at_ms: number;
+  last_run_id: string;
+  rows_processed: number;
+  schema_fingerprint?: string;
+}
+
+/** Fetch persisted incremental state rows for a pipeline. */
+export async function fetchIncrementalState(
+  id: string,
+  env?: string,
+): Promise<ApiIncrementalState[]> {
+  const url = env
+    ? `${BASE}/${id}/incremental-state?env=${encodeURIComponent(env)}`
+    : `${BASE}/${id}/incremental-state`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch incremental state for ${id}: ${res.status} ${res.statusText}`,
+    );
+  }
+  const body = (await res.json()) as { states: ApiIncrementalState[] };
+  return body.states ?? [];
+}
+
+/** Per-node incremental stats for a single run (mirrors backend `RunIncrementalStat`). */
+export interface ApiRunIncrementalStat {
+  node_id: string;
+  rows_in: number;
+  rows_out: number;
+  duration_ms: number;
+  receipt: MaterializationReceipt;
+}
+
+/** Fetch per-run incremental stats. Returns one entry per sink with a receipt. */
+export async function fetchRunIncrementalStats(
+  pipelineId: string,
+  runId: string,
+): Promise<ApiRunIncrementalStat[]> {
+  const res = await fetch(
+    `${BASE}/${pipelineId}/runs/${encodeURIComponent(runId)}/incremental-stats`,
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch incremental stats for ${runId}: ${res.status} ${res.statusText}`,
+    );
+  }
+  const body = (await res.json()) as { nodes?: ApiRunIncrementalStat[] };
+  return body.nodes ?? [];
+}
+
+/** Reset persisted incremental state for a single sink node. */
+export async function resetIncrementalState(
+  pipelineId: string,
+  nodeId: string,
+  env?: string,
+): Promise<void> {
+  const url = env
+    ? `${BASE}/${pipelineId}/nodes/${encodeURIComponent(nodeId)}/incremental/reset?env=${encodeURIComponent(env)}`
+    : `${BASE}/${pipelineId}/nodes/${encodeURIComponent(nodeId)}/incremental/reset`;
+  const res = await fetch(url, { method: 'POST' });
+  // 404 means "no state existed" — treat as success (idempotent reset).
+  if (!res.ok && res.status !== 404) {
+    throw new Error(
+      `Failed to reset incremental state for ${nodeId}: ${res.status} ${res.statusText}`,
+    );
+  }
 }
 
 /** Fetch run history for a pipeline. Returns a plain array of runs. */

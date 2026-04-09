@@ -119,7 +119,7 @@ async fn preview_node(
 
             let batches = tokio::time::timeout(
                 PREVIEW_TIMEOUT,
-                PipelineExecutor::execute_source(&node_id, &src_cfg, &registry, None),
+                PipelineExecutor::execute_source(&node_id, &src_cfg, &registry, None, None),
             )
             .await
             .map_err(|_| ApiError::gateway_timeout("preview timed out after 5 seconds"))?

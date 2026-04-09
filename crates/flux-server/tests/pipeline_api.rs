@@ -20,6 +20,7 @@ fn test_state() -> AppState {
     AppState {
         pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
+        incremental_state_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(std::sync::Mutex::new(
@@ -597,4 +598,109 @@ async fn bulk_export_pipelines() {
     assert!(body["beta"].is_object());
     assert_eq!(body["alpha"]["name"], "alpha");
     assert_eq!(body["beta"]["name"], "beta");
+}
+
+#[tokio::test]
+async fn incremental_state_endpoints_roundtrip() {
+    use flux_datafusion::IncrementalState;
+
+    let state = test_state();
+
+    // Create a pipeline so the path validation passes.
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines")
+                .header("content-type", "application/json")
+                .body(Body::from(test_pipeline_json("inc-pipe").to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp.into_body()).await;
+    let pid = created["id"].as_str().unwrap().to_string();
+
+    // Seed an incremental state row directly via the storage trait.
+    let row = IncrementalState {
+        pipeline_id: pid.clone(),
+        node_id: "sink_a".to_string(),
+        environment: "default".to_string(),
+        watermark_column: "updated_at".to_string(),
+        watermark_value: "2026-04-08T00:00:00Z".to_string(),
+        watermark_type: "timestamp".to_string(),
+        last_run_at_ms: 1_700_000_000_000,
+        last_run_id: uuid::Uuid::new_v4().to_string(),
+        rows_processed: 42,
+        schema_fingerprint: None,
+    };
+    state.incremental_state_store.save_state(&row).unwrap();
+
+    // GET list
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/pipelines/{pid}/incremental-state"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let states = body["states"].as_array().unwrap();
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0]["node_id"], "sink_a");
+    assert_eq!(states[0]["rows_processed"], 42);
+
+    // POST reset
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/pipelines/{pid}/nodes/sink_a/incremental/reset"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["reset"], true);
+
+    // Re-list — should be empty.
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/pipelines/{pid}/incremental-state"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["states"].as_array().unwrap().len(), 0);
+
+    // Reset again — should 404.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/pipelines/{pid}/nodes/sink_a/incremental/reset"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

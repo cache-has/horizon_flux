@@ -27,3 +27,5 @@ csv = "1"
 
 [dev-dependencies]
 tempfile = "3"
+uuid = { workspace = true }
+chrono = { workspace = true }

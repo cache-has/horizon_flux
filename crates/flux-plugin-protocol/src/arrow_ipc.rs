@@ -43,11 +43,7 @@ pub enum ArrowIpcError {
 /// of `ConfigureSink`.
 pub fn encode_schema_b64(schema: &Schema) -> Result<String, ArrowIpcError> {
     let buf: Vec<u8> = Vec::new();
-    let writer = StreamWriter::try_new_with_options(
-        buf,
-        schema,
-        IpcWriteOptions::default(),
-    )?;
+    let writer = StreamWriter::try_new_with_options(buf, schema, IpcWriteOptions::default())?;
     let buf = writer.into_inner()?;
     Ok(B64.encode(buf))
 }
@@ -62,11 +58,8 @@ pub fn decode_schema_b64(b64: &str) -> Result<Arc<Schema>, ArrowIpcError> {
 /// Encode one [`RecordBatch`] as a self-contained Arrow IPC stream.
 pub fn encode_record_batch(batch: &RecordBatch) -> Result<Vec<u8>, ArrowIpcError> {
     let buf: Vec<u8> = Vec::new();
-    let mut writer = StreamWriter::try_new_with_options(
-        buf,
-        batch.schema_ref(),
-        IpcWriteOptions::default(),
-    )?;
+    let mut writer =
+        StreamWriter::try_new_with_options(buf, batch.schema_ref(), IpcWriteOptions::default())?;
     writer.write(batch)?;
     writer.finish()?;
     Ok(writer.into_inner()?)

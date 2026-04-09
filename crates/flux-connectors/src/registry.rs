@@ -247,6 +247,7 @@ mod tests {
                     name: "sink".into(),
                     kind: NodeKind::Sink(SinkConfig {
                         connector: "stdout".into(),
+                        materialization: None,
                         config: serde_json::json!({"format": "table"}),
                     }),
                     position: Position::default(),

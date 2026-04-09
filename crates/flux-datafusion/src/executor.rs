@@ -8,13 +8,22 @@
 //! transform, or pipeline sink).
 
 use crate::error::{ExecutorError, NodeErrorKind};
-use crate::provider::{ProviderRegistry, WriteOptions};
+use crate::incremental_coordinator::{IncrementalReadPlan, IncrementalSinkPlan, build_plans};
+use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
+use crate::provider::{
+    MaterializationContext, MaterializationReceipt, ProviderRegistry, WatermarkValue, WriteOptions,
+};
 use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
 use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus};
+use crate::schema_diff::{SchemaAction, apply_policy, compute_schema_diff, schema_fingerprint};
 use crate::session::SessionFactory;
 use crate::stats::NodeStats;
-use crate::storage::RunStorage;
+use crate::storage::{IncrementalStateStorage, RunStorage};
+use crate::watermark::{
+    build_filter_expr, fold_max_watermark, scalar_to_stored, stored_to_scalar,
+    watermark_type_matches,
+};
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
@@ -91,6 +100,26 @@ pub struct ExecutionOptions {
     /// configuration. When `None`, each node creates an unconfigured
     /// `SessionContext` with default (unbounded) memory.
     pub session_factory: Option<Arc<SessionFactory>>,
+    /// Optional incremental-state store. When `None`, sinks with
+    /// `read_mode: incremental` behave as first-runs every time (the
+    /// pre-pass treats missing state as "no prior run") and no state is
+    /// persisted afterwards. Production runs always pass one in.
+    pub incremental_state_store: Option<Arc<dyn IncrementalStateStorage>>,
+    /// Skip watermark filter injection on incremental sinks for this run,
+    /// then advance state at the end as if it were a first run. The CLI
+    /// surfaces this as `--full-refresh`; doc 27's "explicit user action,
+    /// never an automatic decision" escape hatch.
+    pub full_refresh: bool,
+    /// Permit incremental sinks whose `first_run` policy is `fail` to
+    /// perform their bootstrap load. Surfaced as `--bootstrap-incremental`.
+    pub bootstrap_incremental: bool,
+    /// Skip sink writes entirely. When `true`, every sink node short-circuits
+    /// to an empty-batch success without touching its target, no
+    /// `MaterializationReceipt` is produced, and the incremental pre-pass is
+    /// not run. Upstream node outputs still flow into `PipelineResult::node_outputs`
+    /// so callers can read the staged batches that *would* have been written.
+    /// Used by `flux snapshot diff` (doc 28) to drive a true dry-run.
+    pub dry_run_no_sinks: bool,
 }
 
 impl Default for ExecutionOptions {
@@ -104,6 +133,10 @@ impl Default for ExecutionOptions {
             variable_overrides: HashMap::new(),
             secret_resolver: None,
             session_factory: None,
+            incremental_state_store: None,
+            full_refresh: false,
+            bootstrap_incremental: false,
+            dry_run_no_sinks: false,
         }
     }
 }
@@ -129,6 +162,43 @@ impl PipelineExecutor {
     ) -> Result<(PipelineResult, PipelineRun), ExecutorError> {
         dag::validate(pipeline).map_err(ExecutorError::Validation)?;
         let order = dag::topological_sort(pipeline);
+
+        // Doc 27 pre-pass: walk every incremental sink, load state, and
+        // build per-source watermark filters before any I/O. Hard errors
+        // here surface as a node failure on the *first* incremental sink
+        // (we don't have a real `node_id` for a pipeline-wide error).
+        // Skipped under `dry_run_no_sinks` (doc 28 `flux snapshot diff`):
+        // sinks won't write anyway, so we don't need state lookups, and
+        // pipelines without an `incremental_state_store` configured (e.g.
+        // ad-hoc CLI dry-runs) would otherwise hit a "first run" pre-pass
+        // failure on `first_run: fail` sinks before we even reach them.
+        let incremental_plans = if options.dry_run_no_sinks {
+            crate::incremental_coordinator::IncrementalPlans::default()
+        } else {
+            build_plans(
+                pipeline,
+                &pipeline.name,
+                &options.environment,
+                options.incremental_state_store.as_ref(),
+                options.full_refresh,
+                options.bootstrap_incremental,
+            )
+            .map_err(|e| {
+                // Map to a node-level error attached to the first incremental
+                // sink we can find — the error message itself names the
+                // offending sink and is what the user actually reads.
+                let sink_id = pipeline
+                    .nodes
+                    .iter()
+                    .find(|n| matches!(n.kind, flux_engine::node::NodeKind::Sink(_)))
+                    .map(|n| n.id.clone())
+                    .unwrap_or_else(|| NodeId::from("<pre-pass>"));
+                ExecutorError::Node {
+                    node_id: sink_id,
+                    kind: e.into(),
+                }
+            })?
+        };
 
         info!(pipeline = %pipeline.name, nodes = order.len(), "starting pipeline execution");
 
@@ -211,6 +281,10 @@ impl PipelineExecutor {
             let mut rows_in: u64 = 0;
             // Secret values resolved for this node, used to scrub error messages.
             let mut node_secret_values: Vec<String> = Vec::new();
+            // Sink-only: populated by `execute_sink` so we can attach the
+            // doc-27 materialization receipt to NodeRunStats and broadcast
+            // it on the NodeCompleted event.
+            let mut sink_receipt: Option<MaterializationReceipt> = None;
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
                 NodeKind::Source(src_cfg) => {
@@ -250,6 +324,7 @@ impl PipelineExecutor {
                         &interpolated_cfg,
                         registry,
                         options.session_factory.as_deref(),
+                        incremental_plans.source_plans.get(node_id),
                     )
                     .await
                 }
@@ -307,49 +382,71 @@ impl PipelineExecutor {
                 }
 
                 NodeKind::Sink(sink_cfg) => {
-                    let upstream_ids = pipeline.upstream_of(node_id);
-                    match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
-                        Ok(upstream_data) => {
-                            let all_batches: Vec<RecordBatch> = upstream_data
-                                .into_values()
-                                .flat_map(|batches| batches.iter().cloned())
-                                .collect();
-                            let mut interpolated_cfg = sink_cfg.clone();
-                            // Apply environment override before variable interpolation.
-                            if let Some(overrides) = pipeline
-                                .environment_overrides
-                                .get(&options.environment)
-                                .and_then(|env| env.get(&node_id.0))
-                            {
-                                debug!(node = %node_id, env = %options.environment, "applying environment override to sink");
-                                merge_override(&mut interpolated_cfg.config, overrides);
-                            }
-                            // Interpolate variables in sink connector config.
-                            interpolated_cfg.config =
-                                resolved_vars.interpolate_json(&interpolated_cfg.config);
-                            // Resolve secret references (collecting values for scrubbing).
-                            if let Some(resolver) = &options.secret_resolver {
-                                match resolver.resolve_json_collecting(
-                                    &interpolated_cfg.config,
-                                    Some(&options.environment),
-                                ) {
-                                    Ok((resolved, values)) => {
-                                        interpolated_cfg.config = resolved;
-                                        node_secret_values = values;
-                                    }
-                                    Err(e) => {
-                                        return Err(ExecutorError::Node {
-                                            node_id: node_id.clone(),
-                                            kind: NodeErrorKind::Sink(e),
-                                        });
+                    // Doc 28 dry-run: skip the sink entirely. Upstream
+                    // outputs are already in `outputs` so callers (e.g.
+                    // `flux snapshot diff`) can read them; we just don't
+                    // touch the sink's target.
+                    if options.dry_run_no_sinks {
+                        Ok(Vec::new())
+                    } else {
+                        let upstream_ids = pipeline.upstream_of(node_id);
+                        match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                            Ok(upstream_data) => {
+                                let all_batches: Vec<RecordBatch> = upstream_data
+                                    .into_values()
+                                    .flat_map(|batches| batches.iter().cloned())
+                                    .collect();
+                                let mut interpolated_cfg = sink_cfg.clone();
+                                // Apply environment override before variable interpolation.
+                                if let Some(overrides) = pipeline
+                                    .environment_overrides
+                                    .get(&options.environment)
+                                    .and_then(|env| env.get(&node_id.0))
+                                {
+                                    debug!(node = %node_id, env = %options.environment, "applying environment override to sink");
+                                    merge_override(&mut interpolated_cfg.config, overrides);
+                                }
+                                // Interpolate variables in sink connector config.
+                                interpolated_cfg.config =
+                                    resolved_vars.interpolate_json(&interpolated_cfg.config);
+                                // Resolve secret references (collecting values for scrubbing).
+                                if let Some(resolver) = &options.secret_resolver {
+                                    match resolver.resolve_json_collecting(
+                                        &interpolated_cfg.config,
+                                        Some(&options.environment),
+                                    ) {
+                                        Ok((resolved, values)) => {
+                                            interpolated_cfg.config = resolved;
+                                            node_secret_values = values;
+                                        }
+                                        Err(e) => {
+                                            return Err(ExecutorError::Node {
+                                                node_id: node_id.clone(),
+                                                kind: NodeErrorKind::Sink(e),
+                                            });
+                                        }
                                     }
                                 }
-                            }
-                            Self::execute_sink(&interpolated_cfg, all_batches, registry)
+                                Self::execute_sink(
+                                    node_id,
+                                    &interpolated_cfg,
+                                    all_batches,
+                                    registry,
+                                    incremental_plans.sink_plans.get(node_id),
+                                    options.incremental_state_store.as_ref(),
+                                    &pipeline.name,
+                                    &options.environment,
+                                    &run.id,
+                                    options.full_refresh,
+                                )
                                 .await
-                                .map(|(batches, _write_stats)| batches)
+                                .map(|(batches, receipt)| {
+                                    sink_receipt = Some(receipt);
+                                    batches
+                                })
+                            }
+                            Err(e) => Err(e),
                         }
-                        Err(e) => Err(e),
                     }
                 }
             };
@@ -378,6 +475,7 @@ impl PipelineExecutor {
                         rows_in,
                         rows_out,
                         error: None,
+                        materialization_receipt: sink_receipt.clone(),
                     };
                     if let Some(store) = &options.run_store {
                         let _ = store.save_node_stats(&run.id, &node_run_stats);
@@ -391,6 +489,7 @@ impl PipelineExecutor {
                             node_id: node_id.clone(),
                             rows_out,
                             duration_ms: node_end.duration_since(node_start).as_millis() as u64,
+                            materialization_receipt: sink_receipt.clone().map(Box::new),
                         },
                     );
 
@@ -419,6 +518,7 @@ impl PipelineExecutor {
                         rows_in,
                         rows_out: 0,
                         error: Some(error_msg.clone()),
+                        materialization_receipt: None,
                     };
                     if let Some(store) = &options.run_store {
                         let _ = store.save_node_stats(&run.id, &node_run_stats);
@@ -503,11 +603,20 @@ impl PipelineExecutor {
     }
 
     /// Create a `TableProvider` from the source connector and read all rows.
+    ///
+    /// When `read_plan` is `Some`, an incremental sink downstream of this
+    /// source has declared a watermark filter. The plan is validated
+    /// against the source's actual schema (column presence + Arrow type
+    /// compatibility) and applied as a `DataFrame::filter` so DataFusion
+    /// can push it down into the connector's `TableProvider::scan(filters)`.
+    /// Validation failures here are hard errors *before* any rows are
+    /// scanned — see doc 27's "no silent fallbacks" rule.
     pub async fn execute_source(
         node_id: &NodeId,
         config: &SourceConfig,
         registry: &ProviderRegistry,
         session_factory: Option<&SessionFactory>,
+        read_plan: Option<&IncrementalReadPlan>,
     ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
         let connector = registry
             .get_source(&config.connector)
@@ -531,11 +640,55 @@ impl PipelineExecutor {
             .configure_session(config, &ctx)
             .map_err(NodeErrorKind::Source)?;
 
+        let provider_schema = table_provider.schema();
         let table_name = node_id.to_string();
         ctx.register_table(table_name.as_str(), table_provider)?;
-        let df = ctx
+        let mut df = ctx
             .sql(&format!("SELECT * FROM \"{}\"", table_name))
             .await?;
+
+        // Doc 27: inject the watermark filter when an incremental sink
+        // downstream of this source has loaded state. Validation against
+        // the *actual* source schema happens here so a column rename or
+        // type drift fails before any rows are read.
+        if let Some(plan) = read_plan {
+            let field = provider_schema
+                .field_with_name(&plan.column)
+                .map_err(|_| {
+                    NodeErrorKind::Source(Box::new(std::io::Error::other(format!(
+                        "incremental sink `{}`: watermark column `{}` is missing from source `{}` schema",
+                        plan.sink_node_id.0, plan.column, node_id
+                    ))))
+                })?;
+            if !watermark_type_matches(field.data_type(), plan.wtype) {
+                return Err(NodeErrorKind::Source(Box::new(std::io::Error::other(
+                    format!(
+                        "incremental sink `{}`: watermark `{}` declared as `{:?}` but source column type is `{}`",
+                        plan.sink_node_id.0,
+                        plan.column,
+                        plan.wtype,
+                        field.data_type()
+                    ),
+                ))));
+            }
+            if let Some(state) = &plan.state {
+                let scalar = stored_to_scalar(
+                    &plan.sink_node_id.0,
+                    plan.wtype,
+                    &state.watermark_value,
+                    plan.lookback,
+                )
+                .map_err(|e| {
+                    NodeErrorKind::Source(Box::new(std::io::Error::other(e.to_string())))
+                })?;
+                let expr = build_filter_expr(&plan.column, scalar);
+                df = df.filter(expr)?;
+            }
+            // No state → first run; the coordinator already enforced the
+            // FirstRun policy in build_plans, so reaching here under
+            // FirstRun::Full means "read everything, no filter."
+        }
+
         let batches = df.collect().await?;
         Ok(batches)
     }
@@ -605,20 +758,213 @@ impl PipelineExecutor {
         }
     }
 
-    /// Write data through the sink connector, returning the batches and write stats.
+    /// Write data through the sink connector, returning the batches and the
+    /// structured [`MaterializationReceipt`].
+    ///
+    /// When `sink_plan` is `Some` this is an incremental sink: the
+    /// coordinator computes the new max watermark from the streamed
+    /// batches, computes a schema diff against the most recent stored
+    /// schema, applies the configured `on_schema_change` policy, calls
+    /// the sink, then persists the new state and schema record.
+    ///
+    /// State persistence is **post-commit** (at-least-once). Wrapping the
+    /// sink write and the state save in a single transaction would
+    /// require threading a transaction handle through the `PipelineSink`
+    /// trait — doc 27 explicitly defers that surgery to a follow-up. The
+    /// seam is marked below with a TODO so the future change has an
+    /// obvious landing pad.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_sink(
+        node_id: &NodeId,
         config: &flux_engine::node::SinkConfig,
         batches: Vec<RecordBatch>,
         registry: &ProviderRegistry,
-    ) -> Result<(Vec<RecordBatch>, crate::provider::WriteStats), NodeErrorKind> {
+        sink_plan: Option<&IncrementalSinkPlan>,
+        state_store: Option<&Arc<dyn IncrementalStateStorage>>,
+        pipeline_id: &str,
+        environment: &str,
+        run_id: &crate::run::RunId,
+        full_refresh: bool,
+    ) -> Result<(Vec<RecordBatch>, MaterializationReceipt), NodeErrorKind> {
         let sink = registry
             .get_sink(&config.connector)
             .ok_or_else(|| NodeErrorKind::SinkNotFound(config.connector.clone()))?;
-        let write_stats = sink
-            .write(config, batches.clone(), &WriteOptions::default())
+
+        let mut ctx = MaterializationContext::from_policy(config.materialization.as_ref());
+
+        // -- Schema diff (incremental sinks only) ---------------------
+        let mut schema_diff = None;
+        if let (Some(plan), Some(store)) = (sink_plan, state_store) {
+            if let Some(first_batch) = batches.first() {
+                let current_schema = first_batch.schema();
+                let prev = store
+                    .latest_schema(pipeline_id, &node_id.0, environment)
+                    .map_err(|e| {
+                        NodeErrorKind::Sink(Box::new(std::io::Error::other(e.to_string())))
+                    })?;
+                if let Some(prev) = prev {
+                    if let Some(prev_schema) =
+                        crate::schema_diff::deserialize_schema(&prev.schema_json)
+                    {
+                        let diff = compute_schema_diff(&prev_schema, &current_schema);
+                        match apply_policy(&diff, plan.policy.on_schema_change) {
+                            SchemaAction::Proceed => {}
+                            SchemaAction::ProceedWithAlter => {
+                                // Signal sinks that support target-side
+                                // schema evolution (PostgresSink under
+                                // `append_new_columns`) to introspect and
+                                // ALTER before writing. Sinks without
+                                // evolution support ignore the flag; for
+                                // those, log the seam so the operator can
+                                // see why the receipt's schema_diff is
+                                // populated but the target wasn't altered.
+                                ctx.apply_schema_changes = true;
+                                if !sink_supports_schema_evolution(&config.connector) {
+                                    warn!(
+                                        sink = %node_id,
+                                        connector = %config.connector,
+                                        "schema diff requires ALTER but this sink does not support target-side evolution; proceeding without altering target"
+                                    );
+                                }
+                            }
+                            SchemaAction::Abort(reason) => {
+                                return Err(NodeErrorKind::Sink(Box::new(std::io::Error::other(
+                                    format!("schema change rejected: {reason}"),
+                                ))));
+                            }
+                        }
+                        schema_diff = if diff.is_empty() { None } else { Some(diff) };
+                    }
+                }
+            }
+        }
+
+        // -- Capture new max watermark BEFORE write so we can populate
+        // -- receipt and persist regardless of what the sink mutates.
+        let new_max_scalar = if let Some(plan) = sink_plan {
+            let column = &plan
+                .policy
+                .watermark
+                .as_ref()
+                .expect("incremental policy guarantees watermark")
+                .column;
+            let wtype = plan
+                .policy
+                .watermark
+                .as_ref()
+                .expect("incremental policy guarantees watermark")
+                .watermark_type;
+            fold_max_watermark(&batches, column, wtype)
+                .map_err(|e| NodeErrorKind::Sink(Box::new(std::io::Error::other(e.to_string()))))?
+        } else {
+            None
+        };
+
+        // -- Sink write -----------------------------------------------
+        let mut receipt = sink
+            .write(config, batches.clone(), &WriteOptions::default(), &ctx)
             .await
             .map_err(NodeErrorKind::Sink)?;
-        Ok((batches, write_stats))
+
+        // -- Receipt enrichment + state persistence -------------------
+        if let Some(plan) = sink_plan {
+            let watermark_field = plan
+                .policy
+                .watermark
+                .as_ref()
+                .expect("incremental policy guarantees watermark");
+            // Watermark before
+            receipt.watermark_before = plan.state.as_ref().map(|s| WatermarkValue {
+                value: s.watermark_value.clone(),
+                r#type: s.watermark_type.clone(),
+            });
+            // Watermark after — fall back to "before" if no rows seen
+            // (pure no-op run), so the receipt is never silently empty.
+            let new_value_str = new_max_scalar
+                .as_ref()
+                .and_then(|s| scalar_to_stored(watermark_field.watermark_type, s));
+            let advanced_value = new_value_str
+                .clone()
+                .or_else(|| plan.state.as_ref().map(|s| s.watermark_value.clone()));
+            receipt.watermark_after = advanced_value.clone().map(|v| WatermarkValue {
+                value: v,
+                r#type: watermark_type_str(watermark_field.watermark_type).into(),
+            });
+            receipt.schema_diff = schema_diff;
+
+            // Persist new state + schema record. Doc 27: post-commit
+            // advance, at-least-once. This is an explicit, documented
+            // contract — see "Crash recovery and idempotency" in the user
+            // guide. Use `merge` or `delete_insert` for idempotent targets;
+            // `append` will duplicate on crash recovery.
+            if let Some(store) = state_store {
+                if let Some(value) = advanced_value {
+                    let new_state = IncrementalState {
+                        pipeline_id: pipeline_id.to_string(),
+                        node_id: node_id.0.clone(),
+                        environment: environment.to_string(),
+                        watermark_column: watermark_field.column.clone(),
+                        watermark_value: value,
+                        watermark_type: watermark_type_str(watermark_field.watermark_type)
+                            .to_string(),
+                        last_run_at_ms: chrono::Utc::now().timestamp_millis(),
+                        last_run_id: run_id.to_string(),
+                        rows_processed: receipt.rows_written,
+                        schema_fingerprint: batches
+                            .first()
+                            .map(|b| schema_fingerprint(&b.schema())),
+                    };
+                    if let Err(e) = store.save_state(&new_state) {
+                        warn!(sink = %node_id, error = %e, "failed to persist incremental state");
+                    }
+                }
+                if let Some(first_batch) = batches.first() {
+                    let schema = first_batch.schema();
+                    let json = crate::schema_diff::serialize_schema(&schema);
+                    {
+                        let record = IncrementalSchemaRecord {
+                            pipeline_id: pipeline_id.to_string(),
+                            node_id: node_id.0.clone(),
+                            environment: environment.to_string(),
+                            run_id: run_id.to_string(),
+                            schema_json: json,
+                            fingerprint: schema_fingerprint(&schema),
+                            recorded_at_ms: chrono::Utc::now().timestamp_millis(),
+                        };
+                        if let Err(e) = store.record_schema(&record) {
+                            warn!(sink = %node_id, error = %e, "failed to persist schema record");
+                        }
+                    }
+                }
+            }
+
+            if full_refresh {
+                debug!(sink = %node_id, "full_refresh: state advanced as if first run");
+            }
+        }
+
+        Ok((batches, receipt))
+    }
+}
+
+/// Stable wire string for a [`WatermarkType`]. Mirrors the JSON spelling
+/// used by `materialization.rs`.
+/// Sinks that honor `MaterializationContext::apply_schema_changes` by
+/// introspecting the target and running an ALTER. Used by the executor to
+/// decide whether to log the "diff requires ALTER but sink doesn't support
+/// it" WARN seam — sinks listed here read the flag, sinks that don't get a
+/// loud notice instead. Doc 27 follow-up: as additional sinks gain
+/// evolution support, add them here.
+fn sink_supports_schema_evolution(connector: &str) -> bool {
+    matches!(connector, "postgresql" | "postgres")
+}
+
+fn watermark_type_str(t: flux_engine::materialization::WatermarkType) -> &'static str {
+    use flux_engine::materialization::WatermarkType;
+    match t {
+        WatermarkType::Timestamp => "timestamp",
+        WatermarkType::Int64 => "int64",
+        WatermarkType::String => "string",
     }
 }
 

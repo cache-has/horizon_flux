@@ -120,6 +120,12 @@ pub enum WriteMode {
 // ---------------------------------------------------------------------------
 
 /// Configuration for PostgreSQL source/sink.
+///
+/// Sink write semantics (insert/upsert/truncate/append) live on the sink
+/// node's `materialization` block (see `flux-engine::materialization`); they
+/// are no longer carried in this config. Pipelines using the pre-doc-27
+/// `write_mode` / `conflict_keys` shape are auto-migrated on import by
+/// `flux_engine::validate::migrate_legacy_sinks`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostgreSqlConfig {
     /// Connection string (may contain `{{ secret:... }}` references).
@@ -130,34 +136,14 @@ pub struct PostgreSqlConfig {
     /// Raw SQL query to execute (source only; mutually exclusive with `table`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
-    /// Write mode for sink operations.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub write_mode: Option<PostgresWriteMode>,
     /// Batch size for insert operations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
-    /// Conflict key columns for upsert mode (used in ON CONFLICT).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conflict_keys: Vec<String>,
     /// Indexes to create after writing. Each entry is a list of column names
     /// that form a single index. Example: `[["customer_id"], ["region", "tier"]]`
     /// creates two indexes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub indexes: Vec<Vec<String>>,
-}
-
-/// PostgreSQL sink write modes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PostgresWriteMode {
-    /// Simple INSERT statements.
-    Insert,
-    /// INSERT ... ON CONFLICT DO UPDATE (upsert).
-    Upsert,
-    /// TRUNCATE then INSERT.
-    TruncateInsert,
-    /// INSERT without truncating (append).
-    Append,
 }
 
 // ---------------------------------------------------------------------------
@@ -300,9 +286,8 @@ impl ConnectorConfig {
                 "connection_string",
                 "table",
                 "query",
-                "write_mode",
                 "batch_size",
-                "conflict_keys",
+                "indexes",
             ]),
             "rest_api" | "rest" | "http" => Some(&[
                 "url",
@@ -425,9 +410,7 @@ mod tests {
             connection_string: "host=localhost dbname=test".into(),
             table: Some("users".into()),
             query: None,
-            write_mode: None,
             batch_size: None,
-            conflict_keys: vec![],
             indexes: vec![],
         };
         let json = serde_json::to_value(&cfg).unwrap();
@@ -437,14 +420,12 @@ mod tests {
     }
 
     #[test]
-    fn postgres_config_sink_upsert() {
+    fn postgres_config_sink_indexes() {
         let cfg = PostgreSqlConfig {
             connection_string: "{{ secret:pg_conn }}".into(),
             table: Some("output".into()),
             query: None,
-            write_mode: Some(PostgresWriteMode::Upsert),
             batch_size: Some(1000),
-            conflict_keys: vec!["id".into()],
             indexes: vec![
                 vec!["customer_id".into()],
                 vec!["region".into(), "tier".into()],
@@ -452,23 +433,8 @@ mod tests {
         };
         let json = serde_json::to_value(&cfg).unwrap();
         let cfg2: PostgreSqlConfig = serde_json::from_value(json).unwrap();
-        assert!(matches!(cfg2.write_mode, Some(PostgresWriteMode::Upsert)));
         assert_eq!(cfg2.batch_size, Some(1000));
-        assert_eq!(cfg2.conflict_keys, vec!["id"]);
         assert_eq!(cfg2.indexes.len(), 2);
-    }
-
-    #[test]
-    fn postgres_write_mode_variants() {
-        for (mode, expected) in [
-            (PostgresWriteMode::Insert, "insert"),
-            (PostgresWriteMode::Upsert, "upsert"),
-            (PostgresWriteMode::TruncateInsert, "truncate_insert"),
-            (PostgresWriteMode::Append, "append"),
-        ] {
-            let json = serde_json::to_value(&mode).unwrap();
-            assert_eq!(json.as_str().unwrap(), expected);
-        }
     }
 
     // -----------------------------------------------------------------------

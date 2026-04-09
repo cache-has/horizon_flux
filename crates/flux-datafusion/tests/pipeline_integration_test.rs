@@ -104,6 +104,7 @@ fn csv_sink_node(id: &str, path: &str) -> Node {
         name: id.to_string(),
         kind: NodeKind::Sink(SinkConfig {
             connector: "csv".into(),
+            materialization: None,
             config: serde_json::json!({ "path": path, "format": "csv" }),
         }),
         position: Position::default(),
@@ -117,6 +118,7 @@ fn parquet_sink_node(id: &str, path: &str) -> Node {
         name: id.to_string(),
         kind: NodeKind::Sink(SinkConfig {
             connector: "parquet".into(),
+            materialization: None,
             config: serde_json::json!({ "path": path, "format": "parquet" }),
         }),
         position: Position::default(),

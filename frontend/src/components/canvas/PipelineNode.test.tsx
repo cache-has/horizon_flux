@@ -108,6 +108,56 @@ describe('PipelineNode', () => {
     expect(container.querySelector('.pipeline-node__tooltip')).not.toBeInTheDocument();
   });
 
+  it('renders incremental badge for incremental sinks and shows watermark in tooltip', () => {
+    const { container } = renderNode({
+      ...baseData,
+      role: 'sink',
+      materializationPolicy: {
+        read_mode: 'incremental',
+        write_strategy: 'merge',
+        unique_keys: ['id'],
+        watermark: { column: 'updated_at', type: 'timestamp' },
+      },
+      materializationReceipt: {
+        write_strategy: 'merge',
+        read_mode: 'incremental',
+        rows_scanned: 42,
+        rows_filtered_by_watermark: 100,
+        rows_written: 42,
+        rows_inserted: 40,
+        rows_updated: 2,
+        rows_deleted: 0,
+        watermark_after: {
+          value: '2026-04-08T12:00:00.000000000Z',
+          type: 'timestamp',
+        },
+      },
+    });
+    const badge = container.querySelector('.pipeline-node__inc-badge')!;
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toBe('INC');
+
+    const node = container.querySelector('.pipeline-node')!;
+    fireEvent.mouseEnter(node);
+    expect(screen.getByText('Watermark')).toBeInTheDocument();
+    expect(screen.getByText('Filtered')).toBeInTheDocument();
+    expect(screen.getByText('100')).toBeInTheDocument();
+  });
+
+  it('does not render incremental badge for full-read sinks', () => {
+    const { container } = renderNode({
+      ...baseData,
+      role: 'sink',
+      materializationPolicy: {
+        read_mode: 'full',
+        write_strategy: 'append',
+      },
+    });
+    expect(
+      container.querySelector('.pipeline-node__inc-badge'),
+    ).not.toBeInTheDocument();
+  });
+
   it('does not show tooltip when no stats available', () => {
     const { container } = renderNode(baseData);
     const node = container.querySelector('.pipeline-node')!;

@@ -104,7 +104,10 @@ fn main() {
     write_json(
         &mut w,
         MessageKind::ConfigureAck,
-        &ConfigureAck { accepted: true, reason: None },
+        &ConfigureAck {
+            accepted: true,
+            reason: None,
+        },
     );
 
     // 3. Stream
@@ -138,6 +141,8 @@ fn main() {
                         rows: total_rows,
                         bytes: 0,
                         duration_ms: 0,
+                        rows_updated: 0,
+                        rows_deleted: 0,
                     },
                 );
             }

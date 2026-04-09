@@ -42,9 +42,15 @@ fn build_mock_plugin() -> PathBuf {
                 .join("target")
         });
     let bin = if cfg!(windows) {
-        target_dir.join("debug").join("examples").join("mock-plugin.exe")
+        target_dir
+            .join("debug")
+            .join("examples")
+            .join("mock-plugin.exe")
     } else {
-        target_dir.join("debug").join("examples").join("mock-plugin")
+        target_dir
+            .join("debug")
+            .join("examples")
+            .join("mock-plugin")
     };
     assert!(bin.is_file(), "expected built binary at {}", bin.display());
     bin
@@ -90,8 +96,7 @@ fn spawn(bin: &PathBuf, mode: &str) -> (tempfile::TempDir, PluginProcess) {
         extra_args: vec!["--mode".into(), mode.into()],
         cwd: None,
     };
-    let proc =
-        PluginProcess::spawn_with_manifest("mock", dir.path(), &manifest, opts).unwrap();
+    let proc = PluginProcess::spawn_with_manifest("mock", dir.path(), &manifest, opts).unwrap();
     (dir, proc)
 }
 
@@ -100,11 +105,7 @@ fn schema() -> Schema {
 }
 
 fn batch_of(vals: Vec<i32>) -> RecordBatch {
-    RecordBatch::try_new(
-        Arc::new(schema()),
-        vec![Arc::new(Int32Array::from(vals))],
-    )
-    .unwrap()
+    RecordBatch::try_new(Arc::new(schema()), vec![Arc::new(Int32Array::from(vals))]).unwrap()
 }
 
 #[test]
@@ -140,7 +141,7 @@ fn configure_rejection_surfaces_to_caller() {
 
     session.handshake().unwrap();
     let err = session
-        .configure("mock_sink", json!({}), &schema())
+        .configure("mock_sink", json!({}), &schema(), None)
         .unwrap_err();
     match err {
         SessionError::ConfigureRejected { reason } => {
@@ -158,7 +159,9 @@ fn plugin_crash_mid_stream_is_a_clean_transport_close() {
     let mut session = PluginSession::new(proc, 1, "0.0.0-test");
 
     session.handshake().unwrap();
-    session.configure("mock_sink", json!({}), &schema()).unwrap();
+    session
+        .configure("mock_sink", json!({}), &schema(), None)
+        .unwrap();
 
     // First batch is acked, then the plugin process::exits.
     let ack = session.send_batch(&batch_of(vec![1, 2, 3])).unwrap();
@@ -186,7 +189,9 @@ fn streaming_many_batches_is_bounded_by_synchronous_acks() {
     let mut session = PluginSession::new(proc, 1, "0.0.0-test");
 
     session.handshake().unwrap();
-    session.configure("mock_sink", json!({}), &schema()).unwrap();
+    session
+        .configure("mock_sink", json!({}), &schema(), None)
+        .unwrap();
 
     let mut total = 0u64;
     for i in 0..256 {

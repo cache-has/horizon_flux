@@ -425,8 +425,46 @@ fn scalar_to_sql(scalar: &ScalarValue) -> Option<String> {
             // Escape single quotes for SQL safety.
             Some(format!("'{}'", s.replace('\'', "''")))
         }
+        // Date32: days since unix epoch → 'YYYY-MM-DD'::date
+        ScalarValue::Date32(Some(days)) => {
+            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1)?;
+            let date = epoch.checked_add_signed(chrono::Duration::days(*days as i64))?;
+            Some(format!("'{}'::date", date.format("%Y-%m-%d")))
+        }
+        // Date64: milliseconds since unix epoch → 'YYYY-MM-DD'::date
+        ScalarValue::Date64(Some(ms)) => {
+            let dt = DateTime::<Utc>::from_timestamp_millis(*ms)?;
+            Some(format!("'{}'::date", dt.format("%Y-%m-%d")))
+        }
+        // Timestamp variants. With a timezone we emit ::timestamptz; without
+        // we emit ::timestamp. Naive (no tz) values are interpreted in UTC for
+        // the purpose of formatting, matching the executor's coercion rules.
+        ScalarValue::TimestampSecond(Some(v), tz) => {
+            timestamp_literal(DateTime::<Utc>::from_timestamp(*v, 0)?, tz.as_deref())
+        }
+        ScalarValue::TimestampMillisecond(Some(v), tz) => {
+            timestamp_literal(DateTime::<Utc>::from_timestamp_millis(*v)?, tz.as_deref())
+        }
+        ScalarValue::TimestampMicrosecond(Some(v), tz) => {
+            timestamp_literal(DateTime::<Utc>::from_timestamp_micros(*v)?, tz.as_deref())
+        }
+        ScalarValue::TimestampNanosecond(Some(v), tz) => {
+            timestamp_literal(DateTime::<Utc>::from_timestamp_nanos(*v), tz.as_deref())
+        }
         _ => None,
     }
+}
+
+/// Format a UTC instant as a Postgres SQL literal. When the source ScalarValue
+/// carries a timezone we tag the literal as `timestamptz`; otherwise `timestamp`.
+fn timestamp_literal(dt: DateTime<Utc>, tz: Option<&str>) -> Option<String> {
+    let formatted = dt.format("%Y-%m-%dT%H:%M:%S%.9fZ");
+    let suffix = if tz.is_some() {
+        "::timestamptz"
+    } else {
+        "::timestamp"
+    };
+    Some(format!("'{formatted}'{suffix}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -755,6 +793,68 @@ mod tests {
         assert_eq!(sql, "((\"age\" >= 18) AND (\"active\" = TRUE))");
     }
 
+    #[test]
+    fn translate_date32_literal() {
+        // 2026-04-08 is 20_551 days since 1970-01-01.
+        let days = (NaiveDate::from_ymd_opt(2026, 4, 8).unwrap()
+            - NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days() as i32;
+        let sql = scalar_to_sql(&ScalarValue::Date32(Some(days))).unwrap();
+        assert_eq!(sql, "'2026-04-08'::date");
+    }
+
+    #[test]
+    fn translate_timestamp_micro_with_tz() {
+        // 2026-04-08T12:34:56Z
+        let micros = DateTime::parse_from_rfc3339("2026-04-08T12:34:56Z")
+            .unwrap()
+            .with_timezone(&Utc)
+            .timestamp_micros();
+        let sql = scalar_to_sql(&ScalarValue::TimestampMicrosecond(
+            Some(micros),
+            Some("UTC".into()),
+        ))
+        .unwrap();
+        assert_eq!(sql, "'2026-04-08T12:34:56.000000000Z'::timestamptz");
+    }
+
+    #[test]
+    fn translate_timestamp_nanos_naive_emits_timestamp() {
+        let nanos = DateTime::parse_from_rfc3339("2026-04-08T12:34:56.123456789Z")
+            .unwrap()
+            .with_timezone(&Utc)
+            .timestamp_nanos_opt()
+            .unwrap();
+        let sql = scalar_to_sql(&ScalarValue::TimestampNanosecond(Some(nanos), None)).unwrap();
+        assert_eq!(sql, "'2026-04-08T12:34:56.123456789Z'::timestamp");
+    }
+
+    #[test]
+    fn pushdown_filter_with_timestamp_literal_emits_sql() {
+        // The smoking-gun assertion: an incremental watermark filter using a
+        // Timestamp scalar must produce a pushable WHERE clause, not fall back
+        // to post-scan filtering. This is the dbt-refugee win on Postgres.
+        let micros = DateTime::parse_from_rfc3339("2026-04-08T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+            .timestamp_micros();
+        let expr = Expr::BinaryExpr(BinaryExpr {
+            left: Box::new(Expr::Column(datafusion::common::Column::new_unqualified(
+                "updated_at",
+            ))),
+            op: Operator::Gt,
+            right: Box::new(Expr::Literal(
+                ScalarValue::TimestampMicrosecond(Some(micros), Some("UTC".into())),
+                None,
+            )),
+        });
+        let sql = expr_to_sql(&expr).expect("timestamp filter must be pushable");
+        assert_eq!(
+            sql,
+            "(\"updated_at\" > '2026-04-08T00:00:00.000000000Z'::timestamptz)"
+        );
+    }
+
     // -- Query building tests --
 
     #[test]
@@ -768,9 +868,7 @@ mod tests {
             connection_string: String::new(),
             table: Some("users".to_string()),
             query: None,
-            write_mode: None,
             batch_size: None,
-            conflict_keys: Vec::new(),
             indexes: Vec::new(),
         };
 
@@ -790,9 +888,7 @@ mod tests {
             connection_string: String::new(),
             table: Some("users".to_string()),
             query: None,
-            write_mode: None,
             batch_size: None,
-            conflict_keys: Vec::new(),
             indexes: Vec::new(),
         };
 
@@ -812,9 +908,7 @@ mod tests {
             connection_string: String::new(),
             table: Some("users".to_string()),
             query: None,
-            write_mode: None,
             batch_size: None,
-            conflict_keys: Vec::new(),
             indexes: Vec::new(),
         };
 
@@ -844,9 +938,7 @@ mod tests {
             connection_string: String::new(),
             table: Some("orders".to_string()),
             query: None,
-            write_mode: None,
             batch_size: None,
-            conflict_keys: Vec::new(),
             indexes: Vec::new(),
         };
 
@@ -862,9 +954,7 @@ mod tests {
             connection_string: String::new(),
             table: None,
             query: Some("SELECT count(*) AS total FROM users".to_string()),
-            write_mode: None,
             batch_size: None,
-            conflict_keys: Vec::new(),
             indexes: Vec::new(),
         };
 

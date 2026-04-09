@@ -59,8 +59,9 @@ impl Pipeline {
     /// (name, node IDs, variable defaults, environment override references,
     /// and DAG structure). Returns descriptive errors on failure.
     pub fn from_json(json: &str) -> Result<Self, crate::error::ImportError> {
-        let pipeline: Pipeline =
+        let mut pipeline: Pipeline =
             serde_json::from_str(json).map_err(crate::error::ImportError::Json)?;
+        crate::validate::migrate_legacy_sinks(&mut pipeline);
         crate::validate::validate_import(&pipeline)?;
         Ok(pipeline)
     }
@@ -72,8 +73,9 @@ impl Pipeline {
     pub fn from_json_with_warnings(
         json: &str,
     ) -> Result<(Self, crate::error::ImportWarnings), crate::error::ImportError> {
-        let pipeline: Pipeline =
+        let mut pipeline: Pipeline =
             serde_json::from_str(json).map_err(crate::error::ImportError::Json)?;
+        crate::validate::migrate_legacy_sinks(&mut pipeline);
         crate::validate::validate_import(&pipeline)?;
         let warnings = crate::error::ImportWarnings {
             undefined_variables: crate::variables::validate_variable_references(&pipeline),
@@ -258,6 +260,7 @@ mod tests {
             kind: NodeKind::Sink(SinkConfig {
                 connector: "stdout".into(),
                 config: serde_json::Value::Null,
+                materialization: None,
             }),
             position: Position::default(),
             pinned_position: false,

@@ -5,9 +5,10 @@
 
 use crate::block_on;
 use deadpool_postgres::Pool;
-use flux_datafusion::error::RunStoreError;
+use flux_datafusion::error::{IncrementalStateError, RunStoreError};
+use flux_datafusion::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use flux_datafusion::run::{NodeRunStats, PipelineRun, RunId, RunStatus};
-use flux_datafusion::storage::RunStorage;
+use flux_datafusion::storage::{IncrementalStateStorage, RunStorage};
 use flux_engine::NodeId;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -104,17 +105,22 @@ impl RunStorage for PostgresRunStore {
         block_on(async {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
             let error_owned = stats.error.clone();
+            let receipt_json: Option<String> = stats
+                .materialization_receipt
+                .as_ref()
+                .and_then(|r| serde_json::to_string(r).ok());
             client
                 .execute(
                     "INSERT INTO node_run_stats
-                        (run_id, node_id, start_time_ms, end_time_ms, rows_in, rows_out, error)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        (run_id, node_id, start_time_ms, end_time_ms, rows_in, rows_out, error, materialization_receipt)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                      ON CONFLICT (run_id, node_id) DO UPDATE SET
                         start_time_ms = EXCLUDED.start_time_ms,
                         end_time_ms = EXCLUDED.end_time_ms,
                         rows_in = EXCLUDED.rows_in,
                         rows_out = EXCLUDED.rows_out,
-                        error = EXCLUDED.error",
+                        error = EXCLUDED.error,
+                        materialization_receipt = EXCLUDED.materialization_receipt",
                     &[
                         &run_id.0.to_string(),
                         &stats.node_id.0,
@@ -123,6 +129,7 @@ impl RunStorage for PostgresRunStore {
                         &(stats.rows_in as i64),
                         &(stats.rows_out as i64),
                         &error_owned as &(dyn tokio_postgres::types::ToSql + Sync),
+                        &receipt_json as &(dyn tokio_postgres::types::ToSql + Sync),
                     ],
                 )
                 .await
@@ -208,7 +215,8 @@ async fn load_node_stats(
 ) -> Result<Vec<NodeRunStats>, RunStoreError> {
     let rows = client
         .query(
-            "SELECT node_id, start_time_ms, end_time_ms, rows_in, rows_out, error
+            "SELECT node_id, start_time_ms, end_time_ms, rows_in, rows_out, error,
+                    materialization_receipt
              FROM node_run_stats WHERE run_id = $1
              ORDER BY start_time_ms ASC",
             &[&run_id.0.to_string()],
@@ -218,6 +226,10 @@ async fn load_node_stats(
 
     let mut stats = Vec::with_capacity(rows.len());
     for row in &rows {
+        let receipt_json: Option<String> = row.get(6);
+        let materialization_receipt = receipt_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
         stats.push(NodeRunStats {
             node_id: NodeId::new(row.get::<_, String>(0)),
             start_time: ms_to_system_time(row.get::<_, i64>(1)),
@@ -225,6 +237,7 @@ async fn load_node_stats(
             rows_in: row.get::<_, i64>(3) as u64,
             rows_out: row.get::<_, i64>(4) as u64,
             error: row.get(5),
+            materialization_receipt,
         });
     }
     Ok(stats)
@@ -254,6 +267,282 @@ fn row_to_pipeline_run(row: &tokio_postgres::Row) -> Result<PipelineRun, RunStor
 
 fn pg_err(e: impl std::fmt::Display) -> RunStoreError {
     RunStoreError::Database(e.to_string())
+}
+
+fn inc_err(e: impl std::fmt::Display) -> IncrementalStateError {
+    IncrementalStateError::Database(e.to_string())
+}
+
+impl IncrementalStateStorage for PostgresRunStore {
+    fn load_state(
+        &self,
+        pipeline_id: &str,
+        node_id: &str,
+        environment: &str,
+    ) -> Result<Option<IncrementalState>, IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            let row = client
+                .query_opt(
+                    "SELECT pipeline_id, node_id, environment, watermark_column, watermark_value,
+                            watermark_type, last_run_at, last_run_id, rows_processed,
+                            schema_fingerprint
+                     FROM incremental_state
+                     WHERE pipeline_id = $1 AND node_id = $2 AND environment = $3",
+                    &[&pipeline_id, &node_id, &environment],
+                )
+                .await
+                .map_err(inc_err)?;
+            Ok(row.as_ref().map(pg_row_to_state))
+        })
+    }
+
+    fn save_state(&self, state: &IncrementalState) -> Result<(), IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            client
+                .execute(
+                    "INSERT INTO incremental_state
+                        (pipeline_id, node_id, environment, watermark_column, watermark_value,
+                         watermark_type, last_run_at, last_run_id, rows_processed,
+                         schema_fingerprint)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     ON CONFLICT (pipeline_id, node_id, environment) DO UPDATE SET
+                        watermark_column   = EXCLUDED.watermark_column,
+                        watermark_value    = EXCLUDED.watermark_value,
+                        watermark_type     = EXCLUDED.watermark_type,
+                        last_run_at        = EXCLUDED.last_run_at,
+                        last_run_id        = EXCLUDED.last_run_id,
+                        rows_processed     = EXCLUDED.rows_processed,
+                        schema_fingerprint = EXCLUDED.schema_fingerprint",
+                    &[
+                        &state.pipeline_id,
+                        &state.node_id,
+                        &state.environment,
+                        &state.watermark_column,
+                        &state.watermark_value,
+                        &state.watermark_type,
+                        &state.last_run_at_ms,
+                        &state.last_run_id,
+                        &(state.rows_processed as i64),
+                        &state.schema_fingerprint as &(dyn tokio_postgres::types::ToSql + Sync),
+                    ],
+                )
+                .await
+                .map_err(inc_err)?;
+            Ok(())
+        })
+    }
+
+    fn reset_state(
+        &self,
+        pipeline_id: &str,
+        node_id: &str,
+        environment: &str,
+    ) -> Result<bool, IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            let n = client
+                .execute(
+                    "DELETE FROM incremental_state
+                     WHERE pipeline_id = $1 AND node_id = $2 AND environment = $3",
+                    &[&pipeline_id, &node_id, &environment],
+                )
+                .await
+                .map_err(inc_err)?;
+            Ok(n > 0)
+        })
+    }
+
+    fn list_states(
+        &self,
+        environment: Option<&str>,
+    ) -> Result<Vec<IncrementalState>, IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            let rows = match environment {
+                Some(env) => client
+                    .query(
+                        "SELECT pipeline_id, node_id, environment, watermark_column,
+                                    watermark_value, watermark_type, last_run_at, last_run_id,
+                                    rows_processed, schema_fingerprint
+                             FROM incremental_state
+                             WHERE environment = $1
+                             ORDER BY pipeline_id, node_id",
+                        &[&env],
+                    )
+                    .await
+                    .map_err(inc_err)?,
+                None => client
+                    .query(
+                        "SELECT pipeline_id, node_id, environment, watermark_column,
+                                    watermark_value, watermark_type, last_run_at, last_run_id,
+                                    rows_processed, schema_fingerprint
+                             FROM incremental_state
+                             ORDER BY environment, pipeline_id, node_id",
+                        &[],
+                    )
+                    .await
+                    .map_err(inc_err)?,
+            };
+            Ok(rows.iter().map(pg_row_to_state).collect())
+        })
+    }
+
+    fn record_schema(&self, record: &IncrementalSchemaRecord) -> Result<(), IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            client
+                .execute(
+                    "INSERT INTO incremental_schema_history
+                        (pipeline_id, node_id, environment, run_id, schema_json, fingerprint,
+                         recorded_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     ON CONFLICT (pipeline_id, node_id, environment, run_id) DO UPDATE SET
+                        schema_json = EXCLUDED.schema_json,
+                        fingerprint = EXCLUDED.fingerprint,
+                        recorded_at = EXCLUDED.recorded_at",
+                    &[
+                        &record.pipeline_id,
+                        &record.node_id,
+                        &record.environment,
+                        &record.run_id,
+                        &record.schema_json,
+                        &record.fingerprint,
+                        &record.recorded_at_ms,
+                    ],
+                )
+                .await
+                .map_err(inc_err)?;
+            Ok(())
+        })
+    }
+
+    fn latest_schema(
+        &self,
+        pipeline_id: &str,
+        node_id: &str,
+        environment: &str,
+    ) -> Result<Option<IncrementalSchemaRecord>, IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            let row = client
+                .query_opt(
+                    "SELECT pipeline_id, node_id, environment, run_id, schema_json, fingerprint,
+                            recorded_at
+                     FROM incremental_schema_history
+                     WHERE pipeline_id = $1 AND node_id = $2 AND environment = $3
+                     ORDER BY recorded_at DESC
+                     LIMIT 1",
+                    &[&pipeline_id, &node_id, &environment],
+                )
+                .await
+                .map_err(inc_err)?;
+            Ok(row.as_ref().map(pg_row_to_schema_record))
+        })
+    }
+
+    fn import_state(&self, state: &IncrementalState) -> Result<(), IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            client
+                .execute(
+                    "INSERT INTO incremental_state
+                        (pipeline_id, node_id, environment, watermark_column, watermark_value,
+                         watermark_type, last_run_at, last_run_id, rows_processed,
+                         schema_fingerprint)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     ON CONFLICT (pipeline_id, node_id, environment) DO NOTHING",
+                    &[
+                        &state.pipeline_id,
+                        &state.node_id,
+                        &state.environment,
+                        &state.watermark_column,
+                        &state.watermark_value,
+                        &state.watermark_type,
+                        &state.last_run_at_ms,
+                        &state.last_run_id,
+                        &(state.rows_processed as i64),
+                        &state.schema_fingerprint as &(dyn tokio_postgres::types::ToSql + Sync),
+                    ],
+                )
+                .await
+                .map_err(inc_err)?;
+            Ok(())
+        })
+    }
+
+    fn import_schema_record(
+        &self,
+        record: &IncrementalSchemaRecord,
+    ) -> Result<(), IncrementalStateError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(inc_err)?;
+            client
+                .execute(
+                    "INSERT INTO incremental_schema_history
+                        (pipeline_id, node_id, environment, run_id, schema_json, fingerprint,
+                         recorded_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     ON CONFLICT (pipeline_id, node_id, environment, run_id) DO NOTHING",
+                    &[
+                        &record.pipeline_id,
+                        &record.node_id,
+                        &record.environment,
+                        &record.run_id,
+                        &record.schema_json,
+                        &record.fingerprint,
+                        &record.recorded_at_ms,
+                    ],
+                )
+                .await
+                .map_err(inc_err)?;
+            Ok(())
+        })
+    }
+}
+
+fn pg_row_to_state(row: &tokio_postgres::Row) -> IncrementalState {
+    IncrementalState {
+        pipeline_id: row.get(0),
+        node_id: row.get(1),
+        environment: row.get(2),
+        watermark_column: row.get(3),
+        watermark_value: row.get(4),
+        watermark_type: row.get(5),
+        last_run_at_ms: row.get(6),
+        last_run_id: row.get(7),
+        rows_processed: row.get::<_, i64>(8) as u64,
+        schema_fingerprint: row.get(9),
+    }
+}
+
+fn pg_row_to_schema_record(row: &tokio_postgres::Row) -> IncrementalSchemaRecord {
+    IncrementalSchemaRecord {
+        pipeline_id: row.get(0),
+        node_id: row.get(1),
+        environment: row.get(2),
+        run_id: row.get(3),
+        schema_json: row.get(4),
+        fingerprint: row.get(5),
+        recorded_at_ms: row.get(6),
+    }
 }
 
 fn system_time_to_ms(t: SystemTime) -> i64 {

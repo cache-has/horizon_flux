@@ -10,11 +10,13 @@ use tracing_subscriber::EnvFilter;
 pub mod color;
 pub mod config;
 mod environment;
+mod incremental;
 mod metadata;
 mod pipeline;
 mod plugin;
 mod secret;
 mod server;
+mod snapshot;
 
 /// Exit code for pipeline execution failures (distinct from general errors).
 /// Used by `flux run` when the pipeline itself fails (vs. a CLI/config error).
@@ -115,6 +117,14 @@ enum Command {
         /// Validate the pipeline without executing it.
         #[arg(long)]
         dry_run: bool,
+        /// Force a full rebuild — skip watermark filter injection on
+        /// incremental sinks but still advance their state at the end.
+        #[arg(long)]
+        full_refresh: bool,
+        /// Allow incremental sinks configured with `first_run: fail` to
+        /// perform their initial bootstrap load.
+        #[arg(long)]
+        bootstrap_incremental: bool,
     },
     /// List all pipelines.
     List,
@@ -153,6 +163,16 @@ enum Command {
     Metadata {
         #[command(subcommand)]
         action: metadata::MetadataAction,
+    },
+    /// Inspect or reset incremental sink materialization state.
+    Incremental {
+        #[command(subcommand)]
+        action: incremental::IncrementalAction,
+    },
+    /// Inspect SCD2 snapshot sinks: dry-run diff and per-key history.
+    Snapshot {
+        #[command(subcommand)]
+        action: snapshot::SnapshotAction,
     },
 }
 
@@ -249,11 +269,15 @@ fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()>
             env,
             var,
             dry_run,
+            full_refresh,
+            bootstrap_incremental,
         }) => pipeline::run(
             &pipeline,
             env.as_deref(),
             var,
             dry_run,
+            full_refresh,
+            bootstrap_incremental,
             format,
             metadata_url,
         ),
@@ -278,6 +302,14 @@ fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()>
 
         Some(Command::Metadata { action }) => {
             metadata::handle(action, format, metadata_url).context("metadata command failed")
+        }
+
+        Some(Command::Incremental { action }) => {
+            incremental::handle(action, format, metadata_url).context("incremental command failed")
+        }
+
+        Some(Command::Snapshot { action }) => {
+            snapshot::handle(action, format, metadata_url).context("snapshot command failed")
         }
     }
 }
@@ -872,6 +904,7 @@ mod tests {
                 env,
                 var,
                 dry_run,
+                ..
             }) => {
                 assert_eq!(pipeline, "my-pipe");
                 assert!(env.is_none());
@@ -903,6 +936,7 @@ mod tests {
                 env,
                 var,
                 dry_run,
+                ..
             }) => {
                 assert_eq!(pipeline, "etl");
                 assert_eq!(env.as_deref(), Some("prod"));
@@ -912,6 +946,50 @@ mod tests {
                 assert!(dry_run);
             }
             _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn parse_run_full_refresh_and_bootstrap() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "run",
+            "etl",
+            "--full-refresh",
+            "--bootstrap-incremental",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Run {
+                full_refresh,
+                bootstrap_incremental,
+                ..
+            }) => {
+                assert!(full_refresh);
+                assert!(bootstrap_incremental);
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn parse_incremental_subcommands() {
+        for args in [
+            vec![
+                "horizon-flux",
+                "incremental",
+                "reset",
+                "p",
+                "n",
+                "--env",
+                "dev",
+            ],
+            vec!["horizon-flux", "incremental", "status", "p"],
+            vec!["horizon-flux", "incremental", "list"],
+            vec!["horizon-flux", "incremental", "plan", "p", "--env", "prod"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.command, Some(Command::Incremental { .. })));
         }
     }
 
@@ -1102,7 +1180,10 @@ mod tests {
         for (args, want) in [
             (vec!["horizon-flux", "plugin", "list"], "list"),
             (vec!["horizon-flux", "plugin", "info", "openboard"], "info"),
-            (vec!["horizon-flux", "plugin", "check", "openboard"], "check"),
+            (
+                vec!["horizon-flux", "plugin", "check", "openboard"],
+                "check",
+            ),
             (vec!["horizon-flux", "plugin", "path"], "path"),
         ] {
             let cli = Cli::try_parse_from(args).unwrap();
@@ -1110,7 +1191,9 @@ mod tests {
                 Some(Command::Plugin { action }) => match (want, action) {
                     ("list", plugin::PluginAction::List) => {}
                     ("info", plugin::PluginAction::Info { name }) => assert_eq!(name, "openboard"),
-                    ("check", plugin::PluginAction::Check { name }) => assert_eq!(name, "openboard"),
+                    ("check", plugin::PluginAction::Check { name }) => {
+                        assert_eq!(name, "openboard")
+                    }
                     ("path", plugin::PluginAction::Path) => {}
                     _ => panic!("wrong plugin action for {want}"),
                 },

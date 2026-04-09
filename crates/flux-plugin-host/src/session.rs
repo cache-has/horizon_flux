@@ -59,7 +59,10 @@ pub enum SessionError {
     PluginError { message: String },
 
     #[error("unexpected frame from plugin: kind={kind:?} during {phase}")]
-    UnexpectedFrame { kind: MessageKind, phase: &'static str },
+    UnexpectedFrame {
+        kind: MessageKind,
+        phase: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,10 +108,7 @@ impl<T: Transport> PluginSession<T> {
 
     /// Variant of [`Self::handshake`] with an explicit recv timeout — used by
     /// tests that need to fail fast on a hung plugin.
-    pub fn handshake_with_timeout(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<&HelloAck, SessionError> {
+    pub fn handshake_with_timeout(&mut self, timeout: Duration) -> Result<&HelloAck, SessionError> {
         debug_assert_eq!(self.state, State::Spawned);
         let hello = Hello {
             protocol: self.host_protocol,
@@ -135,16 +135,19 @@ impl<T: Transport> PluginSession<T> {
         sink_type: &str,
         config: Value,
         input_schema: &Schema,
+        materialization: Option<Value>,
     ) -> Result<(), SessionError> {
         debug_assert_eq!(self.state, State::Handshaked);
         let msg = ConfigureSink {
             sink_type: sink_type.to_string(),
             config,
             input_schema_ipc_b64: encode_schema_b64(input_schema)?,
+            materialization,
         };
         self.send_json(MessageKind::ConfigureSink, &msg)?;
         let frame = self.recv(timeouts::CONFIGURE_ACK, "configure")?;
-        let ack = self.expect_json::<ConfigureAck>(frame, MessageKind::ConfigureAck, "configure")?;
+        let ack =
+            self.expect_json::<ConfigureAck>(frame, MessageKind::ConfigureAck, "configure")?;
         if !ack.accepted {
             return Err(SessionError::ConfigureRejected {
                 reason: ack.reason.unwrap_or_else(|| "<no reason>".into()),
@@ -188,7 +191,9 @@ impl<T: Transport> PluginSession<T> {
         if matches!(self.state, State::Aborted | State::Closed) {
             return Ok(());
         }
-        let payload = Abort { reason: reason.into() };
+        let payload = Abort {
+            reason: reason.into(),
+        };
         let _ = self.send_json(MessageKind::Abort, &payload);
         match self.recv(timeouts::ABORT_ACK, "abort") {
             Ok(frame) if frame.kind == MessageKind::AbortAck => {}
@@ -224,15 +229,13 @@ impl<T: Transport> PluginSession<T> {
         Ok(())
     }
 
-    fn recv(
-        &mut self,
-        timeout: Duration,
-        phase: &'static str,
-    ) -> Result<Frame, SessionError> {
+    fn recv(&mut self, timeout: Duration, phase: &'static str) -> Result<Frame, SessionError> {
         let frame = self.transport.recv(timeout, phase)?;
         if frame.kind == MessageKind::Error {
             let err: ErrorMsg = serde_json::from_slice(&frame.payload)?;
-            return Err(SessionError::PluginError { message: err.message });
+            return Err(SessionError::PluginError {
+                message: err.message,
+            });
         }
         Ok(frame)
     }
@@ -299,15 +302,27 @@ mod tests {
             ),
             json_frame(
                 MessageKind::ConfigureAck,
-                &ConfigureAck { accepted: true, reason: None },
+                &ConfigureAck {
+                    accepted: true,
+                    reason: None,
+                },
             ),
             json_frame(
                 MessageKind::BatchAck,
-                &BatchAck { rows_accepted: 3, warning: None },
+                &BatchAck {
+                    rows_accepted: 3,
+                    warning: None,
+                },
             ),
             json_frame(
                 MessageKind::CommitAck,
-                &CommitAck { rows: 3, bytes: 100, duration_ms: 1 },
+                &CommitAck {
+                    rows: 3,
+                    bytes: 100,
+                    duration_ms: 1,
+                    rows_updated: 0,
+                    rows_deleted: 0,
+                },
             ),
         ];
         let transport = MockTransport::new(incoming);
@@ -316,7 +331,7 @@ mod tests {
         session.handshake().unwrap();
         assert_eq!(session.plugin_info().unwrap().plugin_name, "mock");
         session
-            .configure("mock_sink", json!({"path": "/tmp/x"}), &s)
+            .configure("mock_sink", json!({"path": "/tmp/x"}), &s, None)
             .unwrap();
         let ack = session.send_batch(&batch(&s)).unwrap();
         assert_eq!(ack.rows_accepted, 3);
@@ -325,8 +340,7 @@ mod tests {
         session.shutdown().unwrap();
 
         // Verify the host actually sent the expected frame kinds in order.
-        let kinds: Vec<MessageKind> =
-            session.transport.sent.iter().map(|f| f.kind).collect();
+        let kinds: Vec<MessageKind> = session.transport.sent.iter().map(|f| f.kind).collect();
         assert_eq!(
             kinds,
             vec![
@@ -378,7 +392,7 @@ mod tests {
         ];
         let mut session = PluginSession::new(MockTransport::new(incoming), 1, "0");
         session.handshake().unwrap();
-        let err = session.configure("x", json!({}), &s).unwrap_err();
+        let err = session.configure("x", json!({}), &s, None).unwrap_err();
         assert!(matches!(err, SessionError::ConfigureRejected { .. }));
     }
 

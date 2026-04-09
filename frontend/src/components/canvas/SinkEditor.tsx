@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ApiNode } from '../../api/pipelines';
+import type { ApiNode, MaterializationPolicy } from '../../api/pipelines';
 import { previewNode } from '../../api/pipelines';
 import { StorageOptionsEditor } from './StorageOptionsEditor';
 import { SecretPicker } from './SecretPicker';
 import { JsonSchemaForm } from './JsonSchemaForm';
+import { MaterializationEditor } from './MaterializationEditor';
+import { SnapshotHistoryPanel } from './SnapshotHistoryPanel';
+import { SnapshotDiffPanel } from './SnapshotDiffPanel';
 import { usePluginStore } from '../../stores/pluginStore';
 import { getPluginSinkSchema } from '../../api/plugins';
 import './connector-editor.css';
@@ -23,6 +26,13 @@ export interface SinkEditorProps {
   onConnectorChange: (connector: string) => void;
   /** Resolved pipeline variable defaults (name → value). */
   pipelineVariables?: Record<string, unknown>;
+  /** Current materialization policy (sibling of `config` on the sink node). */
+  materialization?: MaterializationPolicy;
+  onMaterializationChange?: (policy: MaterializationPolicy | undefined) => void;
+  /** Pipeline ID, threaded for the "Reset incremental state" button. */
+  pipelineId?: string;
+  /** Default environment for incremental state operations. */
+  environment?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,18 +111,6 @@ function PostgresSinkForm({
             onChange={(e) => onChange({ ...config, table: e.target.value })}
             placeholder="public.my_table"
           />
-        </div>
-        <div className="connector-editor__field">
-          <label className="connector-editor__label">Write Mode</label>
-          <select
-            className="connector-editor__select"
-            value={String(config.write_mode ?? 'insert')}
-            onChange={(e) => onChange({ ...config, write_mode: e.target.value })}
-          >
-            <option value="insert">Insert</option>
-            <option value="upsert">Upsert</option>
-            <option value="truncate">Truncate &amp; Insert</option>
-          </select>
         </div>
         <button className="connector-editor__test-btn" onClick={handleTestConnection}>
           Test Connection
@@ -380,6 +378,11 @@ export function SinkEditor({
   onConfigChange,
   onConnectorChange,
   pipelineVariables,
+  materialization,
+  onMaterializationChange,
+  pipelineId,
+  environment,
+  apiNode,
 }: SinkEditorProps) {
   const norm = normalizeConnector(connector);
   const format = config.format as string | undefined;
@@ -457,6 +460,33 @@ export function SinkEditor({
           sinkType={pluginOwner.sink.type}
           config={config}
           onChange={onConfigChange}
+        />
+      )}
+
+      {onMaterializationChange && (
+        <MaterializationEditor
+          policy={materialization}
+          onChange={onMaterializationChange}
+          pipelineId={pipelineId}
+          nodeId={apiNode.id}
+          environment={environment}
+        />
+      )}
+
+      {materialization?.write_strategy === 'snapshot' && (
+        <SnapshotDiffPanel
+          pipelineId={pipelineId}
+          nodeId={apiNode.id}
+          environment={environment}
+        />
+      )}
+
+      {materialization?.write_strategy === 'snapshot' && (
+        <SnapshotHistoryPanel
+          pipelineId={pipelineId}
+          nodeId={apiNode.id}
+          environment={environment}
+          policy={materialization}
         />
       )}
 

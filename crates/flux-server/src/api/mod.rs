@@ -9,6 +9,7 @@ pub mod pipelines;
 pub mod plugins;
 pub mod preview;
 pub mod secrets;
+pub mod snapshot;
 pub mod system;
 
 use axum::Json;

@@ -60,7 +60,10 @@ impl Default for ServerConfig {
 /// Build the Axum router with frontend serving configured.
 fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
     let api_routes = Router::new()
-        .nest("/pipelines", api::pipelines::router())
+        .nest(
+            "/pipelines",
+            api::pipelines::router().merge(api::snapshot::router()),
+        )
         .nest("/connectors", api::connectors::router())
         .nest("/preview", api::preview::router())
         .nest("/environments", api::environments::router())

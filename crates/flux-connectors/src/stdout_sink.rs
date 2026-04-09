@@ -11,7 +11,10 @@ use std::time::Instant;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use async_trait::async_trait;
-use flux_datafusion::provider::{PipelineSink, ProviderError, WriteOptions, WriteStats};
+use flux_datafusion::provider::{
+    MaterializationContext, MaterializationReceipt, PipelineSink, ProviderError, WriteOptions,
+    WriteStats,
+};
 use flux_engine::node::SinkConfig;
 
 use crate::config::{StdoutConfig, StdoutFormat};
@@ -38,18 +41,20 @@ impl PipelineSink for StdoutSink {
         config: &SinkConfig,
         data: Vec<RecordBatch>,
         _options: &WriteOptions,
-    ) -> Result<WriteStats, ProviderError> {
+        ctx: &MaterializationContext,
+    ) -> Result<MaterializationReceipt, ProviderError> {
         let start = Instant::now();
 
         let stdout_config: StdoutConfig = serde_json::from_value(config.config.clone())
             .map_err(|e| format!("invalid stdout sink config: {e}"))?;
 
         if data.is_empty() {
-            return Ok(WriteStats {
+            let stats = WriteStats {
                 rows_written: 0,
                 bytes_written: 0,
                 duration: start.elapsed(),
-            });
+            };
+            return Ok(MaterializationReceipt::from_write_stats(&stats, ctx));
         }
 
         let max_rows = stdout_config.max_rows;
@@ -92,11 +97,12 @@ impl PipelineSink for StdoutSink {
             print!("{footer}");
         }
 
-        Ok(WriteStats {
+        let stats = WriteStats {
             rows_written,
             bytes_written,
             duration: start.elapsed(),
-        })
+        };
+        Ok(MaterializationReceipt::from_write_stats(&stats, ctx))
     }
 
     fn validate_config(&self, config: &SinkConfig) -> Result<(), ProviderError> {
@@ -272,14 +278,20 @@ mod tests {
         let sink = StdoutSink::new();
         let config = SinkConfig {
             connector: "stdout".to_string(),
+            materialization: None,
             config: serde_json::json!({ "format": "csv", "max_rows": 2 }),
         };
         let batch = test_batch();
-        let stats = sink
-            .write(&config, vec![batch], &WriteOptions::default())
+        let receipt = sink
+            .write(
+                &config,
+                vec![batch],
+                &WriteOptions::default(),
+                &MaterializationContext::default(),
+            )
             .await
             .unwrap();
-        assert_eq!(stats.rows_written, 2);
+        assert_eq!(receipt.rows_written, 2);
     }
 
     #[tokio::test]
@@ -287,6 +299,7 @@ mod tests {
         let sink = StdoutSink::new();
         let config = SinkConfig {
             connector: "stdout".to_string(),
+            materialization: None,
             config: serde_json::json!({ "format": "table" }),
         };
         assert!(sink.validate_config(&config).is_ok());
@@ -297,6 +310,7 @@ mod tests {
         let sink = StdoutSink::new();
         let config = SinkConfig {
             connector: "stdout".to_string(),
+            materialization: None,
             config: serde_json::json!({}),
         };
         assert!(sink.validate_config(&config).is_ok());

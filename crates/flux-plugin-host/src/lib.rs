@@ -32,10 +32,10 @@ pub use discovery::{
     DiscoveredPlugin, PluginRegistry, PluginStatus, discover_plugins, discover_plugins_in,
 };
 pub use error::{Error, Result};
-pub use manifest::{Manifest, SinkCapabilities, SinkDeclaration};
-pub use process::{PluginProcess, SpawnOptions};
 pub use flux_plugin_protocol::{
     Frame, FrameError, MAX_PAYLOAD_LEN, MessageKind, PROTOCOL_VERSION, control,
 };
+pub use manifest::{Manifest, MaterializationCapabilities, SinkCapabilities, SinkDeclaration};
+pub use process::{PluginProcess, SpawnOptions};
 pub use session::{PluginSession, SessionError};
 pub use transport::{Transport, TransportError};

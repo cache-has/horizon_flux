@@ -52,7 +52,10 @@ impl From<&DiscoveredPlugin> for PluginEntry {
 
 async fn list_plugins(State(state): State<AppState>) -> Json<PluginListResponse> {
     let registry = {
-        let guard = state.plugin_registry.read().expect("plugin registry poisoned");
+        let guard = state
+            .plugin_registry
+            .read()
+            .expect("plugin registry poisoned");
         Arc::clone(&*guard)
     };
     let plugins = registry.iter().map(PluginEntry::from).collect();
@@ -64,16 +67,20 @@ async fn get_sink_schema(
     Path((name, sink_type)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let registry = {
-        let guard = state.plugin_registry.read().expect("plugin registry poisoned");
+        let guard = state
+            .plugin_registry
+            .read()
+            .expect("plugin registry poisoned");
         Arc::clone(&*guard)
     };
     let plugin = registry
         .get(&name)
         .ok_or_else(|| ApiError::not_found("plugin", &name))?;
 
-    let manifest = plugin.manifest.as_ref().ok_or_else(|| {
-        ApiError::bad_request(format!("plugin `{name}` has no valid manifest"))
-    })?;
+    let manifest = plugin
+        .manifest
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request(format!("plugin `{name}` has no valid manifest")))?;
 
     let sink = manifest
         .sinks
@@ -104,22 +111,28 @@ async fn reload_plugins(State(state): State<AppState>) -> impl IntoResponse {
         None => discover_plugins(&state.plugin_cwd),
     });
     let count = new_registry.len();
-    let (ok_count, invalid_count) = new_registry.iter().fold((0, 0), |(ok, inv), p| {
-        match p.status {
-            PluginStatus::Ok => (ok + 1, inv),
-            PluginStatus::Invalid { .. } => (ok, inv + 1),
-        }
-    });
+    let (ok_count, invalid_count) =
+        new_registry
+            .iter()
+            .fold((0, 0), |(ok, inv), p| match p.status {
+                PluginStatus::Ok => (ok + 1, inv),
+                PluginStatus::Invalid { .. } => (ok, inv + 1),
+            });
     {
-        let mut guard = state.plugin_registry.write().expect("plugin registry poisoned");
+        let mut guard = state
+            .plugin_registry
+            .write()
+            .expect("plugin registry poisoned");
         *guard = new_registry;
     }
     // Best-effort broadcast — no subscribers is fine.
-    let _ = state.plugin_event_tx.send(PluginEvent::PluginRegistryReloaded {
-        count,
-        ok_count,
-        invalid_count,
-    });
+    let _ = state
+        .plugin_event_tx
+        .send(PluginEvent::PluginRegistryReloaded {
+            count,
+            ok_count,
+            invalid_count,
+        });
     Json(
         serde_json::json!({ "reloaded": true, "count": count, "ok_count": ok_count, "invalid_count": invalid_count }),
     )

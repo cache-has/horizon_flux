@@ -112,8 +112,7 @@ impl PluginRegistry {
 
         if let (PluginStatus::Ok, Some(manifest)) = (&plugin.status, &plugin.manifest) {
             for sink in &manifest.sinks {
-                self.sink_index
-                    .insert(sink.ty.clone(), plugin.name.clone());
+                self.sink_index.insert(sink.ty.clone(), plugin.name.clone());
             }
         }
         self.plugins.insert(plugin.name.clone(), plugin);

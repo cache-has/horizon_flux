@@ -369,12 +369,13 @@ impl PipelineExecutor {
                     ResolvedVariables::resolve(pipeline, &options.variable_overrides, &builtin);
                 interpolated_cfg.config = resolved_vars.interpolate_json(&interpolated_cfg.config);
 
-                let batches = Self::execute_source(node_id, &interpolated_cfg, registry, None)
-                    .await
-                    .map_err(|kind| ExecutorError::Node {
-                        node_id: node_id.clone(),
-                        kind,
-                    })?;
+                let batches =
+                    Self::execute_source(node_id, &interpolated_cfg, registry, None, None)
+                        .await
+                        .map_err(|kind| ExecutorError::Node {
+                            node_id: node_id.clone(),
+                            kind,
+                        })?;
 
                 let sampled = sample_batches(batches, &options.sample);
                 let row_count: u64 = sampled.iter().map(|b| b.num_rows() as u64).sum();

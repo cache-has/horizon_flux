@@ -88,6 +88,25 @@ pub enum RunStoreError {
     Database(String),
 }
 
+/// Errors from the incremental-state store (planning doc 27).
+#[derive(Debug, thiserror::Error)]
+pub enum IncrementalStateError {
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    #[error("database error: {0}")]
+    Database(String),
+
+    #[error(
+        "incremental state not found for pipeline `{pipeline_id}`, node `{node_id}`, env `{environment}`"
+    )]
+    NotFound {
+        pipeline_id: String,
+        node_id: String,
+        environment: String,
+    },
+}
+
 /// Errors from the environment system.
 #[derive(Debug, thiserror::Error)]
 pub enum EnvironmentError {

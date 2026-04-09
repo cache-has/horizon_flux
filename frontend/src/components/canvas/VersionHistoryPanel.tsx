@@ -183,7 +183,7 @@ export function VersionHistoryPanel({ open, onClose }: VersionHistoryPanelProps)
 
   const currentVersion = apiPipeline?.version;
 
-  if (!open) return null;
+  if (!open) return <div className="version-panel" aria-hidden="true" />;
 
   return (
     <>

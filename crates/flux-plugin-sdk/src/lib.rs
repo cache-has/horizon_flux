@@ -228,6 +228,7 @@ pub fn run<S: Sink>(info: PluginInfo, sink: S) -> ExitCode {
 ///     sink_type: "counting".into(),
 ///     config: serde_json::json!({}),
 ///     input_schema_ipc_b64: encode_schema_b64(&schema).unwrap(),
+///     materialization: None,
 /// }).unwrap();
 /// write_frame(&mut input, MessageKind::RecordBatch,
 ///             &encode_record_batch(&batch).unwrap()).unwrap();
@@ -362,6 +363,11 @@ where
                             rows: stats.rows_written,
                             bytes: stats.bytes_written,
                             duration_ms: stats.duration.as_millis() as u64,
+                            // SDK-based plugins don't yet expose snapshot
+                            // close/delete counts; default to 0. Hand-rolled
+                            // plugins (e.g. OpenBoard) populate these directly.
+                            rows_updated: 0,
+                            rows_deleted: 0,
                         };
                         write_json_frame(writer, MessageKind::CommitAck, &ack)?;
                     }
@@ -483,6 +489,7 @@ mod tests {
                 sink_type: "capturing".into(),
                 config: serde_json::json!({ "path": "/tmp/x" }),
                 input_schema_ipc_b64: encode_schema_b64(&schema()).unwrap(),
+                materialization: None,
             },
         )
         .unwrap();
@@ -560,6 +567,7 @@ mod tests {
                 sink_type: "rejecting".into(),
                 config: serde_json::json!({}),
                 input_schema_ipc_b64: encode_schema_b64(&schema()).unwrap(),
+                materialization: None,
             },
         )
         .unwrap();
@@ -615,6 +623,7 @@ mod tests {
                 sink_type: "abort".into(),
                 config: serde_json::json!({}),
                 input_schema_ipc_b64: encode_schema_b64(&schema()).unwrap(),
+                materialization: None,
             },
         )
         .unwrap();

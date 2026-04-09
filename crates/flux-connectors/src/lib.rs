@@ -12,11 +12,14 @@ pub mod cloud_store;
 pub mod config;
 pub mod file_sink;
 pub mod file_source;
+mod parquet_snapshot;
 pub mod plugin_sink;
 pub mod postgres_sink;
+mod postgres_snapshot;
 pub mod postgres_source;
 pub mod registry;
 pub mod rest_api_source;
+pub mod snapshot_query;
 pub mod stdout_sink;
 
 pub use config::ConnectorConfig;

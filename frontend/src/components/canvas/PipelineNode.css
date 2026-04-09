@@ -119,6 +119,22 @@
   background: #9ca3af;
 }
 
+/* Incremental materialization badge (doc 27) */
+.pipeline-node__inc-badge {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #fff;
+  background: #6366f1;
+  border-radius: 6px;
+  border: 1px solid var(--bg, #fff);
+  pointer-events: auto;
+}
+
 /* Hover tooltip */
 .pipeline-node__tooltip {
   margin-top: 6px;

@@ -10,12 +10,15 @@ import {
   previewPipeline,
   updatePipeline,
   fetchPipelineRuns,
+  fetchRunIncrementalStats,
   type ApiPreviewNodeResponse,
   type ApiNodeRunStats,
+  type MaterializationReceipt,
 } from '../../api/pipelines';
 import { buildApiPipeline } from '../../stores/pipelineStore';
 import { PreviewTable } from './PreviewTable';
 import { SampleConfigDropdown } from './SampleConfigDropdown';
+import { SchemaDiffViewer } from './SchemaDiffViewer';
 import { computeSchemaDiff, type SchemaDiff } from './schemaDiff';
 import './SidePanel.css';
 
@@ -156,9 +159,15 @@ function SchemaList({ preview, collapsible = true, schemaDiff }: SchemaListProps
 interface RunStatsProps {
   stats: ApiNodeRunStats | null;
   role: string;
+  receipt?: MaterializationReceipt | null;
 }
 
-function RunStats({ stats, role }: RunStatsProps) {
+function formatWatermark(wm: { value: string; type: string } | undefined): string {
+  if (!wm) return '—';
+  return wm.value;
+}
+
+function RunStats({ stats, role, receipt }: RunStatsProps) {
   if (!stats) {
     return <span className="side-panel__empty">No run data</span>;
   }
@@ -192,6 +201,78 @@ function RunStats({ stats, role }: RunStatsProps) {
           <span className="side-panel__kv-value" style={{ color: '#ef4444' }}>
             {stats.error}
           </span>
+        </div>
+      )}
+      {role === 'sink' && receipt && (
+        <div data-testid="run-stats-receipt">
+          <div className="side-panel__kv">
+            <span className="side-panel__kv-key">Read mode</span>
+            <span className="side-panel__kv-value">{receipt.read_mode}</span>
+          </div>
+          <div className="side-panel__kv">
+            <span className="side-panel__kv-key">Strategy</span>
+            <span className="side-panel__kv-value">{receipt.write_strategy}</span>
+          </div>
+          <div className="side-panel__kv">
+            <span className="side-panel__kv-key">Rows scanned</span>
+            <span className="side-panel__kv-value">
+              {receipt.rows_scanned.toLocaleString()}
+            </span>
+          </div>
+          {receipt.rows_filtered_by_watermark > 0 && (
+            <div className="side-panel__kv">
+              <span className="side-panel__kv-key">Filtered by watermark</span>
+              <span className="side-panel__kv-value">
+                {receipt.rows_filtered_by_watermark.toLocaleString()}
+              </span>
+            </div>
+          )}
+          {receipt.rows_inserted > 0 && (
+            <div className="side-panel__kv">
+              <span className="side-panel__kv-key">Inserted</span>
+              <span className="side-panel__kv-value">
+                {receipt.rows_inserted.toLocaleString()}
+              </span>
+            </div>
+          )}
+          {receipt.rows_updated > 0 && (
+            <div className="side-panel__kv">
+              <span className="side-panel__kv-key">Updated</span>
+              <span className="side-panel__kv-value">
+                {receipt.rows_updated.toLocaleString()}
+              </span>
+            </div>
+          )}
+          {receipt.rows_deleted > 0 && (
+            <div className="side-panel__kv">
+              <span className="side-panel__kv-key">Deleted</span>
+              <span className="side-panel__kv-value">
+                {receipt.rows_deleted.toLocaleString()}
+              </span>
+            </div>
+          )}
+          {receipt.read_mode === 'incremental' && (
+            <>
+              <div className="side-panel__kv">
+                <span className="side-panel__kv-key">Watermark before</span>
+                <span className="side-panel__kv-value">
+                  {formatWatermark(receipt.watermark_before)}
+                </span>
+              </div>
+              <div className="side-panel__kv">
+                <span className="side-panel__kv-key">Watermark after</span>
+                <span className="side-panel__kv-value">
+                  {formatWatermark(receipt.watermark_after)}
+                </span>
+              </div>
+            </>
+          )}
+          {receipt.schema_diff && (
+            <div className="side-panel__kv" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+              <span className="side-panel__kv-key">Schema diff</span>
+              <SchemaDiffViewer diff={receipt.schema_diff} />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -272,6 +353,7 @@ interface NodeContentProps {
   previewError?: string | null;
   sampleMethod?: string;
   runStats: ApiNodeRunStats | null;
+  receipt?: MaterializationReceipt | null;
   upstreamNames: string[];
   schemaDiff?: SchemaDiff | null;
   sampleConfig?: ApiSampleConfig;
@@ -467,7 +549,7 @@ function TransformContent({
 // Sink node content
 // ---------------------------------------------------------------------------
 
-function SinkContent({ node, apiNode, runStats }: NodeContentProps) {
+function SinkContent({ node, apiNode, runStats, receipt }: NodeContentProps) {
   const connector = apiNode?.connector ?? 'unknown';
   const config = apiNode?.config as Record<string, unknown> | undefined;
 
@@ -508,7 +590,7 @@ function SinkContent({ node, apiNode, runStats }: NodeContentProps) {
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Last Run</div>
-        <RunStats stats={runStats} role="sink" />
+        <RunStats stats={runStats} role="sink" receipt={receipt} />
       </div>
 
       <div className="side-panel__section">
@@ -605,6 +687,7 @@ export function SidePanel() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sampleMethod, setSampleMethod] = useState<string | undefined>(undefined);
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
+  const [receipts, setReceipts] = useState<Map<string, MaterializationReceipt>>(new Map());
   const [reExecute, setReExecute] = useState(false);
   const lastRunCompletedAt = usePipelineStore((s) => s.lastRunCompletedAt);
 
@@ -705,6 +788,20 @@ export function SidePanel() {
             map.set(stat.node_id, stat);
           }
           setRunStats(map);
+          // Best-effort: load receipts for this run so the side panel can show
+          // per-sink incremental stats. Failures are non-fatal — old runs may
+          // pre-date the receipt column.
+          try {
+            const stats = await fetchRunIncrementalStats(pipelineId!, run.id);
+            if (controller.signal.aborted) return;
+            const rmap = new Map<string, MaterializationReceipt>();
+            for (const s of stats) {
+              rmap.set(s.node_id, s.receipt);
+            }
+            setReceipts(rmap);
+          } catch {
+            // Receipts unavailable for this run.
+          }
         }
       } catch {
         // Run history not available
@@ -822,6 +919,7 @@ export function SidePanel() {
         previewLoading,
         sampleMethod,
         runStats: runStats.get(selectedNodeId!) ?? null,
+        receipt: receipts.get(selectedNodeId!) ?? null,
         upstreamNames,
         schemaDiff,
         previewError,

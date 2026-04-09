@@ -125,6 +125,7 @@ async fn test_connector(
             let sink_config = SinkConfig {
                 connector: req.connector.clone(),
                 config: req.config,
+                materialization: None,
             };
 
             debug!(connector = %req.connector, "testing sink connector");

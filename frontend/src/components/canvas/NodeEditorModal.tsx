@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
-import type { ApiNode, ApiColumnInfo } from '../../api/pipelines';
+import type { ApiNode, ApiColumnInfo, MaterializationPolicy } from '../../api/pipelines';
 import { previewPipeline } from '../../api/pipelines';
 import { ConfirmDialog } from './ConfirmDialog';
 import { TransformEditor } from './TransformEditor';
@@ -47,6 +47,7 @@ export function NodeEditorModal() {
   const [localCode, setLocalCode] = useState('');
   const [localConnector, setLocalConnector] = useState('');
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
+  const [localMaterialization, setLocalMaterialization] = useState<MaterializationPolicy | undefined>(undefined);
 
   // Input schemas and upstream data for transform editor
   const [inputSchemas, setInputSchemas] = useState<InputSchema[]>([]);
@@ -102,6 +103,7 @@ export function NodeEditorModal() {
     setLocalCode(apiNode.code ?? '');
     setLocalConnector(apiNode.connector ?? '');
     setLocalConfig((apiNode.config as Record<string, unknown>) ?? {});
+    setLocalMaterialization(apiNode.materialization);
     setDirty(false);
     setShowDiscardPrompt(false);
   }, [apiNode?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -186,7 +188,7 @@ export function NodeEditorModal() {
     if (!editingNodeId) return;
     setSaving(true);
     try {
-      const patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config'>> = {
+      const patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config' | 'materialization'>> = {
         name: localName,
       };
       if (role === 'transform') {
@@ -195,6 +197,9 @@ export function NodeEditorModal() {
       } else {
         patch.connector = localConnector;
         patch.config = localConfig;
+        if (role === 'sink') {
+          patch.materialization = localMaterialization;
+        }
       }
       await updateNodeConfig(editingNodeId, patch);
       setDirty(false);
@@ -203,7 +208,7 @@ export function NodeEditorModal() {
     } finally {
       setSaving(false);
     }
-  }, [editingNodeId, localName, localMode, localCode, localConnector, localConfig, role, updateNodeConfig]);
+  }, [editingNodeId, localName, localMode, localCode, localConnector, localConfig, localMaterialization, role, updateNodeConfig]);
 
   // -----------------------------------------------------------------------
   // Keyboard shortcuts
@@ -399,6 +404,13 @@ export function NodeEditorModal() {
                   onConfigChange={handleConfigChange}
                   onConnectorChange={handleConnectorChange}
                   pipelineVariables={pipelineVariables}
+                  materialization={localMaterialization}
+                  onMaterializationChange={(p) => {
+                    setLocalMaterialization(p);
+                    setDirty(true);
+                  }}
+                  pipelineId={pipelineId ?? undefined}
+                  environment={apiPipeline?.default_environment}
                 />
               )}
             </div>

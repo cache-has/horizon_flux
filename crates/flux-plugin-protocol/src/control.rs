@@ -39,6 +39,15 @@ pub struct ConfigureSink {
     pub sink_type: String,
     pub config: Value,
     pub input_schema_ipc_b64: String,
+    /// Full `MaterializationPolicy` (doc 27 / doc 28) serialized as JSON.
+    /// Optional for backwards compatibility with v1 plugins that only consume
+    /// the legacy `config` blob — when absent, the plugin should fall back to
+    /// `append` semantics. Required for plugins implementing `snapshot`,
+    /// `merge`, or other non-trivial write strategies, since this is the
+    /// canonical source of `write_strategy`, `unique_keys`, watermark, and
+    /// the `snapshot:` sub-block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization: Option<Value>,
 }
 
 /// `ConfigureAck` (plugin → host) — §3.4.
@@ -63,6 +72,17 @@ pub struct CommitAck {
     pub rows: u64,
     pub bytes: u64,
     pub duration_ms: u64,
+    /// Versions closed by a snapshot stage-diff-merge (doc 28). Optional for
+    /// back-compat with v1 plugins that only report `rows`; defaults to 0 so
+    /// non-snapshot sinks need not set it. Mirrors
+    /// `MaterializationReceipt::rows_updated`.
+    #[serde(default)]
+    pub rows_updated: u64,
+    /// Hard-deletes performed by a snapshot merge with `hard_deletes: delete`
+    /// (doc 28). Optional for back-compat; defaults to 0. Mirrors
+    /// `MaterializationReceipt::rows_deleted`.
+    #[serde(default)]
+    pub rows_deleted: u64,
 }
 
 /// `Abort` (host → plugin) — §3.7.
@@ -183,6 +203,28 @@ mod tests {
         let mut cur = Cursor::new(buf);
         let err = read_json_frame::<_, Hello>(&mut cur, MessageKind::Hello).unwrap_err();
         assert!(matches!(err, ControlError::UnexpectedKind { .. }));
+    }
+
+    #[test]
+    fn commit_ack_snapshot_counts_round_trip_and_default_to_zero() {
+        // New fields populated → wire round-trip preserves them.
+        let ack = CommitAck {
+            rows: 5,
+            bytes: 100,
+            duration_ms: 7,
+            rows_updated: 3,
+            rows_deleted: 1,
+        };
+        let bytes = serde_json::to_vec(&ack).unwrap();
+        let back: CommitAck = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.rows_updated, 3);
+        assert_eq!(back.rows_deleted, 1);
+
+        // v1 plugins that omit the fields still parse, defaulting to 0.
+        let legacy = br#"{"rows":5,"bytes":100,"duration_ms":7}"#;
+        let back: CommitAck = serde_json::from_slice(legacy).unwrap();
+        assert_eq!(back.rows_updated, 0);
+        assert_eq!(back.rows_deleted, 0);
     }
 
     #[test]

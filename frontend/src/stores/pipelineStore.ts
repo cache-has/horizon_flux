@@ -18,9 +18,11 @@ import type {
   ApiNode,
   ApiEdge,
 } from '../api/pipelines';
+import type { MaterializationReceipt } from '../api/pipelines';
 import {
   fetchPipeline,
   updatePipeline,
+  fetchIncrementalState,
 } from '../api/pipelines';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ function apiNodeToReactFlow(apiNode: ApiNode): PipelineNode {
       status: 'idle',
       pinnedPosition: apiNode.pinned_position,
       envOverridden: false,
+      materializationPolicy: apiNode.materialization,
     },
   };
 }
@@ -178,7 +181,7 @@ export interface PipelineStoreActions {
   /** Update a node's backend config (code, mode, connector, config) and save. */
   updateNodeConfig: (
     nodeId: string,
-    patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config' | 'materialized' | 'cache_row_limit'>>,
+    patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config' | 'materialized' | 'cache_row_limit' | 'materialization'>>,
   ) => Promise<void>;
   /** Push the current state onto the undo stack (call before external mutations). */
   pushSnapshot: () => void;
@@ -192,6 +195,8 @@ export interface PipelineStoreActions {
   canRedo: () => boolean;
   /** Update a single node's execution status (with optional error message). */
   setNodeStatus: (nodeId: string, status: import('../types/pipeline').NodeStatus, errorMessage?: string) => void;
+  /** Persist a sink node's latest materialization receipt (drives incremental badge). */
+  setNodeReceipt: (nodeId: string, receipt: MaterializationReceipt) => void;
   /** Reset all nodes to idle status. */
   resetNodeStatuses: () => void;
   /** Signal that a run completed (triggers re-fetch of run stats). */
@@ -251,6 +256,41 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
     const hasPositions = pipeline.nodes.some(
       (n) => n.position.x !== 0 || n.position.y !== 0,
     );
+
+    // Best-effort seed of incremental badges from persisted state. Failures
+    // here (e.g. metadata store unavailable) are non-fatal — the badges will
+    // still update from live websocket events on the next run.
+    void fetchIncrementalState(response.id, pipeline.default_environment)
+      .then((states) => {
+        if (states.length === 0) return;
+        const byNode = new Map(states.map((s) => [s.node_id, s]));
+        set((current) => ({
+          nodes: current.nodes.map((n) => {
+            const s = byNode.get(n.id);
+            if (!s) return n;
+            const seeded: MaterializationReceipt = {
+              write_strategy:
+                n.data.materializationPolicy?.write_strategy ?? 'append',
+              read_mode: 'incremental',
+              rows_scanned: 0,
+              rows_filtered_by_watermark: 0,
+              rows_written: s.rows_processed,
+              rows_inserted: 0,
+              rows_updated: 0,
+              rows_deleted: 0,
+              watermark_after: {
+                value: s.watermark_value,
+                type: s.watermark_type,
+              },
+            };
+            return {
+              ...n,
+              data: { ...n.data, materializationReceipt: seeded },
+            };
+          }),
+        }));
+      })
+      .catch(() => {});
 
     set({
       pipelineId: response.id,
@@ -516,6 +556,16 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
 
   canUndo: () => get()._undoStack.length > 0,
   canRedo: () => get()._redoStack.length > 0,
+
+  setNodeReceipt: (nodeId, receipt) => {
+    set({
+      nodes: get().nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, data: { ...n.data, materializationReceipt: receipt } }
+          : n,
+      ),
+    });
+  },
 
   setNodeStatus: (nodeId, status, errorMessage?) => {
     set({

@@ -18,6 +18,7 @@ fn test_state() -> AppState {
     AppState {
         pipeline_store: Arc::new(SqlitePipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
+        incremental_state_store: Arc::new(SqliteRunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(SqliteEnvironmentStore::open_in_memory().unwrap()),
         secret_session: Arc::new(std::sync::Mutex::new(
@@ -178,6 +179,7 @@ async fn execution_event_serializes_with_type_tag() {
         node_id: flux_engine::NodeId("xform_1".to_string()),
         rows_out: 42,
         duration_ms: 100,
+        materialization_receipt: None,
     };
 
     let json: Value = serde_json::to_value(&event).unwrap();

@@ -65,8 +65,49 @@ CREATE TABLE IF NOT EXISTS node_run_stats (
     rows_in       BIGINT NOT NULL,
     rows_out      BIGINT NOT NULL,
     error         TEXT,
+    materialization_receipt TEXT,
     PRIMARY KEY (run_id, node_id)
 );
+
+-- Doc 27 migration: older databases created before the materialization
+-- receipt landed don't have this column. Postgres supports the idempotent
+-- form so we can run it unconditionally.
+ALTER TABLE node_run_stats ADD COLUMN IF NOT EXISTS materialization_receipt TEXT;
+
+-- Incremental sink materialization state (planning doc 27).
+-- One row per (pipeline_id, node_id, environment); cascades on pipeline delete.
+CREATE TABLE IF NOT EXISTS incremental_state (
+    pipeline_id        TEXT    NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    node_id            TEXT    NOT NULL,
+    environment        TEXT    NOT NULL,
+    watermark_column   TEXT    NOT NULL,
+    watermark_value    TEXT    NOT NULL,
+    watermark_type     TEXT    NOT NULL
+        CHECK (watermark_type IN ('timestamp','int64','string')),
+    last_run_at        BIGINT  NOT NULL,
+    last_run_id        TEXT    NOT NULL,
+    rows_processed     BIGINT  NOT NULL,
+    schema_fingerprint TEXT,
+    PRIMARY KEY (pipeline_id, node_id, environment)
+);
+
+CREATE INDEX IF NOT EXISTS idx_incremental_state_env
+    ON incremental_state (environment);
+
+-- Append-only history of Arrow schemas observed per run.
+CREATE TABLE IF NOT EXISTS incremental_schema_history (
+    pipeline_id  TEXT   NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    node_id      TEXT   NOT NULL,
+    environment  TEXT   NOT NULL,
+    run_id       TEXT   NOT NULL,
+    schema_json  TEXT   NOT NULL,
+    fingerprint  TEXT   NOT NULL,
+    recorded_at  BIGINT NOT NULL,
+    PRIMARY KEY (pipeline_id, node_id, environment, run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_incremental_schema_history_node
+    ON incremental_schema_history (pipeline_id, node_id, environment, recorded_at DESC);
 
 -- Environment definitions
 CREATE TABLE IF NOT EXISTS environments (

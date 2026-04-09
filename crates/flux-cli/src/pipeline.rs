@@ -28,6 +28,10 @@ pub fn parse_var(s: &str) -> Result<(String, String), String> {
 ///
 /// Tries to parse values as JSON literals (numbers, booleans, null) first,
 /// falling back to string.
+pub(crate) fn vars_to_map_pub(vars: Vec<(String, String)>) -> HashMap<String, serde_json::Value> {
+    vars_to_map(vars)
+}
+
 fn vars_to_map(vars: Vec<(String, String)>) -> HashMap<String, serde_json::Value> {
     vars.into_iter()
         .map(|(k, v)| {
@@ -44,14 +48,15 @@ fn vars_to_map(vars: Vec<(String, String)>) -> HashMap<String, serde_json::Value
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-struct Stores {
-    pipeline_store: Arc<dyn flux_engine::PipelineStorage>,
-    run_store: Arc<dyn flux_datafusion::RunStorage>,
-    connector_registry: flux_connectors::ConnectorRegistry,
-    output_cache: flux_datafusion::OutputCache,
+pub(crate) struct Stores {
+    pub(crate) pipeline_store: Arc<dyn flux_engine::PipelineStorage>,
+    pub(crate) run_store: Arc<dyn flux_datafusion::RunStorage>,
+    pub(crate) incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage>,
+    pub(crate) connector_registry: flux_connectors::ConnectorRegistry,
+    pub(crate) output_cache: flux_datafusion::OutputCache,
 }
 
-fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
+pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
     let data_dir = crate::config::data_dir()?;
     let backend = crate::config::MetadataBackend::resolve(metadata_url, &data_dir)?;
     let meta = crate::config::open_stores(&backend, &data_dir)?;
@@ -68,12 +73,13 @@ fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
     Ok(Stores {
         pipeline_store: meta.pipeline_store,
         run_store: meta.run_store,
+        incremental_state_store: meta.incremental_state_store,
         connector_registry,
         output_cache,
     })
 }
 
-fn resolve_pipeline(
+pub(crate) fn resolve_pipeline(
     store: &dyn flux_engine::PipelineStorage,
     name_or_id: &str,
 ) -> Result<flux_engine::PipelineRecord> {
@@ -108,11 +114,14 @@ fn format_duration_ms(ms: u64) -> String {
 // `flux run`
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     pipeline_name: &str,
     env: Option<&str>,
     vars: Vec<(String, String)>,
     dry_run: bool,
+    full_refresh: bool,
+    bootstrap_incremental: bool,
     format: OutputFormat,
     metadata_url: Option<&str>,
 ) -> Result<()> {
@@ -175,6 +184,8 @@ pub fn run(
         &stores,
         environment,
         variable_overrides,
+        full_refresh,
+        bootstrap_incremental,
         format,
     ));
     // Force-shutdown the runtime — background tasks (tokio-postgres connections,
@@ -232,11 +243,22 @@ impl SecretResolver for CliSecretResolver {
     }
 }
 
+/// Construct the standard CLI secret resolver, mirroring the one used by
+/// `flux run`. Returns `None` if the secret store hasn't been initialized,
+/// in which case callers should proceed without secret expansion (and any
+/// `{{ secret:... }}` references in connector configs will surface as
+/// connector errors when the connection is opened).
+pub(crate) fn build_secret_resolver() -> Option<Arc<dyn SecretResolver>> {
+    CliSecretResolver::new().map(|r| Arc::new(r) as Arc<dyn SecretResolver>)
+}
+
 async fn execute_pipeline(
     record: &flux_engine::PipelineRecord,
     stores: &Stores,
     environment: String,
     variable_overrides: HashMap<String, serde_json::Value>,
+    full_refresh: bool,
+    bootstrap_incremental: bool,
     format: OutputFormat,
 ) -> Result<()> {
     let provider_registry = stores.connector_registry.to_provider_registry();
@@ -265,6 +287,10 @@ async fn execute_pipeline(
         variable_overrides,
         secret_resolver,
         session_factory: Some(Arc::new(flux_datafusion::SessionFactory::default())),
+        incremental_state_store: Some(Arc::clone(&stores.incremental_state_store)),
+        full_refresh,
+        bootstrap_incremental,
+        dry_run_no_sinks: false,
     };
 
     let result =

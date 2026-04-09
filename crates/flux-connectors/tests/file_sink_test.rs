@@ -7,7 +7,7 @@ use arrow::array::{Float64Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use flux_connectors::FileSink;
-use flux_datafusion::provider::{PipelineSink, WriteOptions};
+use flux_datafusion::provider::{MaterializationContext, PipelineSink, WriteOptions};
 use flux_engine::node::SinkConfig;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -16,6 +16,7 @@ use tempfile::TempDir;
 fn sink_config(connector: &str, config: serde_json::Value) -> SinkConfig {
     SinkConfig {
         connector: connector.to_string(),
+        materialization: None,
         config,
     }
 }
@@ -60,12 +61,16 @@ async fn csv_sink_writes_basic_file() {
     );
 
     let stats = sink
-        .write(&config, test_batches(), &WriteOptions::default())
+        .write(
+            &config,
+            test_batches(),
+            &WriteOptions::default(),
+            &MaterializationContext::default(),
+        )
         .await
         .unwrap();
 
     assert_eq!(stats.rows_written, 3);
-    assert!(stats.bytes_written > 0);
 
     let content = std::fs::read_to_string(&path).unwrap();
     assert!(content.starts_with("id,name,score\n"));
@@ -91,9 +96,14 @@ async fn csv_sink_with_custom_delimiter() {
         }),
     );
 
-    sink.write(&config, test_batches(), &WriteOptions::default())
-        .await
-        .unwrap();
+    sink.write(
+        &config,
+        test_batches(),
+        &WriteOptions::default(),
+        &MaterializationContext::default(),
+    )
+    .await
+    .unwrap();
 
     let content = std::fs::read_to_string(&path).unwrap();
     assert!(content.contains("id\tname\tscore"));
@@ -114,9 +124,14 @@ async fn csv_sink_no_header() {
         }),
     );
 
-    sink.write(&config, test_batches(), &WriteOptions::default())
-        .await
-        .unwrap();
+    sink.write(
+        &config,
+        test_batches(),
+        &WriteOptions::default(),
+        &MaterializationContext::default(),
+    )
+    .await
+    .unwrap();
 
     let content = std::fs::read_to_string(&path).unwrap();
     // No header line — should start with data directly.
@@ -139,9 +154,14 @@ async fn csv_sink_append_mode() {
             "format": "csv",
         }),
     );
-    sink.write(&config, test_batches(), &WriteOptions::default())
-        .await
-        .unwrap();
+    sink.write(
+        &config,
+        test_batches(),
+        &WriteOptions::default(),
+        &MaterializationContext::default(),
+    )
+    .await
+    .unwrap();
 
     // Second write — append.
     let append_config = sink_config(
@@ -152,9 +172,14 @@ async fn csv_sink_append_mode() {
             "options": { "write_mode": "append" }
         }),
     );
-    sink.write(&append_config, test_batches(), &WriteOptions::default())
-        .await
-        .unwrap();
+    sink.write(
+        &append_config,
+        test_batches(),
+        &WriteOptions::default(),
+        &MaterializationContext::default(),
+    )
+    .await
+    .unwrap();
 
     let content = std::fs::read_to_string(&path).unwrap();
     // 1 header + 3 original rows + 3 appended rows = 7 lines
@@ -176,12 +201,22 @@ async fn csv_sink_overwrite_replaces_file() {
     );
 
     // Write twice with default (overwrite) mode.
-    sink.write(&config, test_batches(), &WriteOptions::default())
-        .await
-        .unwrap();
-    sink.write(&config, test_batches(), &WriteOptions::default())
-        .await
-        .unwrap();
+    sink.write(
+        &config,
+        test_batches(),
+        &WriteOptions::default(),
+        &MaterializationContext::default(),
+    )
+    .await
+    .unwrap();
+    sink.write(
+        &config,
+        test_batches(),
+        &WriteOptions::default(),
+        &MaterializationContext::default(),
+    )
+    .await
+    .unwrap();
 
     let content = std::fs::read_to_string(&path).unwrap();
     // Should still be just 4 lines (overwritten, not appended).
@@ -207,12 +242,16 @@ async fn parquet_sink_writes_basic_file() {
     );
 
     let stats = sink
-        .write(&config, test_batches(), &WriteOptions::default())
+        .write(
+            &config,
+            test_batches(),
+            &WriteOptions::default(),
+            &MaterializationContext::default(),
+        )
         .await
         .unwrap();
 
     assert_eq!(stats.rows_written, 3);
-    assert!(stats.bytes_written > 0);
     assert!(path.exists());
 }
 
@@ -232,7 +271,12 @@ async fn parquet_sink_with_compression() {
     );
 
     let stats = sink
-        .write(&config, test_batches(), &WriteOptions::default())
+        .write(
+            &config,
+            test_batches(),
+            &WriteOptions::default(),
+            &MaterializationContext::default(),
+        )
         .await
         .unwrap();
 
@@ -259,7 +303,12 @@ async fn parquet_sink_append_fails() {
     );
 
     let result = sink
-        .write(&config, test_batches(), &WriteOptions::default())
+        .write(
+            &config,
+            test_batches(),
+            &WriteOptions::default(),
+            &MaterializationContext::default(),
+        )
         .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("append"));
@@ -283,9 +332,14 @@ async fn sink_creates_parent_directories() {
         }),
     );
 
-    sink.write(&config, test_batches(), &WriteOptions::default())
-        .await
-        .unwrap();
+    sink.write(
+        &config,
+        test_batches(),
+        &WriteOptions::default(),
+        &MaterializationContext::default(),
+    )
+    .await
+    .unwrap();
 
     assert!(path.exists());
 }
@@ -309,7 +363,12 @@ async fn sink_handles_empty_data() {
     );
 
     let stats = sink
-        .write(&config, vec![], &WriteOptions::default())
+        .write(
+            &config,
+            vec![],
+            &WriteOptions::default(),
+            &MaterializationContext::default(),
+        )
         .await
         .unwrap();
 
@@ -373,6 +432,161 @@ fn validate_accepts_valid_config() {
         }),
     );
     assert!(sink.validate_config(&config).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// Parquet insert_overwrite (hive partition replace)
+// ---------------------------------------------------------------------------
+
+/// Two-run test: first run writes partitions for `region=us` and `region=eu`.
+/// Second run only writes `region=eu` rows under `insert_overwrite`. Result:
+/// `eu` is replaced, `us` is left untouched. This is the entire point of the
+/// strategy and the contract that distinguishes it from `truncate_insert`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn parquet_insert_overwrite_replaces_only_touched_partitions() {
+    use flux_engine::materialization::{MaterializationPolicy, ReadMode, WriteStrategy};
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("dataset");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("region", DataType::Utf8, false),
+        Field::new("value", DataType::Int64, false),
+    ]));
+
+    let mk_batch = |regions: Vec<&str>, values: Vec<i64>| {
+        RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(regions)),
+                Arc::new(Int64Array::from(values)),
+            ],
+        )
+        .unwrap()
+    };
+
+    let policy = MaterializationPolicy {
+        read_mode: ReadMode::Full,
+        write_strategy: WriteStrategy::InsertOverwrite,
+        partition_column: Some("region".to_string()),
+        ..MaterializationPolicy::default()
+    };
+
+    let config = SinkConfig {
+        connector: "parquet".to_string(),
+        materialization: Some(policy),
+        config: serde_json::json!({
+            "path": root.to_str().unwrap(),
+            "format": "parquet",
+        }),
+    };
+
+    let sink = FileSink::new();
+    let ctx = MaterializationContext::from_policy(config.materialization.as_ref());
+
+    // Run 1: write us + eu rows.
+    let receipt = sink
+        .write(
+            &config,
+            vec![mk_batch(vec!["us", "us", "eu"], vec![1, 2, 10])],
+            &WriteOptions::default(),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt.rows_written, 3);
+    assert_eq!(receipt.rows_inserted, 3);
+
+    let us_dir = root.join("region=us");
+    let eu_dir = root.join("region=eu");
+    assert!(us_dir.is_dir());
+    assert!(eu_dir.is_dir());
+    assert!(us_dir.join("data.parquet").exists());
+    let eu_data_v1 = std::fs::read(eu_dir.join("data.parquet")).unwrap();
+
+    // Run 2: only eu rows. us partition must be left alone; eu partition
+    // must be replaced (not appended) with the new contents.
+    let receipt2 = sink
+        .write(
+            &config,
+            vec![mk_batch(vec!["eu", "eu"], vec![99, 100])],
+            &WriteOptions::default(),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt2.rows_written, 2);
+
+    // us partition still present, byte-identical (we never touched it).
+    assert!(us_dir.join("data.parquet").exists());
+
+    // eu partition was replaced — file content differs from run 1 because
+    // the new rows are different.
+    let eu_data_v2 = std::fs::read(eu_dir.join("data.parquet")).unwrap();
+    assert_ne!(
+        eu_data_v1, eu_data_v2,
+        "eu partition should have been replaced, not appended"
+    );
+
+    // Round-trip: read eu/data.parquet back and confirm it has exactly 2
+    // rows (not 3 — we replaced, didn't append).
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    let file = std::fs::File::open(eu_dir.join("data.parquet")).unwrap();
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    let total_rows: usize = reader.map(|b| b.unwrap().num_rows()).sum();
+    assert_eq!(
+        total_rows, 2,
+        "eu partition should hold only the run-2 rows"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn parquet_insert_overwrite_rejects_null_partition_value() {
+    use flux_engine::materialization::{MaterializationPolicy, WriteStrategy};
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("dataset");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("region", DataType::Utf8, true),
+        Field::new("value", DataType::Int64, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(vec![Some("us"), None])),
+            Arc::new(Int64Array::from(vec![1, 2])),
+        ],
+    )
+    .unwrap();
+
+    let config = SinkConfig {
+        connector: "parquet".to_string(),
+        materialization: Some(MaterializationPolicy {
+            write_strategy: WriteStrategy::InsertOverwrite,
+            partition_column: Some("region".to_string()),
+            ..MaterializationPolicy::default()
+        }),
+        config: serde_json::json!({
+            "path": root.to_str().unwrap(),
+            "format": "parquet",
+        }),
+    };
+
+    let sink = FileSink::new();
+    let ctx = MaterializationContext::from_policy(config.materialization.as_ref());
+    let err = sink
+        .write(&config, vec![batch], &WriteOptions::default(), &ctx)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("null"),
+        "expected null-value rejection, got: {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------

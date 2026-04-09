@@ -99,6 +99,9 @@ pub enum ValidationError {
 
     #[error(transparent)]
     Dag(#[from] DagError),
+
+    #[error(transparent)]
+    Materialization(#[from] crate::materialization::MaterializationError),
 }
 
 fn format_validation_errors(errors: &[ValidationError]) -> String {

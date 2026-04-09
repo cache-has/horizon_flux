@@ -11,8 +11,9 @@
 //! interference between concurrent runs.
 
 use deadpool_postgres::{Config, Pool, Runtime};
+use flux_datafusion::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use flux_datafusion::run::{NodeRunStats, RunStatus};
-use flux_datafusion::storage::{EnvironmentStorage, RunStorage};
+use flux_datafusion::storage::{EnvironmentStorage, IncrementalStateStorage, RunStorage};
 use flux_engine::NodeId;
 use flux_engine::pipeline::Pipeline;
 use flux_engine::storage::PipelineStorage;
@@ -400,6 +401,7 @@ async fn run_lifecycle() {
         rows_in: 100,
         rows_out: 80,
         error: None,
+        materialization_receipt: None,
     };
     store.save_node_stats(&run.id, &stats).unwrap();
 
@@ -707,6 +709,7 @@ async fn full_pipeline_lifecycle() {
                 rows_in: 0,
                 rows_out: 1000,
                 error: None,
+                materialization_receipt: None,
             },
         )
         .unwrap();
@@ -720,6 +723,7 @@ async fn full_pipeline_lifecycle() {
                 rows_in: 1000,
                 rows_out: 500,
                 error: None,
+                materialization_receipt: None,
             },
         )
         .unwrap();
@@ -751,6 +755,108 @@ async fn full_pipeline_lifecycle() {
     pipeline_store.delete(&record.id).unwrap();
     assert_eq!(pipeline_store.count().unwrap(), 0);
     assert_eq!(pipeline_store.count_versions(&record.id).unwrap(), 0);
+
+    teardown(&schema).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn incremental_state_round_trip_postgres() {
+    let Some((pool, schema)) = setup_pool().await else {
+        eprintln!("skipping: PostgreSQL not available");
+        return;
+    };
+
+    let pipeline_store = PostgresPipelineStore::new(pool.clone());
+    let run_store = PostgresRunStore::new(pool.clone());
+
+    // Pipeline must exist first because of the FK on incremental_state.pipeline_id.
+    let record = pipeline_store
+        .create(test_pipeline("inc-state-pipe"))
+        .unwrap();
+    let pid = record.id.to_string();
+
+    // load on empty -> None
+    assert!(run_store.load_state(&pid, "sink", "dev").unwrap().is_none());
+
+    let s1 = IncrementalState {
+        pipeline_id: pid.clone(),
+        node_id: "sink".into(),
+        environment: "dev".into(),
+        watermark_column: "updated_at".into(),
+        watermark_value: "2026-04-08T00:00:00.000000000Z".into(),
+        watermark_type: "timestamp".into(),
+        last_run_at_ms: 1_700_000_000_000,
+        last_run_id: "run-1".into(),
+        rows_processed: 42,
+        schema_fingerprint: Some("abc123".into()),
+    };
+    run_store.save_state(&s1).unwrap();
+    assert_eq!(
+        run_store.load_state(&pid, "sink", "dev").unwrap().unwrap(),
+        s1
+    );
+
+    // upsert (advance watermark)
+    let s2 = IncrementalState {
+        watermark_value: "2026-04-09T00:00:00.000000000Z".into(),
+        last_run_at_ms: 1_700_000_100_000,
+        last_run_id: "run-2".into(),
+        rows_processed: 7,
+        ..s1.clone()
+    };
+    run_store.save_state(&s2).unwrap();
+    assert_eq!(
+        run_store.load_state(&pid, "sink", "dev").unwrap().unwrap(),
+        s2
+    );
+
+    // env isolation + listing
+    let mut prod = s1.clone();
+    prod.environment = "prod".into();
+    run_store.save_state(&prod).unwrap();
+    assert_eq!(run_store.list_states(Some("dev")).unwrap().len(), 1);
+    assert_eq!(run_store.list_states(Some("prod")).unwrap().len(), 1);
+    assert_eq!(run_store.list_states(None).unwrap().len(), 2);
+
+    // schema history
+    let r1 = IncrementalSchemaRecord {
+        pipeline_id: pid.clone(),
+        node_id: "sink".into(),
+        environment: "dev".into(),
+        run_id: "run-1".into(),
+        schema_json: "{\"fields\":[]}".into(),
+        fingerprint: "f1".into(),
+        recorded_at_ms: 1_700_000_000_000,
+    };
+    let r2 = IncrementalSchemaRecord {
+        run_id: "run-2".into(),
+        fingerprint: "f2".into(),
+        recorded_at_ms: 1_700_000_100_000,
+        ..r1.clone()
+    };
+    run_store.record_schema(&r1).unwrap();
+    run_store.record_schema(&r2).unwrap();
+    let latest = run_store
+        .latest_schema(&pid, "sink", "dev")
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest.fingerprint, "f2");
+
+    // reset
+    assert!(run_store.reset_state(&pid, "sink", "dev").unwrap());
+    assert!(!run_store.reset_state(&pid, "sink", "dev").unwrap());
+    assert!(run_store.load_state(&pid, "sink", "dev").unwrap().is_none());
+
+    // import is idempotent
+    run_store.import_state(&s1).unwrap();
+    run_store.import_state(&s1).unwrap();
+    assert_eq!(run_store.list_states(Some("dev")).unwrap().len(), 1);
+    run_store.import_schema_record(&r1).unwrap();
+    run_store.import_schema_record(&r1).unwrap();
+
+    // FK cascade: deleting the pipeline must remove its incremental state.
+    pipeline_store.delete(&record.id).unwrap();
+    assert!(run_store.list_states(None).unwrap().is_empty());
 
     teardown(&schema).await;
 }

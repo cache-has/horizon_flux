@@ -137,6 +137,7 @@ fn parquet_plugin_round_trips_batches() {
             "parquet_plugin",
             json!({ "path": out_path.to_str().unwrap(), "compression": "snappy" }),
             &schema,
+            None,
         )
         .unwrap();
 
@@ -153,7 +154,11 @@ fn parquet_plugin_round_trips_batches() {
     drop(session);
 
     // Read the parquet file back and assert the data matches.
-    assert!(out_path.is_file(), "plugin did not produce {}", out_path.display());
+    assert!(
+        out_path.is_file(),
+        "plugin did not produce {}",
+        out_path.display()
+    );
     let file = std::fs::File::open(&out_path).unwrap();
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)
         .unwrap()
@@ -164,7 +169,11 @@ fn parquet_plugin_round_trips_batches() {
     assert_eq!(read_rows as u64, expected_rows);
 
     // Concatenate all read batches into one for value-level comparison.
-    let combined = arrow::compute::concat_batches(&Arc::new(schema.clone()), &read_batches).unwrap();
+    let combined =
+        arrow::compute::concat_batches(&Arc::new(schema.clone()), &read_batches).unwrap();
     let original = arrow::compute::concat_batches(&Arc::new(schema), &batches).unwrap();
-    assert_eq!(combined, original, "round-tripped batches do not match originals");
+    assert_eq!(
+        combined, original,
+        "round-tripped batches do not match originals"
+    );
 }

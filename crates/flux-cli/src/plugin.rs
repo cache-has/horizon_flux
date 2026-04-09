@@ -10,8 +10,7 @@ use anyhow::{Context, Result};
 use clap::Subcommand;
 use flux_plugin_host::{
     DiscoveredPlugin, PROTOCOL_VERSION, PluginProcess, PluginSession, PluginStatus, SpawnOptions,
-    discover_plugins,
-    discovery::scan_roots,
+    discover_plugins, discovery::scan_roots,
 };
 use serde_json::json;
 
@@ -92,7 +91,10 @@ fn list(format: OutputFormat) -> Result<()> {
                     })
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&json!({ "plugins": items }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "plugins": items }))?
+            );
         }
     }
     Ok(())
@@ -173,8 +175,7 @@ fn check(name: &str, format: OutputFormat) -> Result<()> {
 
     let process = PluginProcess::spawn(plugin, SpawnOptions::default())
         .with_context(|| format!("failed to spawn plugin `{name}`"))?;
-    let mut session =
-        PluginSession::new(process, PROTOCOL_VERSION, env!("CARGO_PKG_VERSION"));
+    let mut session = PluginSession::new(process, PROTOCOL_VERSION, env!("CARGO_PKG_VERSION"));
     let ack = session
         .handshake()
         .with_context(|| format!("handshake with plugin `{name}` failed"))?
@@ -222,7 +223,10 @@ fn path(format: OutputFormat) -> Result<()> {
         }
         OutputFormat::Json => {
             let items: Vec<_> = roots.iter().map(|p| p.display().to_string()).collect();
-            println!("{}", serde_json::to_string_pretty(&json!({ "roots": items }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "roots": items }))?
+            );
         }
     }
     Ok(())

@@ -116,14 +116,16 @@ impl PipelineSink for MockSink {
         _config: &SinkConfig,
         data: Vec<RecordBatch>,
         _options: &WriteOptions,
-    ) -> Result<WriteStats, ProviderError> {
+        ctx: &flux_datafusion::provider::MaterializationContext,
+    ) -> Result<flux_datafusion::provider::MaterializationReceipt, ProviderError> {
         let row_count: u64 = data.iter().map(|b| b.num_rows() as u64).sum();
         self.captured.lock().unwrap().extend(data);
-        Ok(WriteStats {
+        let stats = WriteStats {
             rows_written: row_count,
             bytes_written: 0,
             duration: Duration::ZERO,
-        })
+        };
+        Ok(flux_datafusion::provider::MaterializationReceipt::from_write_stats(&stats, ctx))
     }
 
     fn validate_config(&self, _config: &SinkConfig) -> Result<(), ProviderError> {
@@ -187,6 +189,7 @@ fn sink_node(id: &str) -> Node {
         name: id.to_string(),
         kind: NodeKind::Sink(SinkConfig {
             connector: "mock".into(),
+            materialization: None,
             config: serde_json::Value::Null,
         }),
         position: Position::default(),
@@ -672,6 +675,10 @@ async fn execute_with_run_store_persists_history() {
         variable_overrides: std::collections::HashMap::new(),
         secret_resolver: None,
         session_factory: None,
+        incremental_state_store: None,
+        full_refresh: false,
+        bootstrap_incremental: false,
+        dry_run_no_sinks: false,
     };
 
     let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -720,6 +727,10 @@ async fn failed_run_persists_error() {
         variable_overrides: std::collections::HashMap::new(),
         secret_resolver: None,
         session_factory: None,
+        incremental_state_store: None,
+        full_refresh: false,
+        bootstrap_incremental: false,
+        dry_run_no_sinks: false,
     };
 
     let err = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -789,6 +800,10 @@ async fn cancellation_stops_execution() {
         variable_overrides: std::collections::HashMap::new(),
         secret_resolver: None,
         session_factory: None,
+        incremental_state_store: None,
+        full_refresh: false,
+        bootstrap_incremental: false,
+        dry_run_no_sinks: false,
     };
 
     // Set cancel before execution so it triggers after the first node.
@@ -980,4 +995,89 @@ def transform(inputs, params):
         msg.contains("timed out"),
         "expected timeout message, got: {msg}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Doc 27: MaterializationContext / MaterializationReceipt wiring
+// ---------------------------------------------------------------------------
+
+/// The executor must build a `MaterializationContext` from the sink's
+/// `materialization` block and the sink's returned receipt must land on
+/// `NodeRunStats.materialization_receipt`. The default (no policy) case must
+/// produce a `full + append` receipt; a configured `merge` policy must
+/// surface as `WriteStrategy::Merge` on the receipt with no other call-site
+/// changes.
+#[tokio::test]
+async fn sink_receipt_reflects_materialization_policy() {
+    use flux_engine::materialization::{MaterializationPolicy, WriteStrategy};
+
+    let mut merge_sink = sink_node("out");
+    if let NodeKind::Sink(cfg) = &mut merge_sink.kind {
+        cfg.materialization = Some(MaterializationPolicy {
+            write_strategy: WriteStrategy::Merge,
+            unique_keys: Some(vec!["id".to_string()]),
+            ..Default::default()
+        });
+    }
+
+    let pipeline = make_pipeline(
+        "merge-receipt",
+        vec![source_node("src"), merge_sink],
+        vec![Edge::new("src", "out")],
+    );
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], captured);
+
+    let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &default_opts())
+        .await
+        .expect("pipeline should succeed");
+
+    let sink_stats = run
+        .node_stats
+        .iter()
+        .find(|s| s.node_id == NodeId::new("out"))
+        .expect("sink stats present");
+    let receipt = sink_stats
+        .materialization_receipt
+        .as_ref()
+        .expect("sink should produce a materialization receipt");
+    assert!(
+        matches!(receipt.write_strategy, WriteStrategy::Merge),
+        "expected Merge, got {:?}",
+        receipt.write_strategy
+    );
+    assert_eq!(receipt.rows_written, 3);
+}
+
+/// Default-policy sink (no `materialization` block at all) must still get a
+/// receipt — `full + append` shape.
+#[tokio::test]
+async fn sink_receipt_defaults_when_policy_absent() {
+    use flux_engine::materialization::{ReadMode, WriteStrategy};
+
+    let pipeline = make_pipeline(
+        "default-receipt",
+        vec![source_node("src"), sink_node("out")],
+        vec![Edge::new("src", "out")],
+    );
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let registry = mock_registry(vec![test_batch()], captured);
+
+    let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &default_opts())
+        .await
+        .expect("pipeline should succeed");
+
+    let sink_stats = run
+        .node_stats
+        .iter()
+        .find(|s| s.node_id == NodeId::new("out"))
+        .expect("sink stats present");
+    let receipt = sink_stats
+        .materialization_receipt
+        .as_ref()
+        .expect("sink should produce a default receipt");
+    assert!(matches!(receipt.write_strategy, WriteStrategy::Append));
+    assert!(matches!(receipt.read_mode, ReadMode::Full));
 }

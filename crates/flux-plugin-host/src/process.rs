@@ -133,11 +133,7 @@ impl PluginProcess {
     }
 }
 
-fn reader_loop(
-    stdout: std::process::ChildStdout,
-    tx: Sender<ReaderEvent>,
-    plugin_name: String,
-) {
+fn reader_loop(stdout: std::process::ChildStdout, tx: Sender<ReaderEvent>, plugin_name: String) {
     let mut r = BufReader::new(stdout);
     loop {
         match read_frame(&mut r) {

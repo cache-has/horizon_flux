@@ -227,7 +227,7 @@ export function EnvironmentManagementPanel() {
       : `Are you sure you want to delete "${deleteTarget}"?`
     : '';
 
-  if (!open) return null;
+  if (!open) return <div className="env-panel" aria-hidden="true" />;
 
   return (
     <>
