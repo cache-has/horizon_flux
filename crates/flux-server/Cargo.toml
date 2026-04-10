@@ -8,6 +8,7 @@ license.workspace = true
 flux-engine = { workspace = true }
 flux-datafusion = { workspace = true }
 flux-connectors = { workspace = true }
+flux-observability = { workspace = true }
 flux-plugin-host = { workspace = true }
 flux-scheduler = { workspace = true }
 flux-secrets = { workspace = true }

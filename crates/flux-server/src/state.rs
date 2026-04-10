@@ -319,6 +319,9 @@ pub struct AppState {
     /// Broadcast channel for column lineage events. Fired when lineage
     /// edges are re-derived so the frontend can refresh lineage views.
     pub column_lineage_event_tx: broadcast::Sender<ColumnLineageEvent>,
+    /// Optional OpenLineage client for emitting lineage events to external
+    /// catalogs (planning doc 36, sub-feature 4).
+    pub openlineage_client: Option<Arc<flux_observability::openlineage::OpenLineageClient>>,
 }
 
 impl AppState {

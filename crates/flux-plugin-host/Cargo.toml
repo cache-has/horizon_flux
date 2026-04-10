@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 flux-plugin-protocol = { workspace = true }
+flux-observability = { workspace = true }
 arrow = { workspace = true }
 base64 = { workspace = true }
 directories = { workspace = true }

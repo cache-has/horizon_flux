@@ -32,6 +32,14 @@ pub enum MetadataBackend {
 struct ConfigFile {
     #[serde(default)]
     metadata: Option<MetadataSection>,
+    #[serde(default)]
+    logging: Option<flux_observability::config::LoggingConfig>,
+    #[serde(default)]
+    metrics: Option<flux_observability::config::MetricsConfig>,
+    #[serde(default)]
+    tracing: Option<flux_observability::config::TracingConfig>,
+    #[serde(default)]
+    openlineage: Option<flux_observability::config::OpenLineageConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,6 +131,70 @@ impl MetadataBackend {
         }
         "default"
     }
+}
+
+/// Resolve the logging configuration from the config file.
+///
+/// Returns `None` if no config file exists or it has no `[logging]` section,
+/// in which case the caller should use defaults.
+pub fn resolve_logging_config(
+    data_dir: &Path,
+) -> Option<flux_observability::config::LoggingConfig> {
+    let config_path = data_dir.join("config.toml");
+    if !config_path.exists() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&config_path).ok()?;
+    let config: ConfigFile = toml::from_str(&contents).ok()?;
+    config.logging
+}
+
+/// Resolve the metrics configuration from the config file.
+///
+/// Returns `None` if no config file exists or it has no `[metrics]` section,
+/// in which case the caller should use defaults.
+pub fn resolve_metrics_config(
+    data_dir: &Path,
+) -> Option<flux_observability::config::MetricsConfig> {
+    let config_path = data_dir.join("config.toml");
+    if !config_path.exists() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&config_path).ok()?;
+    let config: ConfigFile = toml::from_str(&contents).ok()?;
+    config.metrics
+}
+
+/// Resolve the OpenTelemetry tracing configuration from the config file.
+///
+/// Returns `None` if no config file exists or it has no `[tracing]` section,
+/// in which case OTel export is disabled.
+pub fn resolve_tracing_config(
+    data_dir: &Path,
+) -> Option<flux_observability::config::TracingConfig> {
+    let config_path = data_dir.join("config.toml");
+    if !config_path.exists() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&config_path).ok()?;
+    let config: ConfigFile = toml::from_str(&contents).ok()?;
+    config.tracing
+}
+
+/// Resolve the OpenLineage configuration from the config file.
+///
+/// Returns `None` if no config file exists or it has no `[openlineage]` section,
+/// in which case OpenLineage emission is disabled.
+pub fn resolve_openlineage_config(
+    data_dir: &Path,
+) -> Option<flux_observability::config::OpenLineageConfig> {
+    let config_path = data_dir.join("config.toml");
+    if !config_path.exists() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&config_path).ok()?;
+    let config: ConfigFile = toml::from_str(&contents).ok()?;
+    config.openlineage
 }
 
 /// Return the data directory (`~/.horizon-flux/`), creating it if needed.

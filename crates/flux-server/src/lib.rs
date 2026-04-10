@@ -94,6 +94,7 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
         .nest("/api", api_routes)
         .nest("/triggers", webhook_routes)
         .route("/ws", get(ws::ws_handler))
+        .route("/metrics", get(api::metrics::metrics_handler))
         .with_state(app_state)
         .layer(cors);
 

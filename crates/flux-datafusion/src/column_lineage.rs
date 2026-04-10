@@ -688,8 +688,7 @@ pub fn derive_annotation_lineage(
     // Build reverse map: column_name → upstream NodeId.
     let mut col_to_node: std::collections::HashMap<&str, &NodeId> =
         std::collections::HashMap::new();
-    let mut all_input_cols: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
+    let mut all_input_cols: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for (nid, cols) in input_columns {
         for col in cols {
             col_to_node.entry(col.as_str()).or_insert(nid);
@@ -703,8 +702,7 @@ pub fn derive_annotation_lineage(
 
     for edge in &annotations.edges {
         // Validate upstream column exists in input schemas.
-        let upstream_node =
-            col_to_node.get(edge.upstream_column.as_str()).copied();
+        let upstream_node = col_to_node.get(edge.upstream_column.as_str()).copied();
         if !all_input_cols.contains(edge.upstream_column.as_str()) {
             result.warnings.push(format!(
                 "annotation references upstream column '{}' which does not \
@@ -1107,9 +1105,10 @@ mod tests {
         use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
 
         let node_id = NodeId::from("eager_python");
-        let inputs = vec![
-            (NodeId::from("src"), vec!["price".to_string(), "qty".to_string()]),
-        ];
+        let inputs = vec![(
+            NodeId::from("src"),
+            vec!["price".to_string(), "qty".to_string()],
+        )];
         let annotations = LineageAnnotations {
             edges: vec![
                 LineageAnnotationEdge {
@@ -1135,12 +1134,7 @@ mod tests {
                 .iter()
                 .all(|e| e.confidence == Confidence::Annotation)
         );
-        assert!(
-            lineage
-                .edges
-                .iter()
-                .all(|e| e.downstream_column == "total")
-        );
+        assert!(lineage.edges.iter().all(|e| e.downstream_column == "total"));
         let upstream_cols: HashSet<&str> = lineage
             .edges
             .iter()
@@ -1162,9 +1156,7 @@ mod tests {
         use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
 
         let node_id = NodeId::from("python_node");
-        let inputs = vec![
-            (NodeId::from("src"), vec!["a".to_string(), "b".to_string()]),
-        ];
+        let inputs = vec![(NodeId::from("src"), vec!["a".to_string(), "b".to_string()])];
         let outputs = vec!["x".to_string(), "y".to_string()];
 
         // Opaque produces 4 edges (every input × every output).
@@ -1216,9 +1208,7 @@ mod tests {
         use crate::python_runtime::{PythonColumnEdge, PythonColumnLineage};
 
         let node_id = NodeId::from("decorated_python");
-        let inputs = vec![
-            (NodeId::from("src"), vec!["col_a".to_string()]),
-        ];
+        let inputs = vec![(NodeId::from("src"), vec!["col_a".to_string()])];
         let py_lineage = PythonColumnLineage {
             edges: vec![PythonColumnEdge {
                 upstream_column: "col_a".to_string(),
@@ -1243,9 +1233,10 @@ mod tests {
         use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
 
         let node_id = NodeId::from("xform");
-        let inputs = vec![
-            (NodeId::from("src"), vec!["price".to_string(), "qty".to_string()]),
-        ];
+        let inputs = vec![(
+            NodeId::from("src"),
+            vec!["price".to_string(), "qty".to_string()],
+        )];
         let output_cols = vec!["total".to_string()];
 
         let annotations = LineageAnnotations {
@@ -1271,12 +1262,8 @@ mod tests {
             ],
         };
 
-        let lineage = derive_annotation_lineage(
-            &node_id,
-            &annotations,
-            &inputs,
-            Some(&output_cols),
-        );
+        let lineage =
+            derive_annotation_lineage(&node_id, &annotations, &inputs, Some(&output_cols));
 
         // All 3 edges are still emitted (warnings don't suppress edges).
         assert_eq!(lineage.edges.len(), 3);
@@ -1294,9 +1281,7 @@ mod tests {
         use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
 
         let node_id = NodeId::from("xform");
-        let inputs = vec![
-            (NodeId::from("src"), vec!["a".to_string()]),
-        ];
+        let inputs = vec![(NodeId::from("src"), vec!["a".to_string()])];
         let output_cols = vec!["b".to_string()];
 
         let annotations = LineageAnnotations {
@@ -1307,12 +1292,8 @@ mod tests {
             }],
         };
 
-        let lineage = derive_annotation_lineage(
-            &node_id,
-            &annotations,
-            &inputs,
-            Some(&output_cols),
-        );
+        let lineage =
+            derive_annotation_lineage(&node_id, &annotations, &inputs, Some(&output_cols));
 
         assert_eq!(lineage.edges.len(), 1);
         assert!(lineage.warnings.is_empty());

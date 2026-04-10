@@ -301,6 +301,8 @@ async fn snapshot_diff(
         pipeline_id: None,
         column_lineage_store: None,
         on_column_lineage_updated: None,
+        triggered_by: None,
+        openlineage_client: None, // Snapshots are dry-runs; no lineage events.
     };
     let (pipeline_result, _run) = PipelineExecutor::execute(
         &record.pipeline,

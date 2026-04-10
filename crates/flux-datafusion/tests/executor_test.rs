@@ -162,7 +162,8 @@ fn sql_transform_node(id: &str, sql: &str) -> Node {
             code: sql.to_string(),
             code_path: None,
             materialized: false,
-            cache_row_limit: None, lineage_annotations: None,
+            cache_row_limit: None,
+            lineage_annotations: None,
         }),
         position: Position::default(),
         pinned_position: false,
@@ -180,7 +181,8 @@ fn python_transform_node(id: &str, code: &str) -> Node {
             code: code.to_string(),
             code_path: None,
             materialized: false,
-            cache_row_limit: None, lineage_annotations: None,
+            cache_row_limit: None,
+            lineage_annotations: None,
         }),
         position: Position::default(),
         pinned_position: false,
@@ -697,6 +699,8 @@ async fn execute_with_run_store_persists_history() {
         pipeline_id: None,
         column_lineage_store: None,
         on_column_lineage_updated: None,
+        triggered_by: None,
+        openlineage_client: None,
     };
 
     let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -754,6 +758,8 @@ async fn failed_run_persists_error() {
         pipeline_id: None,
         column_lineage_store: None,
         on_column_lineage_updated: None,
+        triggered_by: None,
+        openlineage_client: None,
     };
 
     let err = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -832,6 +838,8 @@ async fn cancellation_stops_execution() {
         pipeline_id: None,
         column_lineage_store: None,
         on_column_lineage_updated: None,
+        triggered_by: None,
+        openlineage_client: None,
     };
 
     // Set cancel before execution so it triggers after the first node.

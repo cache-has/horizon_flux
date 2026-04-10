@@ -54,6 +54,7 @@ fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
         catalog_event_tx: AppState::new_catalog_event_channel(),
         column_lineage_store: None,
         column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
+        openlineage_client: None,
     };
     (state, tmp)
 }
@@ -93,6 +94,7 @@ fn test_state_locked() -> (AppState, tempfile::TempDir) {
         catalog_event_tx: AppState::new_catalog_event_channel(),
         column_lineage_store: None,
         column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
+        openlineage_client: None,
     };
     (state, tmp)
 }

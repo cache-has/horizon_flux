@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 flux-engine = { workspace = true }
+flux-observability = { workspace = true }
 flux-secrets = { workspace = true }
 datafusion = { workspace = true }
 arrow = { workspace = true }

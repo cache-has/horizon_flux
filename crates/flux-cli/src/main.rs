@@ -5,7 +5,6 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use tracing_subscriber::EnvFilter;
 
 mod backfill;
 mod catalog;
@@ -251,9 +250,22 @@ fn main() -> ExitCode {
     // Load .env file from the current directory (silently skip if not found).
     let _ = dotenvy::dotenv();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    // Resolve logging, metrics, and tracing config from ~/.horizon-flux/config.toml.
+    let data_dir_path = config::data_dir().ok();
+    let logging_config = data_dir_path
+        .as_deref()
+        .and_then(config::resolve_logging_config);
+    let metrics_config = data_dir_path
+        .as_deref()
+        .and_then(config::resolve_metrics_config);
+    let tracing_config = data_dir_path
+        .as_deref()
+        .and_then(config::resolve_tracing_config);
+    let _otel_guard = flux_observability::init_all(
+        logging_config.as_ref(),
+        metrics_config.as_ref(),
+        tracing_config.as_ref(),
+    );
 
     let cli = Cli::parse();
     let format = if cli.json {
@@ -270,6 +282,12 @@ fn main() -> ExitCode {
             1
         }
     };
+    // Flush OTel spans before force-exiting. This must happen before
+    // process::exit because that skips destructors.
+    if let Some(guard) = _otel_guard {
+        guard.shutdown();
+    }
+
     // Force exit — background threads (tokio tasks, DataFusion thread pools)
     // can prevent a clean shutdown. The server command handles its own
     // lifecycle; all other commands should exit immediately when done.

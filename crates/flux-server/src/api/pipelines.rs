@@ -509,6 +509,8 @@ async fn run_pipeline(
                 });
             }))
         },
+        triggered_by: Some("api".into()),
+        openlineage_client: state.openlineage_client.clone(),
     };
 
     let (result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)

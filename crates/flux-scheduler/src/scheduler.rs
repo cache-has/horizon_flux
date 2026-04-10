@@ -14,6 +14,9 @@ use crate::types::{
 };
 use crate::variable_mapping::{self, FileArrivalContext, WebhookContext};
 use chrono::{DateTime, Utc};
+use flux_observability::emit_event;
+use flux_observability::events as obs;
+use flux_observability::metrics as prom;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,6 +78,7 @@ impl Scheduler {
     /// Run one evaluation tick: load all enabled triggers, check which should
     /// fire, and dispatch runs for those that match.
     pub fn tick(&self) -> Result<Vec<TickResult>, SchedulerError> {
+        prom::record_scheduler_tick();
         let now = self.clock.now();
         let now_str = now.to_rfc3339();
         let triggers = self.store.list_enabled_triggers()?;
@@ -571,6 +575,24 @@ impl Scheduler {
                     run_id = %run_id,
                     "trigger fired — run started"
                 );
+                let kind_str = match &trigger.kind {
+                    TriggerKind::Cron { expression, .. } => format!("cron:{expression}"),
+                    TriggerKind::Interval { every, .. } => format!("interval:{every}"),
+                    TriggerKind::FileArrival { .. } => "file_arrival".into(),
+                    TriggerKind::Webhook { .. } => "webhook".into(),
+                    TriggerKind::PipelineCompletion { .. } => "pipeline_completion".into(),
+                };
+                emit_event!(obs::FluxEvent::TriggerFired(obs::TriggerFired {
+                    trigger_id: trigger.id.to_string(),
+                    kind: kind_str.clone(),
+                    pipeline_id: Some(trigger.pipeline_id.clone()),
+                    next_fire_at: None,
+                }));
+                prom::record_trigger_firing(&trigger.id.to_string(), &kind_str, "run_started");
+                prom::record_trigger_last_fired(
+                    &trigger.id.to_string(),
+                    self.clock.now().timestamp() as f64,
+                );
                 self.record_firing(
                     trigger,
                     now_str,
@@ -587,6 +609,14 @@ impl Scheduler {
             }
             Err(e) => {
                 error!(trigger = %trigger.id, "dispatch failed: {e}");
+                let kind_str = match &trigger.kind {
+                    TriggerKind::Cron { expression, .. } => format!("cron:{expression}"),
+                    TriggerKind::Interval { every, .. } => format!("interval:{every}"),
+                    TriggerKind::FileArrival { .. } => "file_arrival".into(),
+                    TriggerKind::Webhook { .. } => "webhook".into(),
+                    TriggerKind::PipelineCompletion { .. } => "pipeline_completion".into(),
+                };
+                prom::record_trigger_firing(&trigger.id.to_string(), &kind_str, "error");
                 self.record_firing(trigger, now_str, TriggerOutcome::Error, None, Some(&e));
                 Ok(TickResult {
                     trigger_id: trigger.id.to_string(),

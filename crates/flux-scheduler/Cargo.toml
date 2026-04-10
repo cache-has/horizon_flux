@@ -9,6 +9,7 @@ description = "Scheduling and trigger engine for Horizon Flux"
 [dependencies]
 flux-engine = { workspace = true }
 flux-datafusion = { workspace = true }
+flux-observability = { workspace = true }
 
 # Cron expression parsing
 croner = "3"

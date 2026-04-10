@@ -14,6 +14,9 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use flux_observability::emit_event;
+use flux_observability::events as obs;
+use flux_observability::metrics as prom;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::discovery::DiscoveredPlugin;
@@ -89,6 +92,12 @@ impl PluginProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // Propagate W3C trace context so plugins can participate in the
+        // distributed trace if they have their own OTel SDK configured.
+        if let Some(traceparent) = flux_observability::otel::current_traceparent() {
+            cmd.env("TRACEPARENT", traceparent);
+        }
+
         let mut child = cmd.spawn().map_err(|source| Error::Io {
             path: exe.clone(),
             source,
@@ -118,6 +127,17 @@ impl PluginProcess {
             })?;
 
         info!(plugin = %name, exe = %exe.display(), "spawned plugin");
+        let sink_type = manifest
+            .sinks
+            .first()
+            .map(|s| s.ty.clone())
+            .unwrap_or_default();
+        emit_event!(obs::FluxEvent::PluginSpawned(obs::PluginSpawned {
+            plugin_name: name.to_string(),
+            sink_type: sink_type.clone(),
+            config_hash: String::new(),
+        }));
+        prom::record_plugin_spawn(name, &sink_type, "ok");
         Ok(Self {
             name: name.to_string(),
             child: Some(child),
@@ -219,14 +239,26 @@ impl Drop for PluginProcess {
         // and kill if it overstays.
         drop(self.stdin.take());
         if let Some(mut child) = self.child.take() {
-            let killed = match child.try_wait() {
-                Ok(Some(_)) => false,
+            let (killed, exit_code) = match child.try_wait() {
+                Ok(Some(status)) => (false, status.code()),
                 _ => {
                     let _ = child.kill();
-                    true
+                    let code = child.wait().ok().and_then(|s| s.code());
+                    (true, code)
                 }
             };
-            let _ = child.wait();
+            if !killed {
+                let _ = child.wait();
+            }
+            // Emit PluginCrashed for abnormal exits (non-zero or killed).
+            if killed || exit_code.is_none_or(|c| c != 0) {
+                emit_event!(obs::FluxEvent::PluginCrashed(obs::PluginCrashed {
+                    plugin_name: self.name.clone(),
+                    exit_code,
+                    last_message: None,
+                }));
+                prom::record_plugin_crash(&self.name);
+            }
             if killed {
                 debug!(plugin = %self.name, "killed plugin on drop");
             }

@@ -168,6 +168,10 @@ pub fn start(
         Arc::new(NoopDispatcher) as Arc<dyn RunDispatcher>,
     ));
 
+    // Build the OpenLineage client from config (if enabled).
+    let openlineage_client = crate::config::resolve_openlineage_config(&data_dir)
+        .and_then(|cfg| flux_observability::openlineage::OpenLineageClient::new(&cfg));
+
     let app_state = flux_server::AppState {
         pipeline_store,
         run_store: run_store.clone(),
@@ -191,6 +195,7 @@ pub fn start(
         catalog_event_tx: flux_server::AppState::new_catalog_event_channel(),
         column_lineage_store,
         column_lineage_event_tx: flux_server::AppState::new_column_lineage_event_channel(),
+        openlineage_client,
     };
 
     #[cfg(feature = "tray")]

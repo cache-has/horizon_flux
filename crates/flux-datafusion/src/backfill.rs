@@ -311,6 +311,8 @@ async fn run_coordinator_with_skip(
             pipeline_id: opts.base_options.pipeline_id.clone(),
             column_lineage_store: opts.base_options.column_lineage_store.clone(),
             on_column_lineage_updated: opts.base_options.on_column_lineage_updated.clone(),
+            triggered_by: opts.base_options.triggered_by.clone(),
+            openlineage_client: opts.base_options.openlineage_client.clone(),
         };
 
         // Merge iteration variables into the overrides.

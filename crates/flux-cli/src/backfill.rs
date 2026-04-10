@@ -273,6 +273,8 @@ fn start(
         pipeline_id: Some(record.id.0.to_string()),
         column_lineage_store: stores.column_lineage_store.clone(),
         on_column_lineage_updated: None,
+        triggered_by: Some("cli:backfill".into()),
+        openlineage_client: stores.openlineage_client.clone(),
     };
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
@@ -353,6 +355,8 @@ fn resume(backfill_id: &str, format: OutputFormat, metadata_url: Option<&str>) -
         pipeline_id: Some(record.id.0.to_string()),
         column_lineage_store: stores.column_lineage_store.clone(),
         on_column_lineage_updated: None,
+        triggered_by: Some("cli:backfill".into()),
+        openlineage_client: stores.openlineage_client.clone(),
     };
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;

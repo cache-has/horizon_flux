@@ -36,13 +36,17 @@ use datafusion::prelude::SessionContext;
 use flux_engine::node::{NodeKind, SourceConfig, TransformMode};
 use flux_engine::variables::{BuiltinContext, ResolvedVariables};
 use flux_engine::{NodeId, Pipeline, dag};
+use flux_observability::emit_event;
+use flux_observability::events as obs;
+use flux_observability::metrics as prom;
+use flux_observability::openlineage as ol;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, warn};
 
 /// Trait for resolving `{{ secret:name }}` references in connector configs.
 ///
@@ -144,6 +148,13 @@ pub struct ExecutionOptions {
     pub column_lineage_store: Option<Arc<dyn ColumnLineageStorage>>,
     /// Optional callback fired after column lineage edges are persisted.
     pub on_column_lineage_updated: Option<Arc<ColumnLineageCallback>>,
+    /// How this run was triggered (e.g. "cron:6h", "manual", "api").
+    /// Used in the `PipelineRunStarted` observability event.
+    pub triggered_by: Option<String>,
+    /// Optional OpenLineage client for emitting lineage events to external
+    /// catalogs (Marquez, DataHub, etc.). When `Some`, START/COMPLETE/FAIL
+    /// events are emitted at run lifecycle points.
+    pub openlineage_client: Option<Arc<ol::OpenLineageClient>>,
 }
 
 impl Default for ExecutionOptions {
@@ -166,6 +177,8 @@ impl Default for ExecutionOptions {
             pipeline_id: None,
             column_lineage_store: None,
             on_column_lineage_updated: None,
+            triggered_by: None,
+            openlineage_client: None,
         }
     }
 }
@@ -256,6 +269,16 @@ impl PipelineExecutor {
             })?
         };
 
+        let pipeline_span = info_span!(
+            "pipeline_run",
+            pipeline = %pipeline.name,
+            env = %options.environment,
+            run_id = tracing::field::Empty,
+            otel.status_code = tracing::field::Empty,
+            otel.status_message = tracing::field::Empty,
+        );
+        let _pipeline_guard = pipeline_span.enter();
+
         info!(pipeline = %pipeline.name, nodes = order.len(), "starting pipeline execution");
 
         // Create the run record.
@@ -266,6 +289,7 @@ impl PipelineExecutor {
             None => PipelineRun::new(&pipeline.name, &options.environment),
         };
 
+        pipeline_span.record("run_id", run.id.to_string().as_str());
         let run_start_wall = SystemTime::now();
         let run_start = Instant::now();
 
@@ -283,6 +307,33 @@ impl PipelineExecutor {
                 pipeline_name: pipeline.name.clone(),
             },
         );
+        emit_event!(obs::FluxEvent::PipelineRunStarted(
+            obs::PipelineRunStarted {
+                pipeline_id: pipeline.name.clone(),
+                run_id: run.id.to_string(),
+                environment: Some(options.environment.clone()),
+                triggered_by: options
+                    .triggered_by
+                    .clone()
+                    .unwrap_or_else(|| "direct".into()),
+                variables: options
+                    .variable_overrides
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    .collect(),
+            }
+        ));
+
+        // Emit OpenLineage START event (fire-and-forget).
+        if let Some(ol_client) = &options.openlineage_client {
+            let client = ol_client.clone();
+            let pid = pipeline.name.clone();
+            let env = options.environment.clone();
+            let rid = run.id.to_string();
+            tokio::spawn(async move {
+                client.emit_start(&pid, &env, &rid, Vec::new()).await;
+            });
+        }
 
         // Resolve pipeline variables: built-ins + defaults + overrides.
         let builtin = BuiltinContext {
@@ -316,6 +367,16 @@ impl PipelineExecutor {
                         duration_ms: Instant::now().duration_since(run_start).as_millis() as u64,
                     },
                 );
+                // Emit OpenLineage ABORT event.
+                if let Some(ol_client) = &options.openlineage_client {
+                    let client = ol_client.clone();
+                    let pid = pipeline.name.clone();
+                    let env = options.environment.clone();
+                    let rid = run.id.to_string();
+                    tokio::spawn(async move {
+                        client.emit_abort(&pid, &env, &rid).await;
+                    });
+                }
                 return Err(ExecutorError::Cancelled);
             }
 
@@ -325,6 +386,13 @@ impl PipelineExecutor {
 
             debug!(node = %node_id, kind = ?std::mem::discriminant(&node.kind), "executing node");
 
+            let node_kind_str = match &node.kind {
+                NodeKind::Source(_) => "source",
+                NodeKind::Transform(_) => "transform",
+                NodeKind::Sink(_) => "sink",
+                NodeKind::Test(_) => "test",
+                _ => "unknown",
+            };
             emit(
                 &options.progress,
                 ExecutionEvent::NodeStarted {
@@ -332,6 +400,27 @@ impl PipelineExecutor {
                     node_id: node_id.clone(),
                 },
             );
+            emit_event!(obs::FluxEvent::NodeStarted(obs::NodeStarted {
+                pipeline_id: pipeline.name.clone(),
+                run_id: run.id.to_string(),
+                node_id: node_id.to_string(),
+                node_kind: node_kind_str.to_string(),
+            }));
+            prom::record_node_execution(
+                &pipeline.name,
+                &node_id.to_string(),
+                node_kind_str,
+                "started",
+            );
+
+            let node_span = info_span!(
+                "node_execute",
+                node_id = %node_id,
+                node_kind = node_kind_str,
+                otel.status_code = tracing::field::Empty,
+                otel.status_message = tracing::field::Empty,
+            );
+            let _node_guard = node_span.enter();
 
             let node_start = Instant::now();
             let node_start_wall = SystemTime::now();
@@ -377,6 +466,25 @@ impl PipelineExecutor {
                                     kind: NodeErrorKind::Source(e),
                                 });
                             }
+                        }
+                    }
+                    // Emit SourceReadStarted with fingerprint info when available.
+                    if let Some(fp_fn) = &options.fingerprint_fn {
+                        if let Some(fp) =
+                            fp_fn(&interpolated_cfg.connector, &interpolated_cfg.config)
+                        {
+                            emit_event!(obs::FluxEvent::SourceReadStarted(
+                                obs::SourceReadStarted {
+                                    pipeline_id: pipeline.name.clone(),
+                                    run_id: run.id.to_string(),
+                                    node_id: node_id.to_string(),
+                                    fingerprint: fp.to_string(),
+                                    predicate_pushdown: incremental_plans
+                                        .source_plans
+                                        .contains_key(node_id),
+                                    projection_pushdown: false,
+                                }
+                            ));
                         }
                     }
                     Self::execute_source(
@@ -441,11 +549,17 @@ impl PipelineExecutor {
                                                                 .iter()
                                                                 .filter_map(|uid| {
                                                                     outputs.get(*uid).map(|bs| {
-                                                                        ((*uid).clone(), extract_column_names(bs))
+                                                                        (
+                                                                            (*uid).clone(),
+                                                                            extract_column_names(
+                                                                                bs,
+                                                                            ),
+                                                                        )
                                                                     })
                                                                 })
                                                                 .collect();
-                                                        let output_cols = extract_column_names(&batches);
+                                                        let output_cols =
+                                                            extract_column_names(&batches);
                                                         Some(crate::column_lineage::derive_annotation_lineage(
                                                             node_id,
                                                             xform_cfg.lineage_annotations.as_ref().unwrap(),
@@ -515,42 +629,54 @@ impl PipelineExecutor {
                                                     &options.pipeline_id,
                                                     input_columns_for_lineage,
                                                 ) {
-                                                    let node_lineage =
-                                                        if let Some(ref annot) = xform_cfg.lineage_annotations {
-                                                            if !annot.is_empty() {
-                                                                // JSON-level annotation wins.
-                                                                let output_cols = extract_column_names(
-                                                                    &py_result.batches,
-                                                                );
-                                                                crate::column_lineage::derive_annotation_lineage(
+                                                    let node_lineage = if let Some(ref annot) =
+                                                        xform_cfg.lineage_annotations
+                                                    {
+                                                        if !annot.is_empty() {
+                                                            // JSON-level annotation wins.
+                                                            let output_cols = extract_column_names(
+                                                                &py_result.batches,
+                                                            );
+                                                            crate::column_lineage::derive_annotation_lineage(
                                                                     node_id, annot, &input_cols,
                                                                     Some(&output_cols),
                                                                 )
-                                                            } else if let Some(ref py_lineage) = py_result.lineage {
-                                                                crate::column_lineage::derive_python_lineage(
+                                                        } else if let Some(ref py_lineage) =
+                                                            py_result.lineage
+                                                        {
+                                                            crate::column_lineage::derive_python_lineage(
                                                                     node_id, py_lineage, &input_cols,
                                                                 )
-                                                            } else {
-                                                                let output_columns = extract_column_names(&py_result.batches);
-                                                                crate::column_lineage::derive_opaque_lineage(
+                                                        } else {
+                                                            let output_columns =
+                                                                extract_column_names(
+                                                                    &py_result.batches,
+                                                                );
+                                                            crate::column_lineage::derive_opaque_lineage(
                                                                     node_id, &input_cols, &output_columns,
                                                                 )
-                                                            }
-                                                        } else if let Some(ref py_lineage) = py_result.lineage {
-                                                            // Decorator annotation or LazyFrame lineage
-                                                            // (both come through the sidecar; confidence
-                                                            // field distinguishes them).
-                                                            crate::column_lineage::derive_python_lineage(
-                                                                node_id, py_lineage, &input_cols,
-                                                            )
-                                                        } else {
-                                                            let output_columns = extract_column_names(
-                                                                &py_result.batches,
-                                                            );
-                                                            crate::column_lineage::derive_opaque_lineage(
-                                                                node_id, &input_cols, &output_columns,
-                                                            )
-                                                        };
+                                                        }
+                                                    } else if let Some(ref py_lineage) =
+                                                        py_result.lineage
+                                                    {
+                                                        // Decorator annotation or LazyFrame lineage
+                                                        // (both come through the sidecar; confidence
+                                                        // field distinguishes them).
+                                                        crate::column_lineage::derive_python_lineage(
+                                                            node_id,
+                                                            py_lineage,
+                                                            &input_cols,
+                                                        )
+                                                    } else {
+                                                        let output_columns = extract_column_names(
+                                                            &py_result.batches,
+                                                        );
+                                                        crate::column_lineage::derive_opaque_lineage(
+                                                            node_id,
+                                                            &input_cols,
+                                                            &output_columns,
+                                                        )
+                                                    };
                                                     persist_column_lineage(
                                                         store.as_ref(),
                                                         pid,
@@ -670,6 +796,12 @@ impl PipelineExecutor {
                                             assertions_count: test_result.assertions.len(),
                                         },
                                     );
+                                    prom::record_test_assertion(
+                                        &pipeline.name,
+                                        &node_id.to_string(),
+                                        "assertion",
+                                        "passed",
+                                    );
                                     test_results.push(test_result);
                                     Ok(batches)
                                 }
@@ -692,6 +824,26 @@ impl PipelineExecutor {
                                             failures,
                                         },
                                     );
+                                    for a in result.assertions.iter().filter(|a| !a.passed) {
+                                        emit_event!(obs::FluxEvent::TestAssertionFailed(
+                                            obs::TestAssertionFailed {
+                                                pipeline_id: pipeline.name.clone(),
+                                                run_id: run.id.to_string(),
+                                                node_id: node_id.to_string(),
+                                                assertion: a
+                                                    .message
+                                                    .clone()
+                                                    .unwrap_or_else(|| "(unnamed)".into()),
+                                                violating_rows: a.violation_count,
+                                            }
+                                        ));
+                                        prom::record_test_assertion(
+                                            &pipeline.name,
+                                            &node_id.to_string(),
+                                            "assertion",
+                                            "failed",
+                                        );
+                                    }
                                     test_results.push(result.clone());
                                     Err(NodeErrorKind::TestAssertionFailed {
                                         summary: summary.clone(),
@@ -835,16 +987,88 @@ impl PipelineExecutor {
                         }
                     }
 
+                    let node_dur_ms = node_end.duration_since(node_start).as_millis() as u64;
                     emit(
                         &options.progress,
                         ExecutionEvent::NodeCompleted {
                             run_id: run.id.clone(),
                             node_id: node_id.clone(),
                             rows_out,
-                            duration_ms: node_end.duration_since(node_start).as_millis() as u64,
+                            duration_ms: node_dur_ms,
                             materialization_receipt: sink_receipt.clone().map(Box::new),
                         },
                     );
+                    emit_event!(obs::FluxEvent::NodeCompleted(obs::NodeCompleted {
+                        pipeline_id: pipeline.name.clone(),
+                        run_id: run.id.to_string(),
+                        node_id: node_id.to_string(),
+                        duration_ms: node_dur_ms,
+                        rows: rows_out,
+                        warnings: Vec::new(),
+                    }));
+                    prom::record_node_execution(
+                        &pipeline.name,
+                        &node_id.to_string(),
+                        node_kind_str,
+                        "completed",
+                    );
+                    prom::record_node_duration(
+                        &pipeline.name,
+                        &node_id.to_string(),
+                        node_kind_str,
+                        node_dur_ms as f64 / 1000.0,
+                    );
+                    prom::record_node_rows(
+                        &pipeline.name,
+                        &node_id.to_string(),
+                        "written",
+                        rows_out as f64,
+                    );
+
+                    // Emit SinkWriteCommitted for successful sink writes.
+                    if let Some(ref receipt) = sink_receipt {
+                        if let NodeKind::Sink(sink_cfg) = &node.kind {
+                            let fingerprint = options
+                                .fingerprint_fn
+                                .as_ref()
+                                .and_then(|fp_fn| fp_fn(&sink_cfg.connector, &sink_cfg.config))
+                                .map(|fp| fp.to_string())
+                                .unwrap_or_default();
+                            emit_event!(obs::FluxEvent::SinkWriteCommitted(
+                                obs::SinkWriteCommitted {
+                                    pipeline_id: pipeline.name.clone(),
+                                    run_id: run.id.to_string(),
+                                    node_id: node_id.to_string(),
+                                    fingerprint: fingerprint.clone(),
+                                    rows: receipt.rows_written,
+                                    bytes: 0,
+                                }
+                            ));
+                            // Emit IncrementalStateAdvanced if receipt has watermark state.
+                            if receipt.watermark_after.is_some() {
+                                emit_event!(obs::FluxEvent::IncrementalStateAdvanced(
+                                    obs::IncrementalStateAdvanced {
+                                        pipeline_id: pipeline.name.clone(),
+                                        run_id: run.id.to_string(),
+                                        node_id: node_id.to_string(),
+                                        receipt: serde_json::to_value(receipt).unwrap_or_default(),
+                                    }
+                                ));
+                            }
+                            // Emit SchemaChangeDetected if the receipt has a schema diff.
+                            if let Some(ref diff) = receipt.schema_diff {
+                                emit_event!(obs::FluxEvent::SchemaChangeDetected(
+                                    obs::SchemaChangeDetected {
+                                        pipeline_id: pipeline.name.clone(),
+                                        run_id: run.id.to_string(),
+                                        node_id: node_id.to_string(),
+                                        diff: serde_json::to_value(diff).unwrap_or_default(),
+                                    }
+                                ));
+                                prom::record_schema_change(&pipeline.name, &node_id.to_string());
+                            }
+                        }
+                    }
 
                     outputs.insert(node_id.clone(), batches);
                 }
@@ -886,6 +1110,27 @@ impl PipelineExecutor {
                             error: error_msg.clone(),
                         },
                     );
+                    // Record OTel error status on the node and pipeline spans.
+                    node_span.record("otel.status_code", "ERROR");
+                    node_span.record("otel.status_message", error_msg.as_str());
+                    pipeline_span.record("otel.status_code", "ERROR");
+                    pipeline_span.record(
+                        "otel.status_message",
+                        format!("node {} failed: {}", node_id, error_msg).as_str(),
+                    );
+
+                    emit_event!(obs::FluxEvent::NodeFailed(obs::NodeFailed {
+                        pipeline_id: pipeline.name.clone(),
+                        run_id: run.id.to_string(),
+                        node_id: node_id.to_string(),
+                        error: error_msg.clone(),
+                    }));
+                    prom::record_node_execution(
+                        &pipeline.name,
+                        &node_id.to_string(),
+                        node_kind_str,
+                        "failed",
+                    );
 
                     // Finalize as failed.
                     run.test_results = test_results
@@ -908,15 +1153,66 @@ impl PipelineExecutor {
                         );
                     }
 
+                    let fail_dur_ms = Instant::now().duration_since(run_start).as_millis() as u64;
                     emit(
                         &options.progress,
                         ExecutionEvent::RunCompleted {
                             run_id: run.id.clone(),
                             status: RunStatus::Failed,
-                            duration_ms: Instant::now().duration_since(run_start).as_millis()
-                                as u64,
+                            duration_ms: fail_dur_ms,
                         },
                     );
+                    emit_event!(obs::FluxEvent::PipelineRunFailed(obs::PipelineRunFailed {
+                        pipeline_id: pipeline.name.clone(),
+                        run_id: run.id.to_string(),
+                        environment: Some(options.environment.clone()),
+                        failed_node_id: node_id.to_string(),
+                        error: run.error.clone().unwrap_or_default(),
+                        error_chain: Vec::new(),
+                    }));
+                    prom::record_pipeline_run(&pipeline.name, &options.environment, "failed");
+                    prom::record_pipeline_duration(
+                        &pipeline.name,
+                        &options.environment,
+                        fail_dur_ms as f64 / 1000.0,
+                    );
+
+                    // Emit OpenLineage FAIL event.
+                    if let Some(ol_client) = &options.openlineage_client {
+                        let client = ol_client.clone();
+                        let pid = pipeline.name.clone();
+                        let env = options.environment.clone();
+                        let rid = run.id.to_string();
+                        let err_msg = run.error.clone().unwrap_or_default();
+                        let ol_inputs = collect_ol_inputs(
+                            pipeline,
+                            &order,
+                            &outputs,
+                            options.fingerprint_fn.as_ref(),
+                        );
+                        let ol_outputs = collect_ol_outputs(
+                            pipeline,
+                            &order,
+                            &outputs,
+                            options.fingerprint_fn.as_ref(),
+                            options.column_lineage_store.as_deref(),
+                            options.pipeline_id.as_deref(),
+                            &options.environment,
+                            client.include_column_lineage(),
+                        );
+                        tokio::spawn(async move {
+                            client
+                                .emit_fail(
+                                    &pid,
+                                    &env,
+                                    &rid,
+                                    &err_msg,
+                                    ol_inputs,
+                                    ol_outputs,
+                                )
+                                .await;
+                        });
+                    }
 
                     return Err(ExecutorError::Node {
                         node_id: node_id.clone(),
@@ -949,14 +1245,73 @@ impl PipelineExecutor {
             let _ = store.finish_run(&run.id, RunStatus::Success, run_end_wall, None);
         }
 
+        let success_dur_ms = run_end.duration_since(run_start).as_millis() as u64;
+        let total_rows_read: u64 = stats.iter().map(|s| s.rows_in).sum();
+        let total_rows_written: u64 = stats.iter().map(|s| s.rows_out).sum();
         emit(
             &options.progress,
             ExecutionEvent::RunCompleted {
                 run_id: run.id.clone(),
                 status: RunStatus::Success,
-                duration_ms: run_end.duration_since(run_start).as_millis() as u64,
+                duration_ms: success_dur_ms,
             },
         );
+        emit_event!(obs::FluxEvent::PipelineRunCompleted(
+            obs::PipelineRunCompleted {
+                pipeline_id: pipeline.name.clone(),
+                run_id: run.id.to_string(),
+                environment: Some(options.environment.clone()),
+                duration_ms: success_dur_ms,
+                rows_read: total_rows_read,
+                rows_written: total_rows_written,
+            }
+        ));
+        prom::record_pipeline_run(&pipeline.name, &options.environment, "completed");
+        prom::record_pipeline_duration(
+            &pipeline.name,
+            &options.environment,
+            success_dur_ms as f64 / 1000.0,
+        );
+        prom::record_pipeline_rows_read(&pipeline.name, &options.environment, total_rows_read);
+        prom::record_pipeline_rows_written(
+            &pipeline.name,
+            &options.environment,
+            total_rows_written,
+        );
+        let success_ts = run_end_wall
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        prom::record_pipeline_last_success(&pipeline.name, &options.environment, success_ts);
+
+        // Emit OpenLineage COMPLETE event with inputs, outputs, and column lineage.
+        if let Some(ol_client) = &options.openlineage_client {
+            let client = ol_client.clone();
+            let pid = pipeline.name.clone();
+            let env = options.environment.clone();
+            let rid = run.id.to_string();
+            let ol_inputs = collect_ol_inputs(
+                pipeline,
+                &order,
+                &outputs,
+                options.fingerprint_fn.as_ref(),
+            );
+            let ol_outputs = collect_ol_outputs(
+                pipeline,
+                &order,
+                &outputs,
+                options.fingerprint_fn.as_ref(),
+                options.column_lineage_store.as_deref(),
+                options.pipeline_id.as_deref(),
+                &options.environment,
+                client.include_column_lineage(),
+            );
+            tokio::spawn(async move {
+                client
+                    .emit_complete(&pid, &env, &rid, ol_inputs, ol_outputs)
+                    .await;
+            });
+        }
 
         let pipeline_result = PipelineResult {
             pipeline_name: pipeline.name.clone(),
@@ -1460,6 +1815,137 @@ fn extract_column_names(batches: &[RecordBatch]) -> Vec<String> {
 fn emit(sender: &Option<mpsc::UnboundedSender<ExecutionEvent>>, event: ExecutionEvent) {
     if let Some(tx) = sender {
         let _ = tx.send(event);
+    }
+}
+
+/// Extract Arrow schema fields as (name, type_string) pairs from record batches.
+fn extract_schema_fields(batches: &[RecordBatch]) -> Vec<(String, String)> {
+    batches
+        .first()
+        .map(|b| {
+            b.schema()
+                .fields()
+                .iter()
+                .map(|f| (f.name().clone(), format!("{}", f.data_type())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Collect OpenLineage input datasets from source nodes in the pipeline.
+fn collect_ol_inputs(
+    pipeline: &Pipeline,
+    order: &[NodeId],
+    outputs: &HashMap<NodeId, Vec<RecordBatch>>,
+    fingerprint_fn: Option<&flux_engine::FingerprintFn>,
+) -> Vec<ol::InputDataset> {
+    let fp_fn = match fingerprint_fn {
+        Some(f) => f,
+        None => return Vec::new(),
+    };
+    let mut inputs = Vec::new();
+    for node_id in order {
+        if let Some(node) = pipeline.node(node_id) {
+            if let NodeKind::Source(src) = &node.kind {
+                if let Some(fp) = fp_fn(&src.connector, &src.config) {
+                    let schema_fields = outputs
+                        .get(node_id)
+                        .map(|b| extract_schema_fields(b));
+                    inputs.push(ol::input_dataset(
+                        &fp.to_string(),
+                        schema_fields.as_deref(),
+                    ));
+                }
+            }
+        }
+    }
+    inputs
+}
+
+/// Collect OpenLineage output datasets from sink nodes in the pipeline.
+#[allow(clippy::too_many_arguments)]
+fn collect_ol_outputs(
+    pipeline: &Pipeline,
+    order: &[NodeId],
+    outputs: &HashMap<NodeId, Vec<RecordBatch>>,
+    fingerprint_fn: Option<&flux_engine::FingerprintFn>,
+    column_lineage_store: Option<&dyn ColumnLineageStorage>,
+    pipeline_id: Option<&str>,
+    environment: &str,
+    include_column_lineage: bool,
+) -> Vec<ol::OutputDataset> {
+    let fp_fn = match fingerprint_fn {
+        Some(f) => f,
+        None => return Vec::new(),
+    };
+    let mut result = Vec::new();
+    for node_id in order {
+        if let Some(node) = pipeline.node(node_id) {
+            if let NodeKind::Sink(sink) = &node.kind {
+                if let Some(fp) = fp_fn(&sink.connector, &sink.config) {
+                    let fp_str = fp.to_string();
+                    // Get schema from the upstream batches that fed this sink.
+                    let upstream_ids = pipeline.upstream_of(node_id);
+                    let schema_fields: Option<Vec<(String, String)>> = upstream_ids
+                        .iter()
+                        .find_map(|uid| outputs.get(*uid))
+                        .map(|b| extract_schema_fields(b));
+
+                    // Collect column lineage edges for this output dataset.
+                    let col_lineage = if include_column_lineage {
+                        collect_column_lineage_for_output(
+                            column_lineage_store,
+                            pipeline_id,
+                            environment,
+                            &fp_str,
+                        )
+                    } else {
+                        None
+                    };
+
+                    result.push(ol::output_dataset(
+                        &fp_str,
+                        schema_fields.as_deref(),
+                        col_lineage.as_deref(),
+                    ));
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Query column lineage edges that flow into a specific output resource.
+fn collect_column_lineage_for_output(
+    store: Option<&dyn ColumnLineageStorage>,
+    pipeline_id: Option<&str>,
+    environment: &str,
+    output_fingerprint: &str,
+) -> Option<Vec<ol::ColumnEdgeSimple>> {
+    let store = store?;
+    let pid = pipeline_id?;
+    let edges = store.load_column_edges(pid, environment).ok()?;
+    let simplified: Vec<ol::ColumnEdgeSimple> = edges
+        .iter()
+        .filter(|e| {
+            e.edge
+                .downstream_resource
+                .as_ref()
+                .is_some_and(|r| r.0 == output_fingerprint)
+        })
+        .filter_map(|e| {
+            let upstream_fp = e.edge.upstream_resource.as_ref()?;
+            Some(ol::ColumnEdgeSimple {
+                output_column: e.edge.downstream_column.clone(),
+                input_fingerprint: upstream_fp.to_string(),
+                input_column: e.edge.upstream_column.clone(),
+            })
+        })
+        .collect();
+    if simplified.is_empty() {
+        None
+    } else {
+        Some(simplified)
     }
 }
 

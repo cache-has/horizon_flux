@@ -236,8 +236,7 @@ fn enrich_from_runs(state: &AppState, catalog: &mut Catalog) {
 fn format_epoch_ms(ms: i64) -> String {
     let secs = ms / 1000;
     let nanos = ((ms % 1000) * 1_000_000) as u32;
-    let dt = chrono::DateTime::from_timestamp(secs, nanos)
-        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    let dt = chrono::DateTime::from_timestamp(secs, nanos).unwrap_or(chrono::DateTime::UNIX_EPOCH);
     dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 

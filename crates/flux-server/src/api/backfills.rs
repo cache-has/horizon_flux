@@ -195,6 +195,8 @@ async fn create_backfill(
         pipeline_id: Some(req.pipeline_id),
         column_lineage_store: state.column_lineage_store.clone(),
         on_column_lineage_updated: None,
+        triggered_by: Some("api:backfill".into()),
+        openlineage_client: state.openlineage_client.clone(),
     };
 
     let opts = BackfillRunOptions {
@@ -353,6 +355,8 @@ async fn resume_backfill(
         pipeline_id: Some(backfill.pipeline_id.clone()),
         column_lineage_store: state.column_lineage_store.clone(),
         on_column_lineage_updated: None,
+        triggered_by: Some("api:backfill".into()),
+        openlineage_client: state.openlineage_client.clone(),
     };
 
     let opts = BackfillRunOptions {

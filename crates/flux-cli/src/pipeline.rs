@@ -56,6 +56,8 @@ pub(crate) struct Stores {
     pub(crate) connector_registry: flux_connectors::ConnectorRegistry,
     pub(crate) output_cache: flux_datafusion::OutputCache,
     pub(crate) column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>>,
+    pub(crate) openlineage_client:
+        Option<Arc<flux_observability::openlineage::OpenLineageClient>>,
 }
 
 pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
@@ -72,6 +74,9 @@ pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
     let connector_registry = flux_connectors::default_registry_with_plugins(plugin_registry);
     let output_cache = flux_datafusion::OutputCache::new(&data_dir);
 
+    let openlineage_client = crate::config::resolve_openlineage_config(&data_dir)
+        .and_then(|cfg| flux_observability::openlineage::OpenLineageClient::new(&cfg));
+
     Ok(Stores {
         pipeline_store: meta.pipeline_store,
         run_store: meta.run_store,
@@ -80,6 +85,7 @@ pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
         connector_registry,
         output_cache,
         column_lineage_store: meta.column_lineage_store,
+        openlineage_client,
     })
 }
 
@@ -300,6 +306,8 @@ async fn execute_pipeline(
         pipeline_id: Some(record.id.0.to_string()),
         column_lineage_store: stores.column_lineage_store.clone(),
         on_column_lineage_updated: None,
+        triggered_by: Some("cli".into()),
+        openlineage_client: stores.openlineage_client.clone(),
     };
 
     let result =
@@ -987,6 +995,8 @@ async fn execute_tests(
             pipeline_id: None,
             column_lineage_store: None,
             on_column_lineage_updated: None,
+            triggered_by: Some("cli".into()),
+            openlineage_client: None, // Test runs don't emit lineage events.
         };
 
         let exec_result =

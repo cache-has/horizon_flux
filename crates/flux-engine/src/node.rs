@@ -414,7 +414,8 @@ mod tests {
             code: "df.filter(col > 1)".into(),
             code_path: Some("transforms/t.py".into()),
             materialized: true,
-            cache_row_limit: None, lineage_annotations: None,
+            cache_row_limit: None,
+            lineage_annotations: None,
         });
         let json = serde_json::to_value(&kind).unwrap();
         assert_eq!(json["type"], "transform");
@@ -472,7 +473,8 @@ mod tests {
                 code: "SELECT * FROM upstream".into(),
                 code_path: None,
                 materialized: false,
-                cache_row_limit: None, lineage_annotations: None,
+                cache_row_limit: None,
+                lineage_annotations: None,
             }),
             position: Position { x: 100.0, y: 200.5 },
             pinned_position: true,

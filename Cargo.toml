@@ -12,6 +12,7 @@ members = [
     "crates/flux-plugin-protocol",
     "crates/flux-plugin-sdk",
     "crates/flux-scheduler",
+    "crates/flux-observability",
     "examples/plugins/parquet-plugin",
 ]
 resolver = "2"
@@ -35,6 +36,7 @@ flux-plugin-host = { path = "crates/flux-plugin-host" }
 flux-plugin-protocol = { path = "crates/flux-plugin-protocol" }
 flux-plugin-sdk = { path = "crates/flux-plugin-sdk" }
 flux-scheduler = { path = "crates/flux-scheduler" }
+flux-observability = { path = "crates/flux-observability" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -71,6 +73,12 @@ anyhow = "1"
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.32"
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "trace"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
 
 # Async
 async-trait = "0.1"
@@ -113,7 +121,7 @@ notify-rust = "4"
 crossbeam-channel = "0.5"
 
 # Utilities
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 base64 = "0.22"
 
 # Static file embedding

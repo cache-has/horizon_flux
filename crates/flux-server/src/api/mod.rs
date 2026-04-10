@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod connectors;
 pub mod environments;
 pub mod lineage;
+pub mod metrics;
 pub mod pipelines;
 pub mod plugins;
 pub mod preview;

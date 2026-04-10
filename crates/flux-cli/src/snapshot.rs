@@ -370,6 +370,8 @@ async fn run_upstream_dry_run(
         pipeline_id: None,
         column_lineage_store: None,
         on_column_lineage_updated: None,
+        triggered_by: None,
+        openlineage_client: None, // Snapshots are dry-runs; no lineage events.
     };
     let (pipeline_result, _run) =
         flux_datafusion::PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
