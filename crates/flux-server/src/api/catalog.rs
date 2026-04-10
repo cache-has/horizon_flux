@@ -168,11 +168,8 @@ fn enrich_from_runs(state: &AppState, catalog: &mut Catalog) {
     // Build pipeline_id → pipeline_name map.
     let mut id_to_name: HashMap<PipelineId, String> = HashMap::new();
     for pid in &producer_ids {
-        match state.pipeline_store.get(pid) {
-            Ok(Some(record)) => {
-                id_to_name.insert(pid.clone(), record.pipeline.name.clone());
-            }
-            _ => {}
+        if let Ok(Some(record)) = state.pipeline_store.get(pid) {
+            id_to_name.insert(pid.clone(), record.pipeline.name.clone());
         }
     }
 
@@ -240,7 +237,7 @@ fn format_epoch_ms(ms: i64) -> String {
     let secs = ms / 1000;
     let nanos = ((ms % 1000) * 1_000_000) as u32;
     let dt = chrono::DateTime::from_timestamp(secs, nanos)
-        .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH);
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
     dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 

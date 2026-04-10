@@ -521,7 +521,7 @@ mod tests {
                         code: "SELECT * FROM src".into(),
                         code_path: None,
                         materialized: false,
-                        cache_row_limit: None,
+                        cache_row_limit: None, lineage_annotations: None,
                     }),
                     position: Position::default(),
                     pinned_position: false,

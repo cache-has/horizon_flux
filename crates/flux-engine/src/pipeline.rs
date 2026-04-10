@@ -353,7 +353,7 @@ mod tests {
                 code: "SELECT * FROM upstream".into(),
                 code_path: None,
                 materialized: false,
-                cache_row_limit: None,
+                cache_row_limit: None, lineage_annotations: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -545,7 +545,7 @@ mod tests {
             code: "SELECT 1".into(),
             code_path: None,
             materialized: false,
-            cache_row_limit: None,
+            cache_row_limit: None, lineage_annotations: None,
         };
         let p = diamond_pipeline();
         assert_eq!(p.resolve_code(&xform).unwrap(), "SELECT 1");
@@ -562,7 +562,7 @@ mod tests {
             code: String::new(),
             code_path: Some("query.sql".into()),
             materialized: false,
-            cache_row_limit: None,
+            cache_row_limit: None, lineage_annotations: None,
         };
 
         let mut p = diamond_pipeline();
@@ -587,7 +587,7 @@ mod tests {
                 code: String::new(),
                 code_path: Some("t.sql".into()),
                 materialized: false,
-                cache_row_limit: None,
+                cache_row_limit: None, lineage_annotations: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -620,7 +620,7 @@ mod tests {
                 code: String::new(),
                 code_path: Some("t.sql".into()),
                 materialized: false,
-                cache_row_limit: None,
+                cache_row_limit: None, lineage_annotations: None,
             }),
             position: Position::default(),
             pinned_position: false,
@@ -664,7 +664,7 @@ mod tests {
                         code: "SELECT * WHERE x = '{{ unknown_var }}'".into(),
                         code_path: None,
                         materialized: false,
-                        cache_row_limit: None,
+                        cache_row_limit: None, lineage_annotations: None,
                     }),
                     position: Position::default(),
                     pinned_position: false,

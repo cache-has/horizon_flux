@@ -48,7 +48,9 @@ pub use provider::{
     OnConflict, PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions,
     WriteStats,
 };
-pub use python_runtime::PythonConfig;
+pub use python_runtime::{
+    PythonColumnEdge, PythonColumnLineage, PythonConfig, PythonTransformResult,
+};
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
 pub use run::{

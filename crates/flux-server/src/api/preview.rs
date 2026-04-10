@@ -188,6 +188,7 @@ async fn preview_node(
                             &py_config,
                         )
                         .await
+                        .map(|r| r.batches)
                         .map_err(|e| {
                             error!(error = %e, "Python transform preview failed");
                             ApiError::internal(e.to_string())

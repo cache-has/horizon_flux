@@ -17,8 +17,8 @@ use datafusion::datasource::MemTable;
 use datafusion::prelude::*;
 
 use flux_engine::column_lineage::{
-    BoundaryColumn, ColumnEdge, ColumnKey, ColumnLineageGraph, Confidence,
-    CrossPipelineColumnEdge, NodeColumnLineage, RelationshipKind, TraceOptions,
+    BoundaryColumn, ColumnEdge, ColumnKey, ColumnLineageGraph, Confidence, CrossPipelineColumnEdge,
+    NodeColumnLineage, RelationshipKind, TraceOptions,
 };
 use flux_engine::lineage::ResourceFingerprint;
 use flux_engine::node::NodeId;
@@ -47,10 +47,7 @@ async fn ctx_with_tables(tables: &[(&str, Vec<(&str, DataType)>)]) -> SessionCon
     ctx
 }
 
-async fn lineage_for_sql(
-    tables: &[(&str, Vec<(&str, DataType)>)],
-    sql: &str,
-) -> NodeColumnLineage {
+async fn lineage_for_sql(tables: &[(&str, Vec<(&str, DataType)>)], sql: &str) -> NodeColumnLineage {
     let ctx = ctx_with_tables(tables).await;
     let df = ctx.sql(sql).await.unwrap();
     let plan = df.logical_plan();
@@ -129,11 +126,7 @@ fn customers_table() -> (&'static str, Vec<(&'static str, DataType)>) {
 
 #[tokio::test]
 async fn golden_select_star() {
-    let lineage = lineage_for_sql(
-        &[orders_table()],
-        "SELECT * FROM orders",
-    )
-    .await;
+    let lineage = lineage_for_sql(&[orders_table()], "SELECT * FROM orders").await;
 
     // Every column should have exactly one Direct edge to itself.
     for col in &["order_id", "customer_id", "amount", "status", "created_at"] {
@@ -198,7 +191,10 @@ async fn golden_multi_column_expression() {
     assert!(cols.contains("price"), "net should reference price");
     assert!(cols.contains("qty"), "net should reference qty");
     assert!(cols.contains("discount"), "net should reference discount");
-    assert!(net.iter().all(|e| e.relationship == RelationshipKind::Derived));
+    assert!(
+        net.iter()
+            .all(|e| e.relationship == RelationshipKind::Derived)
+    );
 }
 
 #[tokio::test]
@@ -273,9 +269,7 @@ async fn golden_where_single_column() {
             "{col} should have a filter edge from status"
         );
         assert!(
-            filter_edges
-                .iter()
-                .any(|e| e.upstream_column == "status"),
+            filter_edges.iter().any(|e| e.upstream_column == "status"),
             "{col}'s filter edge should reference status"
         );
     }
@@ -346,7 +340,10 @@ async fn golden_left_join() {
     .await;
 
     let name = edges_for(&lineage, "name");
-    assert!(!name.is_empty(), "LEFT JOIN should still produce edges for nullable side");
+    assert!(
+        !name.is_empty(),
+        "LEFT JOIN should still produce edges for nullable side"
+    );
 }
 
 #[tokio::test]
@@ -423,7 +420,11 @@ async fn golden_multi_aggregate() {
     .await;
 
     let status = edges_for(&lineage, "status");
-    assert!(status.iter().any(|e| e.relationship == RelationshipKind::GroupBy));
+    assert!(
+        status
+            .iter()
+            .any(|e| e.relationship == RelationshipKind::GroupBy)
+    );
 
     // AVG(amount) and MAX(amount) should both reference amount
     for col in &["avg_amount", "max_amount"] {
@@ -496,7 +497,10 @@ async fn golden_window_sum() {
 
     let rt = edges_for(&lineage, "running_total");
     let cols = upstream_cols(&rt);
-    assert!(cols.contains("amount"), "window SUM should reference amount");
+    assert!(
+        cols.contains("amount"),
+        "window SUM should reference amount"
+    );
     assert!(
         cols.contains("customer_id"),
         "window should reference partition column"
@@ -714,7 +718,10 @@ async fn golden_nested_subquery_with_join() {
     .await;
 
     let name = edges_for(&lineage, "name");
-    assert!(!name.is_empty(), "name should have lineage through the subquery");
+    assert!(
+        !name.is_empty(),
+        "name should have lineage through the subquery"
+    );
 
     // COUNT(*) references no specific columns, so order_count correctly
     // has no upstream edges. This is accurate — the count depends on the
@@ -739,7 +746,11 @@ async fn golden_string_concat() {
     let cols = upstream_cols(&display);
     assert!(cols.contains("name"));
     assert!(cols.contains("email"));
-    assert!(display.iter().all(|e| e.relationship == RelationshipKind::Derived));
+    assert!(
+        display
+            .iter()
+            .all(|e| e.relationship == RelationshipKind::Derived)
+    );
 }
 
 // --- Deterministic output ---
@@ -790,7 +801,10 @@ async fn edge_case_correlated_subquery_in_where() {
 
     // The query should succeed and produce lineage for order_id and amount.
     let oid = edges_for(&lineage, "order_id");
-    assert!(!oid.is_empty(), "correlated subquery should not break lineage");
+    assert!(
+        !oid.is_empty(),
+        "correlated subquery should not break lineage"
+    );
     assert!(oid.iter().any(|e| e.upstream_column == "order_id"));
 }
 
@@ -862,7 +876,10 @@ async fn edge_case_empty_table() {
     .await;
 
     let id = edges_for(&lineage, "id");
-    assert!(!id.is_empty(), "empty table should still produce lineage edges");
+    assert!(
+        !id.is_empty(),
+        "empty table should still produce lineage edges"
+    );
 }
 
 #[tokio::test]
@@ -953,14 +970,18 @@ fn cross_pipeline_three_hop_chain() {
     assert_eq!(result.one_sided.len(), 0);
 
     // Verify the chain: P1.sink1 → P2.src2 and P2.sink2 → P3.src3
-    assert!(result
-        .edges
-        .iter()
-        .any(|e| e.upstream_pipeline_id == pid(1) && e.downstream_pipeline_id == pid(2)));
-    assert!(result
-        .edges
-        .iter()
-        .any(|e| e.upstream_pipeline_id == pid(2) && e.downstream_pipeline_id == pid(3)));
+    assert!(
+        result
+            .edges
+            .iter()
+            .any(|e| e.upstream_pipeline_id == pid(1) && e.downstream_pipeline_id == pid(2))
+    );
+    assert!(
+        result
+            .edges
+            .iter()
+            .any(|e| e.upstream_pipeline_id == pid(2) && e.downstream_pipeline_id == pid(3))
+    );
 }
 
 #[test]
@@ -1021,11 +1042,8 @@ fn cross_pipeline_multiple_columns_partial_overlap() {
 
     // email is sink-only, phone is source-only.
     assert_eq!(result.one_sided.len(), 2);
-    let one_sided_cols: HashSet<&str> = result
-        .one_sided
-        .iter()
-        .map(|o| o.column.as_str())
-        .collect();
+    let one_sided_cols: HashSet<&str> =
+        result.one_sided.iter().map(|o| o.column.as_str()).collect();
     assert!(one_sided_cols.contains("email"));
     assert!(one_sided_cols.contains("phone"));
 }
@@ -1242,7 +1260,12 @@ fn graph_cross_pipeline_three_hop_traversal() {
     let pipeline_ids: HashSet<PipelineId> = result
         .edges
         .iter()
-        .flat_map(|e| [e.upstream.pipeline_id.clone(), e.downstream.pipeline_id.clone()])
+        .flat_map(|e| {
+            [
+                e.upstream.pipeline_id.clone(),
+                e.downstream.pipeline_id.clone(),
+            ]
+        })
         .collect();
     assert!(
         pipeline_ids.contains(&pid(1)),
@@ -1273,7 +1296,10 @@ async fn perf_wide_projection() {
         })
         .collect();
 
-    let select_cols: String = (0..200).map(|i| format!("col_{i}")).collect::<Vec<_>>().join(", ");
+    let select_cols: String = (0..200)
+        .map(|i| format!("col_{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!("SELECT {select_cols} FROM wide_table");
 
     let start = std::time::Instant::now();
@@ -1335,7 +1361,10 @@ fn perf_large_graph_depth_limit() {
     // Default depth (10) should truncate.
     let opts = TraceOptions::default();
     let result = graph.upstream_trace(&key(1, "node_99", "val"), &opts);
-    assert!(result.truncated, "default depth should truncate a 100-node chain");
+    assert!(
+        result.truncated,
+        "default depth should truncate a 100-node chain"
+    );
     assert_eq!(
         result.edges.len(),
         opts.max_depth as usize,
@@ -1447,4 +1476,179 @@ fn depth_limit_downstream_trace() {
     // First hop should be node_0 → node_1
     assert_eq!(result.edges[0].depth, 1);
     assert_eq!(result.edges[0].downstream.node_id, nid("node_1"));
+}
+
+// ---------------------------------------------------------------------------
+// Doc 35b: Polars LazyFrame lineage conversion (derive_python_lineage)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn python_lineage_select_maps_to_lazyframe_confidence() {
+    use flux_datafusion::python_runtime::{PythonColumnEdge, PythonColumnLineage};
+
+    let py_lineage = PythonColumnLineage {
+        edges: vec![
+            PythonColumnEdge {
+                upstream_column: "amount".into(),
+                downstream_column: "amount_with_tax".into(),
+                relationship: "derived".into(),
+                expression_text: Some("amount_with_tax".into()),
+            },
+            PythonColumnEdge {
+                upstream_column: "customer_id".into(),
+                downstream_column: "customer_id".into(),
+                relationship: "direct".into(),
+                expression_text: None,
+            },
+        ],
+        confidence: "lazyframe".into(),
+        warnings: vec![],
+    };
+
+    let node_id = nid("py_transform");
+    let input_columns = vec![(
+        nid("src"),
+        vec![
+            "amount".to_string(),
+            "customer_id".to_string(),
+            "status".to_string(),
+        ],
+    )];
+
+    let lineage = flux_datafusion::column_lineage::derive_python_lineage(
+        &node_id,
+        &py_lineage,
+        &input_columns,
+    );
+
+    assert_eq!(lineage.node_id, node_id);
+    assert_eq!(lineage.edges.len(), 2);
+
+    // Derived edge: amount → amount_with_tax.
+    let derived: Vec<_> = lineage
+        .edges
+        .iter()
+        .filter(|e| e.downstream_column == "amount_with_tax")
+        .collect();
+    assert_eq!(derived.len(), 1);
+    assert_eq!(derived[0].upstream_column, "amount");
+    assert_eq!(derived[0].relationship, RelationshipKind::Derived);
+    assert_eq!(derived[0].confidence, Confidence::LazyFrame);
+    assert_eq!(derived[0].upstream_node.as_ref().unwrap(), &nid("src"));
+    assert_eq!(
+        derived[0].expression_text.as_deref(),
+        Some("amount_with_tax")
+    );
+
+    // Direct edge: customer_id → customer_id.
+    let direct: Vec<_> = lineage
+        .edges
+        .iter()
+        .filter(|e| e.downstream_column == "customer_id")
+        .collect();
+    assert_eq!(direct.len(), 1);
+    assert_eq!(direct[0].upstream_column, "customer_id");
+    assert_eq!(direct[0].relationship, RelationshipKind::Direct);
+    assert_eq!(direct[0].confidence, Confidence::LazyFrame);
+}
+
+#[test]
+fn python_lineage_opaque_fallback() {
+    use flux_datafusion::python_runtime::{PythonColumnEdge, PythonColumnLineage};
+
+    let py_lineage = PythonColumnLineage {
+        edges: vec![
+            PythonColumnEdge {
+                upstream_column: "a".into(),
+                downstream_column: "x".into(),
+                relationship: "opaque".into(),
+                expression_text: None,
+            },
+            PythonColumnEdge {
+                upstream_column: "b".into(),
+                downstream_column: "x".into(),
+                relationship: "opaque".into(),
+                expression_text: None,
+            },
+        ],
+        confidence: "opaque".into(),
+        warnings: vec!["unsupported IR version".into()],
+    };
+
+    let node_id = nid("py_opaque");
+    let input_columns = vec![
+        (nid("src1"), vec!["a".to_string()]),
+        (nid("src2"), vec!["b".to_string()]),
+    ];
+
+    let lineage = flux_datafusion::column_lineage::derive_python_lineage(
+        &node_id,
+        &py_lineage,
+        &input_columns,
+    );
+
+    assert_eq!(lineage.edges.len(), 2);
+    for edge in &lineage.edges {
+        assert_eq!(edge.relationship, RelationshipKind::Opaque);
+        assert_eq!(edge.confidence, Confidence::Opaque);
+    }
+
+    // Check upstream node resolution.
+    let a_edge = lineage
+        .edges
+        .iter()
+        .find(|e| e.upstream_column == "a")
+        .unwrap();
+    assert_eq!(a_edge.upstream_node.as_ref().unwrap(), &nid("src1"));
+    let b_edge = lineage
+        .edges
+        .iter()
+        .find(|e| e.upstream_column == "b")
+        .unwrap();
+    assert_eq!(b_edge.upstream_node.as_ref().unwrap(), &nid("src2"));
+}
+
+#[test]
+fn python_lineage_all_relationship_kinds_parse() {
+    use flux_datafusion::python_runtime::{PythonColumnEdge, PythonColumnLineage};
+
+    let kinds = vec![
+        ("direct", RelationshipKind::Direct),
+        ("derived", RelationshipKind::Derived),
+        ("cast", RelationshipKind::Cast),
+        ("filter", RelationshipKind::Filter),
+        ("join_key", RelationshipKind::JoinKey),
+        ("join_passthrough", RelationshipKind::JoinPassthrough),
+        ("group_by", RelationshipKind::GroupBy),
+        ("aggregate_input", RelationshipKind::AggregateInput),
+        ("window_partition", RelationshipKind::WindowPartition),
+        ("window_order", RelationshipKind::WindowOrder),
+        ("window_input", RelationshipKind::WindowInput),
+        ("opaque", RelationshipKind::Opaque),
+        ("unknown_future_kind", RelationshipKind::Opaque),
+    ];
+
+    for (rel_str, expected) in &kinds {
+        let py_lineage = PythonColumnLineage {
+            edges: vec![PythonColumnEdge {
+                upstream_column: "x".into(),
+                downstream_column: "y".into(),
+                relationship: rel_str.to_string(),
+                expression_text: None,
+            }],
+            confidence: "lazyframe".into(),
+            warnings: vec![],
+        };
+
+        let lineage = flux_datafusion::column_lineage::derive_python_lineage(
+            &nid("n"),
+            &py_lineage,
+            &[(nid("s"), vec!["x".to_string()])],
+        );
+
+        assert_eq!(
+            lineage.edges[0].relationship, *expected,
+            "failed for relationship string '{rel_str}'"
+        );
+    }
 }

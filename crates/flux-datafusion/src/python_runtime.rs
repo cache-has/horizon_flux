@@ -33,12 +33,58 @@ use tracing::{debug, warn};
 /// The Python runner script, embedded at compile time.
 const RUNNER_SCRIPT: &str = include_str!("python_runner.py");
 
+/// The Polars lineage walker, embedded at compile time.
+const LINEAGE_SCRIPT: &str = include_str!("polars_lineage.py");
+
 /// JSON manifest sent to the Python subprocess.
 #[derive(Serialize)]
 struct Manifest {
     inputs: HashMap<String, String>,
     params: HashMap<String, serde_json::Value>,
     code: String,
+    /// Path where the Python runner should write column lineage JSON (if
+    /// the user's transform returns a LazyFrame).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lineage_path: Option<String>,
+}
+
+/// Result of executing a Python transform, including optional column lineage.
+#[derive(Debug)]
+pub struct PythonTransformResult {
+    /// The output Arrow RecordBatches.
+    pub batches: Vec<RecordBatch>,
+    /// Column lineage extracted from a LazyFrame plan, if available.
+    pub lineage: Option<PythonColumnLineage>,
+}
+
+/// Column lineage extracted from a Polars LazyFrame plan.
+#[derive(Debug, Clone)]
+pub struct PythonColumnLineage {
+    /// Individual column edges.
+    pub edges: Vec<PythonColumnEdge>,
+    /// Confidence level: "lazyframe" or "opaque".
+    pub confidence: String,
+    /// Any warnings from the lineage walker.
+    pub warnings: Vec<String>,
+}
+
+/// A single column lineage edge from the Python walker.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PythonColumnEdge {
+    pub upstream_column: String,
+    pub downstream_column: String,
+    pub relationship: String,
+    #[serde(default)]
+    pub expression_text: Option<String>,
+}
+
+/// Raw JSON structure returned by the Python lineage walker.
+#[derive(serde::Deserialize)]
+struct RawPythonLineage {
+    edges: Vec<PythonColumnEdge>,
+    confidence: String,
+    #[serde(default)]
+    warnings: Vec<String>,
 }
 
 /// Configuration for Python subprocess execution.
@@ -85,7 +131,7 @@ pub async fn execute_python_transform(
     upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
     variables: &HashMap<String, serde_json::Value>,
     config: &PythonConfig,
-) -> Result<Vec<RecordBatch>, NodeErrorKind> {
+) -> Result<PythonTransformResult, NodeErrorKind> {
     // Create a temp directory for this transform's IPC exchange.
     let tmp_dir = tempfile::tempdir()
         .map_err(|e| NodeErrorKind::Python(format!("failed to create temp directory: {e}")))?;
@@ -102,11 +148,15 @@ pub async fn execute_python_transform(
         input_paths.insert(node_id.to_string(), ipc_path.to_string_lossy().into_owned());
     }
 
+    // Lineage sidecar path.
+    let lineage_path = tmp_path.join("lineage.json");
+
     // Write the manifest.
     let manifest = Manifest {
         inputs: input_paths,
         params: variables.clone(),
         code: code.to_string(),
+        lineage_path: Some(lineage_path.to_string_lossy().into_owned()),
     };
     let manifest_path = tmp_path.join("manifest.json");
     let manifest_json = serde_json::to_string(&manifest)
@@ -118,6 +168,11 @@ pub async fn execute_python_transform(
     let runner_path = tmp_path.join("_runner.py");
     std::fs::write(&runner_path, RUNNER_SCRIPT)
         .map_err(|e| NodeErrorKind::Python(format!("failed to write runner script: {e}")))?;
+
+    // Write the lineage walker script so the runner can import it.
+    let lineage_script_path = tmp_path.join("polars_lineage.py");
+    std::fs::write(&lineage_script_path, LINEAGE_SCRIPT)
+        .map_err(|e| NodeErrorKind::Python(format!("failed to write lineage script: {e}")))?;
 
     // Output path for the result.
     let output_path = tmp_path.join("output.arrow");
@@ -235,7 +290,11 @@ pub async fn execute_python_transform(
             drop(stdout_task.await);
 
             match status.code() {
-                Some(0) => read_ipc(&output_path),
+                Some(0) => {
+                    let batches = read_ipc(&output_path)?;
+                    let lineage = read_lineage_sidecar(&lineage_path);
+                    Ok(PythonTransformResult { batches, lineage })
+                }
                 Some(1) => {
                     let message = parse_python_error(&stderr);
                     Err(NodeErrorKind::Python(message))
@@ -339,6 +398,42 @@ fn read_ipc(path: &Path) -> Result<Vec<RecordBatch>, NodeErrorKind> {
     }
 
     Ok(batches)
+}
+
+/// Read the lineage sidecar JSON file written by the Python walker.
+///
+/// Returns `None` if the file doesn't exist (user returned a DataFrame, not a
+/// LazyFrame) or if parsing fails (with a warning logged).
+fn read_lineage_sidecar(path: &Path) -> Option<PythonColumnLineage> {
+    if !path.exists() {
+        return None;
+    }
+
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("failed to read lineage sidecar: {e}");
+            return None;
+        }
+    };
+
+    let raw: RawPythonLineage = match serde_json::from_str(&contents) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("failed to parse lineage sidecar: {e}");
+            return None;
+        }
+    };
+
+    for w in &raw.warnings {
+        debug!(target: "polars_lineage", "walker warning: {}", w);
+    }
+
+    Some(PythonColumnLineage {
+        edges: raw.edges,
+        confidence: raw.confidence,
+        warnings: raw.warnings,
+    })
 }
 
 /// Find a Python 3 interpreter.

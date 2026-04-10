@@ -332,6 +332,14 @@ pub struct TransformConfig {
     /// `cache_row_limit`. When `None`, falls back to the pipeline default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_row_limit: Option<usize>,
+    /// User-provided column lineage annotations (planning doc 35c).
+    ///
+    /// When present, these annotations take precedence over automatically
+    /// derived lineage (LazyFrame plan walk or opaque fallback). This is the
+    /// escape hatch for eager Python code where lineage cannot be derived
+    /// automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage_annotations: Option<crate::column_lineage::LineageAnnotations>,
 }
 
 /// Configuration for a sink node.
@@ -406,7 +414,7 @@ mod tests {
             code: "df.filter(col > 1)".into(),
             code_path: Some("transforms/t.py".into()),
             materialized: true,
-            cache_row_limit: None,
+            cache_row_limit: None, lineage_annotations: None,
         });
         let json = serde_json::to_value(&kind).unwrap();
         assert_eq!(json["type"], "transform");
@@ -464,7 +472,7 @@ mod tests {
                 code: "SELECT * FROM upstream".into(),
                 code_path: None,
                 materialized: false,
-                cache_row_limit: None,
+                cache_row_limit: None, lineage_annotations: None,
             }),
             position: Position { x: 100.0, y: 200.5 },
             pinned_position: true,

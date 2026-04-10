@@ -179,6 +179,9 @@ pub struct NodeColumnLineage {
     pub node_id: NodeId,
     /// All lineage edges for this node's output columns.
     pub edges: Vec<ColumnEdge>,
+    /// Validation warnings (e.g. annotation references a column not in schema).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl NodeColumnLineage {
@@ -186,6 +189,7 @@ impl NodeColumnLineage {
         Self {
             node_id,
             edges: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -207,6 +211,47 @@ impl NodeColumnLineage {
         cols.sort_unstable();
         cols.dedup();
         cols
+    }
+}
+
+// ---------------------------------------------------------------------------
+// User-provided lineage annotations (planning doc 35c)
+// ---------------------------------------------------------------------------
+
+/// A single annotated lineage edge provided by the user.
+///
+/// Used in `TransformConfig::lineage_annotations` and the
+/// `@column_lineage(outputs=...)` Python decorator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageAnnotationEdge {
+    /// The upstream (input) column that contributes to the output.
+    pub upstream_column: String,
+    /// The downstream (output) column being produced.
+    pub downstream_column: String,
+    /// The relationship kind (defaults to "derived" when omitted).
+    #[serde(default = "default_derived")]
+    pub relationship: RelationshipKind,
+}
+
+fn default_derived() -> RelationshipKind {
+    RelationshipKind::Derived
+}
+
+/// Per-node lineage annotations provided by the user.
+///
+/// These serve as an escape hatch for eager Python code where lineage
+/// cannot be derived automatically from a LazyFrame plan.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageAnnotations {
+    /// Annotated edges. Each edge declares that a specific upstream column
+    /// contributes to a specific downstream column.
+    #[serde(default)]
+    pub edges: Vec<LineageAnnotationEdge>,
+}
+
+impl LineageAnnotations {
+    pub fn is_empty(&self) -> bool {
+        self.edges.is_empty()
     }
 }
 

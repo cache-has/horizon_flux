@@ -133,7 +133,7 @@ fn sql_transform_node(id: &str, sql: &str) -> Node {
             code: sql.to_string(),
             code_path: None,
             materialized: false,
-            cache_row_limit: None,
+            cache_row_limit: None, lineage_annotations: None,
         }),
         position: Position::default(),
         pinned_position: false,

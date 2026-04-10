@@ -540,7 +540,7 @@ mod tests {
                 code: "SELECT * WHERE x = '{{ undefined_var }}' AND d = '{{ run_date }}'".into(),
                 code_path: None,
                 materialized: false,
-                cache_row_limit: None,
+                cache_row_limit: None, lineage_annotations: None,
             }),
             position: Position::default(),
             pinned_position: false,

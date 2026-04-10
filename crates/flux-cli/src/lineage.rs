@@ -750,7 +750,14 @@ fn handle_column(
             column,
             env,
             max_depth,
-        } => column_impact(&fingerprint, &column, env.as_deref(), max_depth, format, metadata_url),
+        } => column_impact(
+            &fingerprint,
+            &column,
+            env.as_deref(),
+            max_depth,
+            format,
+            metadata_url,
+        ),
         ColumnAction::Search { query, env } => {
             column_search(&query, env.as_deref(), format, metadata_url)
         }
@@ -886,7 +893,11 @@ fn column_trace(
         confidence_filter: confidence.map(parse_confidences).unwrap_or_default(),
     };
 
-    let direction_label = if is_upstream { "Upstream" } else { "Downstream" };
+    let direction_label = if is_upstream {
+        "Upstream"
+    } else {
+        "Downstream"
+    };
 
     // Collect traces from all matching keys.
     let mut all_edges = Vec::new();
@@ -910,9 +921,7 @@ fn column_trace(
                 );
                 return Ok(());
             }
-            println!(
-                "{direction_label} of `{column}` on `{fingerprint}` (env `{environment}`):\n"
-            );
+            println!("{direction_label} of `{column}` on `{fingerprint}` (env `{environment}`):\n");
             println!(
                 "{}",
                 crate::color::bold(&format!(
@@ -1031,27 +1040,19 @@ fn column_impact(
                 );
                 return Ok(());
             }
-            println!(
-                "Impact of `{column}` on `{fingerprint}` (env `{environment}`):\n"
-            );
+            println!("Impact of `{column}` on `{fingerprint}` (env `{environment}`):\n");
             println!(
                 "  {} affected column(s) across {} pipeline(s):",
                 all_edges.len(),
                 by_pipeline.len(),
             );
             for (pid, edges) in &by_pipeline {
-                println!(
-                    "\n  {}",
-                    crate::color::bold(&display_name(&names, pid)),
-                );
+                println!("\n  {}", crate::color::bold(&display_name(&names, pid)),);
                 for e in edges {
                     let marker = if e.depth == 1 { "direct" } else { "transitive" };
                     println!(
                         "    {} ({}, {:?}, depth {})",
-                        e.downstream.column,
-                        marker,
-                        e.relationship,
-                        e.depth,
+                        e.downstream.column, marker, e.relationship, e.depth,
                     );
                 }
             }
@@ -1127,10 +1128,7 @@ fn column_search(
             );
             println!(
                 "{}",
-                crate::color::bold(&format!(
-                    "  {:<30} {:<16} {}",
-                    "PIPELINE", "NODE", "COLUMN"
-                ))
+                crate::color::bold(&format!("  {:<30} {:<16} {}", "PIPELINE", "NODE", "COLUMN"))
             );
             println!("{}", crate::color::dim(&format!("  {}", "-".repeat(70))));
             for k in &matches {

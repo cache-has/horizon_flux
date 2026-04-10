@@ -409,8 +409,14 @@ impl PipelineExecutor {
                                 match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
                                     Ok(data) => {
                                         let interpolated_sql = resolved_vars.interpolate(&code);
-                                        // Derive column lineage when a store is configured.
-                                        let derive_lineage = options.column_lineage_store.is_some();
+                                        // Annotation override (doc 35c): skip plan walk
+                                        // when user annotations are present.
+                                        let has_annotations = xform_cfg
+                                            .lineage_annotations
+                                            .as_ref()
+                                            .is_some_and(|a| !a.is_empty());
+                                        let derive_lineage = options.column_lineage_store.is_some()
+                                            && !has_annotations;
                                         let lineage_node_id =
                                             if derive_lineage { Some(node_id) } else { None };
                                         match Self::execute_sql_transform_with_lineage(
@@ -424,26 +430,43 @@ impl PipelineExecutor {
                                         .await
                                         {
                                             Ok((batches, lineage)) => {
-                                                // Persist column lineage edges if derived.
-                                                if let (
-                                                    Some(store),
-                                                    Some(pid),
-                                                    Some(node_lineage),
-                                                ) = (
+                                                if let (Some(store), Some(pid)) = (
                                                     &options.column_lineage_store,
                                                     &options.pipeline_id,
-                                                    lineage,
                                                 ) {
-                                                    persist_column_lineage(
-                                                        store.as_ref(),
-                                                        pid,
-                                                        &options.environment,
-                                                        &node_lineage,
-                                                        Some(&run.id),
-                                                        options
-                                                            .on_column_lineage_updated
-                                                            .as_deref(),
-                                                    );
+                                                    let node_lineage = if has_annotations {
+                                                        // Use annotation lineage.
+                                                        let input_cols: Vec<(NodeId, Vec<String>)> =
+                                                            upstream_ids
+                                                                .iter()
+                                                                .filter_map(|uid| {
+                                                                    outputs.get(*uid).map(|bs| {
+                                                                        ((*uid).clone(), extract_column_names(bs))
+                                                                    })
+                                                                })
+                                                                .collect();
+                                                        let output_cols = extract_column_names(&batches);
+                                                        Some(crate::column_lineage::derive_annotation_lineage(
+                                                            node_id,
+                                                            xform_cfg.lineage_annotations.as_ref().unwrap(),
+                                                            &input_cols,
+                                                            Some(&output_cols),
+                                                        ))
+                                                    } else {
+                                                        lineage
+                                                    };
+                                                    if let Some(ref nl) = node_lineage {
+                                                        persist_column_lineage(
+                                                            store.as_ref(),
+                                                            pid,
+                                                            &options.environment,
+                                                            nl,
+                                                            Some(&run.id),
+                                                            options
+                                                                .on_column_lineage_updated
+                                                                .as_deref(),
+                                                        );
+                                                    }
                                                 }
                                                 Ok(batches)
                                             }
@@ -483,33 +506,63 @@ impl PipelineExecutor {
                                         )
                                         .await
                                         {
-                                            Ok(batches) => {
-                                                // Persist opaque column lineage for Python transforms.
+                                            Ok(py_result) => {
+                                                // Persist column lineage for Python transforms.
+                                                // Precedence: JSON annotation > decorator annotation
+                                                // > lazyframe > opaque (doc 35c).
                                                 if let (Some(store), Some(pid), Some(input_cols)) = (
                                                     &options.column_lineage_store,
                                                     &options.pipeline_id,
                                                     input_columns_for_lineage,
                                                 ) {
-                                                    let output_columns =
-                                                        extract_column_names(&batches);
-                                                    let opaque_lineage =
-                                                        crate::column_lineage::derive_opaque_lineage(
-                                                            node_id,
-                                                            &input_cols,
-                                                            &output_columns,
-                                                        );
+                                                    let node_lineage =
+                                                        if let Some(ref annot) = xform_cfg.lineage_annotations {
+                                                            if !annot.is_empty() {
+                                                                // JSON-level annotation wins.
+                                                                let output_cols = extract_column_names(
+                                                                    &py_result.batches,
+                                                                );
+                                                                crate::column_lineage::derive_annotation_lineage(
+                                                                    node_id, annot, &input_cols,
+                                                                    Some(&output_cols),
+                                                                )
+                                                            } else if let Some(ref py_lineage) = py_result.lineage {
+                                                                crate::column_lineage::derive_python_lineage(
+                                                                    node_id, py_lineage, &input_cols,
+                                                                )
+                                                            } else {
+                                                                let output_columns = extract_column_names(&py_result.batches);
+                                                                crate::column_lineage::derive_opaque_lineage(
+                                                                    node_id, &input_cols, &output_columns,
+                                                                )
+                                                            }
+                                                        } else if let Some(ref py_lineage) = py_result.lineage {
+                                                            // Decorator annotation or LazyFrame lineage
+                                                            // (both come through the sidecar; confidence
+                                                            // field distinguishes them).
+                                                            crate::column_lineage::derive_python_lineage(
+                                                                node_id, py_lineage, &input_cols,
+                                                            )
+                                                        } else {
+                                                            let output_columns = extract_column_names(
+                                                                &py_result.batches,
+                                                            );
+                                                            crate::column_lineage::derive_opaque_lineage(
+                                                                node_id, &input_cols, &output_columns,
+                                                            )
+                                                        };
                                                     persist_column_lineage(
                                                         store.as_ref(),
                                                         pid,
                                                         &options.environment,
-                                                        &opaque_lineage,
+                                                        &node_lineage,
                                                         Some(&run.id),
                                                         options
                                                             .on_column_lineage_updated
                                                             .as_deref(),
                                                     );
                                                 }
-                                                Ok(batches)
+                                                Ok(py_result.batches)
                                             }
                                             Err(e) => Err(e),
                                         }
@@ -1370,6 +1423,13 @@ fn persist_column_lineage(
             source_run_id: run_id.map(|r| r.0.to_string()),
         })
         .collect();
+    for w in &lineage.warnings {
+        warn!(
+            pipeline = pipeline_id,
+            node = %lineage.node_id,
+            "column lineage annotation warning: {w}"
+        );
+    }
     let edge_count = edges.len();
     if let Err(e) = store.save_column_edges(pipeline_id, environment, &edges) {
         warn!(

@@ -611,6 +611,153 @@ pub fn derive_opaque_lineage(
 }
 
 // ---------------------------------------------------------------------------
+// Polars LazyFrame lineage conversion
+// ---------------------------------------------------------------------------
+
+/// Convert Python-extracted column lineage into a `NodeColumnLineage`.
+///
+/// Maps the string-based relationship and confidence from the Python walker
+/// to the Rust enum types. Upstream node IDs are resolved from the
+/// `input_columns` map (node → columns).
+pub fn derive_python_lineage(
+    node_id: &NodeId,
+    python_lineage: &crate::python_runtime::PythonColumnLineage,
+    input_columns: &[(NodeId, Vec<String>)],
+) -> NodeColumnLineage {
+    let mut result = NodeColumnLineage::new(node_id.clone());
+
+    let confidence = match python_lineage.confidence.as_str() {
+        "lazyframe" => Confidence::LazyFrame,
+        "annotation" => Confidence::Annotation,
+        _ => Confidence::Opaque,
+    };
+
+    // Build a reverse map: column_name → upstream NodeId.
+    // If multiple upstream nodes have the same column name, the first wins
+    // (matches Polars' behavior where earlier inputs shadow later ones).
+    let mut col_to_node: std::collections::HashMap<&str, &NodeId> =
+        std::collections::HashMap::new();
+    for (nid, cols) in input_columns {
+        for col in cols {
+            col_to_node.entry(col.as_str()).or_insert(nid);
+        }
+    }
+
+    for edge in &python_lineage.edges {
+        let relationship = parse_relationship(&edge.relationship);
+        let upstream_node = col_to_node.get(edge.upstream_column.as_str()).copied();
+
+        result.edges.push(ColumnEdge {
+            upstream_column: edge.upstream_column.clone(),
+            upstream_node: upstream_node.cloned(),
+            upstream_resource: None,
+            downstream_column: edge.downstream_column.clone(),
+            downstream_node: Some(node_id.clone()),
+            downstream_resource: None,
+            relationship,
+            expression_text: edge.expression_text.clone(),
+            confidence,
+        });
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Annotation-based lineage (planning doc 35c)
+// ---------------------------------------------------------------------------
+
+/// Derive column lineage from user-provided annotations.
+///
+/// Annotations take precedence over both LazyFrame-derived and opaque lineage
+/// (precedence: annotation > lazyframe > opaque). Each annotated edge is
+/// emitted with `Confidence::Annotation`.
+///
+/// The `input_columns` map is used to resolve upstream column names to their
+/// producing node IDs. When `output_columns` is provided, downstream column
+/// references are validated against the actual output schema. Invalid
+/// references produce warnings but do not prevent lineage from being emitted.
+pub fn derive_annotation_lineage(
+    node_id: &NodeId,
+    annotations: &flux_engine::column_lineage::LineageAnnotations,
+    input_columns: &[(NodeId, Vec<String>)],
+    output_columns: Option<&[String]>,
+) -> NodeColumnLineage {
+    let mut result = NodeColumnLineage::new(node_id.clone());
+
+    // Build reverse map: column_name → upstream NodeId.
+    let mut col_to_node: std::collections::HashMap<&str, &NodeId> =
+        std::collections::HashMap::new();
+    let mut all_input_cols: std::collections::HashSet<&str> =
+        std::collections::HashSet::new();
+    for (nid, cols) in input_columns {
+        for col in cols {
+            col_to_node.entry(col.as_str()).or_insert(nid);
+            all_input_cols.insert(col.as_str());
+        }
+    }
+
+    // Build output column set for downstream validation.
+    let output_set: Option<std::collections::HashSet<&str>> =
+        output_columns.map(|cols| cols.iter().map(|c| c.as_str()).collect());
+
+    for edge in &annotations.edges {
+        // Validate upstream column exists in input schemas.
+        let upstream_node =
+            col_to_node.get(edge.upstream_column.as_str()).copied();
+        if !all_input_cols.contains(edge.upstream_column.as_str()) {
+            result.warnings.push(format!(
+                "annotation references upstream column '{}' which does not \
+                 exist in any input schema",
+                edge.upstream_column,
+            ));
+        }
+
+        // Validate downstream column exists in output schema.
+        if let Some(ref out) = output_set {
+            if !out.contains(edge.downstream_column.as_str()) {
+                result.warnings.push(format!(
+                    "annotation references downstream column '{}' which does \
+                     not exist in the output schema",
+                    edge.downstream_column,
+                ));
+            }
+        }
+
+        result.edges.push(ColumnEdge {
+            upstream_column: edge.upstream_column.clone(),
+            upstream_node: upstream_node.cloned(),
+            upstream_resource: None,
+            downstream_column: edge.downstream_column.clone(),
+            downstream_node: Some(node_id.clone()),
+            downstream_resource: None,
+            relationship: edge.relationship,
+            expression_text: None,
+            confidence: Confidence::Annotation,
+        });
+    }
+
+    result
+}
+
+fn parse_relationship(s: &str) -> RelationshipKind {
+    match s {
+        "direct" => RelationshipKind::Direct,
+        "derived" => RelationshipKind::Derived,
+        "cast" => RelationshipKind::Cast,
+        "filter" => RelationshipKind::Filter,
+        "join_key" => RelationshipKind::JoinKey,
+        "join_passthrough" => RelationshipKind::JoinPassthrough,
+        "group_by" => RelationshipKind::GroupBy,
+        "aggregate_input" => RelationshipKind::AggregateInput,
+        "window_partition" => RelationshipKind::WindowPartition,
+        "window_order" => RelationshipKind::WindowOrder,
+        "window_input" => RelationshipKind::WindowInput,
+        _ => RelationshipKind::Opaque,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Boundary edge derivation (planning doc 35 — cross-pipeline derivation)
 // ---------------------------------------------------------------------------
 
@@ -951,5 +1098,223 @@ mod tests {
                 .iter()
                 .all(|e| e.confidence == Confidence::Opaque)
         );
+    }
+
+    // ------- Annotation lineage tests -------
+
+    #[test]
+    fn test_annotation_lineage_basic() {
+        use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
+
+        let node_id = NodeId::from("eager_python");
+        let inputs = vec![
+            (NodeId::from("src"), vec!["price".to_string(), "qty".to_string()]),
+        ];
+        let annotations = LineageAnnotations {
+            edges: vec![
+                LineageAnnotationEdge {
+                    upstream_column: "price".to_string(),
+                    downstream_column: "total".to_string(),
+                    relationship: RelationshipKind::Derived,
+                },
+                LineageAnnotationEdge {
+                    upstream_column: "qty".to_string(),
+                    downstream_column: "total".to_string(),
+                    relationship: RelationshipKind::Derived,
+                },
+            ],
+        };
+
+        let lineage = derive_annotation_lineage(&node_id, &annotations, &inputs, None);
+
+        assert_eq!(lineage.edges.len(), 2);
+        assert!(lineage.warnings.is_empty());
+        assert!(
+            lineage
+                .edges
+                .iter()
+                .all(|e| e.confidence == Confidence::Annotation)
+        );
+        assert!(
+            lineage
+                .edges
+                .iter()
+                .all(|e| e.downstream_column == "total")
+        );
+        let upstream_cols: HashSet<&str> = lineage
+            .edges
+            .iter()
+            .map(|e| e.upstream_column.as_str())
+            .collect();
+        assert!(upstream_cols.contains("price"));
+        assert!(upstream_cols.contains("qty"));
+        // Upstream node should be resolved from input_columns.
+        assert!(
+            lineage
+                .edges
+                .iter()
+                .all(|e| e.upstream_node == Some(NodeId::from("src")))
+        );
+    }
+
+    #[test]
+    fn test_annotation_overrides_opaque() {
+        use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
+
+        let node_id = NodeId::from("python_node");
+        let inputs = vec![
+            (NodeId::from("src"), vec!["a".to_string(), "b".to_string()]),
+        ];
+        let outputs = vec!["x".to_string(), "y".to_string()];
+
+        // Opaque produces 4 edges (every input × every output).
+        let opaque = derive_opaque_lineage(&node_id, &inputs, &outputs);
+        assert_eq!(opaque.edges.len(), 4);
+
+        // Annotation is more precise: x comes only from a, y only from b.
+        let annotations = LineageAnnotations {
+            edges: vec![
+                LineageAnnotationEdge {
+                    upstream_column: "a".to_string(),
+                    downstream_column: "x".to_string(),
+                    relationship: RelationshipKind::Direct,
+                },
+                LineageAnnotationEdge {
+                    upstream_column: "b".to_string(),
+                    downstream_column: "y".to_string(),
+                    relationship: RelationshipKind::Derived,
+                },
+            ],
+        };
+        let annotated = derive_annotation_lineage(&node_id, &annotations, &inputs, None);
+
+        // Only 2 edges vs 4 opaque — annotation is more precise.
+        assert_eq!(annotated.edges.len(), 2);
+        assert!(
+            annotated
+                .edges
+                .iter()
+                .all(|e| e.confidence == Confidence::Annotation)
+        );
+
+        // Annotation confidence is higher-priority than Opaque.
+        assert!(Confidence::Annotation < Confidence::Opaque);
+    }
+
+    #[test]
+    fn test_annotation_confidence_ordering() {
+        // Verify the precedence: Exact < LazyFrame < Annotation < Opaque.
+        assert!(Confidence::Exact < Confidence::LazyFrame);
+        assert!(Confidence::LazyFrame < Confidence::Annotation);
+        assert!(Confidence::Annotation < Confidence::Opaque);
+    }
+
+    #[test]
+    fn test_python_lineage_annotation_confidence() {
+        // Verify that derive_python_lineage correctly maps "annotation"
+        // confidence from the Python sidecar.
+        use crate::python_runtime::{PythonColumnEdge, PythonColumnLineage};
+
+        let node_id = NodeId::from("decorated_python");
+        let inputs = vec![
+            (NodeId::from("src"), vec!["col_a".to_string()]),
+        ];
+        let py_lineage = PythonColumnLineage {
+            edges: vec![PythonColumnEdge {
+                upstream_column: "col_a".to_string(),
+                downstream_column: "col_b".to_string(),
+                relationship: "derived".to_string(),
+                expression_text: None,
+            }],
+            confidence: "annotation".to_string(),
+            warnings: vec![],
+        };
+
+        let lineage = derive_python_lineage(&node_id, &py_lineage, &inputs);
+
+        assert_eq!(lineage.edges.len(), 1);
+        assert_eq!(lineage.edges[0].confidence, Confidence::Annotation);
+    }
+
+    // ------- Annotation validation tests -------
+
+    #[test]
+    fn test_annotation_validation_warns_on_bad_columns() {
+        use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
+
+        let node_id = NodeId::from("xform");
+        let inputs = vec![
+            (NodeId::from("src"), vec!["price".to_string(), "qty".to_string()]),
+        ];
+        let output_cols = vec!["total".to_string()];
+
+        let annotations = LineageAnnotations {
+            edges: vec![
+                // Valid edge.
+                LineageAnnotationEdge {
+                    upstream_column: "price".to_string(),
+                    downstream_column: "total".to_string(),
+                    relationship: RelationshipKind::Derived,
+                },
+                // Bad upstream column.
+                LineageAnnotationEdge {
+                    upstream_column: "nonexistent_input".to_string(),
+                    downstream_column: "total".to_string(),
+                    relationship: RelationshipKind::Derived,
+                },
+                // Bad downstream column.
+                LineageAnnotationEdge {
+                    upstream_column: "qty".to_string(),
+                    downstream_column: "bogus_output".to_string(),
+                    relationship: RelationshipKind::Derived,
+                },
+            ],
+        };
+
+        let lineage = derive_annotation_lineage(
+            &node_id,
+            &annotations,
+            &inputs,
+            Some(&output_cols),
+        );
+
+        // All 3 edges are still emitted (warnings don't suppress edges).
+        assert_eq!(lineage.edges.len(), 3);
+
+        // Exactly 2 warnings: one upstream, one downstream.
+        assert_eq!(lineage.warnings.len(), 2);
+        assert!(lineage.warnings[0].contains("nonexistent_input"));
+        assert!(lineage.warnings[0].contains("upstream"));
+        assert!(lineage.warnings[1].contains("bogus_output"));
+        assert!(lineage.warnings[1].contains("downstream"));
+    }
+
+    #[test]
+    fn test_annotation_validation_no_warnings_when_valid() {
+        use flux_engine::column_lineage::{LineageAnnotationEdge, LineageAnnotations};
+
+        let node_id = NodeId::from("xform");
+        let inputs = vec![
+            (NodeId::from("src"), vec!["a".to_string()]),
+        ];
+        let output_cols = vec!["b".to_string()];
+
+        let annotations = LineageAnnotations {
+            edges: vec![LineageAnnotationEdge {
+                upstream_column: "a".to_string(),
+                downstream_column: "b".to_string(),
+                relationship: RelationshipKind::Direct,
+            }],
+        };
+
+        let lineage = derive_annotation_lineage(
+            &node_id,
+            &annotations,
+            &inputs,
+            Some(&output_cols),
+        );
+
+        assert_eq!(lineage.edges.len(), 1);
+        assert!(lineage.warnings.is_empty());
     }
 }

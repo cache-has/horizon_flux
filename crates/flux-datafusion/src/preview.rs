@@ -350,6 +350,7 @@ impl PipelineExecutor {
                             &py_config,
                         )
                         .await
+                        .map(|r| r.batches)
                         .map_err(|kind| ExecutorError::Node {
                             node_id: node_id.clone(),
                             kind,
