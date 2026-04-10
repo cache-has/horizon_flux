@@ -138,7 +138,14 @@ impl Scheduler {
                 poll_interval,
                 ..
             } => {
-                return self.evaluate_file_arrival(trigger, path, poll_interval, state, now, now_str);
+                return self.evaluate_file_arrival(
+                    trigger,
+                    path,
+                    poll_interval,
+                    state,
+                    now,
+                    now_str,
+                );
             }
             // Webhook and pipeline-completion are event-driven — they fire
             // via `fire_webhook` and `notify_run_completed` respectively,
@@ -306,8 +313,8 @@ impl Scheduler {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let new_files = detect_new_local_files(path, &sensor_state)
-            .map_err(SchedulerError::Sensor)?;
+        let new_files =
+            detect_new_local_files(path, &sensor_state).map_err(SchedulerError::Sensor)?;
 
         if new_files.is_empty() {
             // No new files — just update last_evaluated_at.
@@ -538,9 +545,8 @@ impl Scheduler {
         now_str: &str,
         mapped_variables: Option<&HashMap<String, Value>>,
     ) -> Result<TickResult, SchedulerError> {
-        let merged = mapped_variables.map(|m| {
-            variable_mapping::merge_variables(trigger.variable_overrides.as_ref(), m)
-        });
+        let merged = mapped_variables
+            .map(|m| variable_mapping::merge_variables(trigger.variable_overrides.as_ref(), m));
         let vars_ref = merged.as_ref().or(trigger.variable_overrides.as_ref());
 
         let is_running = self
@@ -1398,9 +1404,6 @@ mod tests {
         store.create_trigger(&trigger).unwrap();
 
         let result = scheduler.fire_webhook(&trigger.id, &serde_json::Value::Null);
-        assert!(matches!(
-            result,
-            Err(SchedulerError::TriggerDisabled(_))
-        ));
+        assert!(matches!(result, Err(SchedulerError::TriggerDisabled(_))));
     }
 }

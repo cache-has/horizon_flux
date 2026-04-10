@@ -1,14 +1,16 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Integration tests for the cross-pipeline lineage API (planning doc 31).
+//! Integration tests for the cross-pipeline lineage API (planning doc 31)
+//! and column-level lineage API (planning doc 35).
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use flux_connectors::ConnectorRegistry;
 use flux_datafusion::{
-    LineageObservation, SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore, StoredResourceBinding,
+    LineageObservation, SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore,
+    StoredColumnEdge, StoredResourceBinding,
 };
 use flux_engine::SqlitePipelineStore;
 use flux_engine::lineage::{BindingDirection, ResourceFingerprint};
@@ -51,6 +53,8 @@ fn test_state() -> AppState {
         plugin_scan_roots: Some(Vec::new()),
         metadata_dir: None,
         catalog_event_tx: AppState::new_catalog_event_channel(),
+        column_lineage_store: Some(Arc::new(SqliteRunStore::open_in_memory().unwrap())),
+        column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
     }
 }
 
@@ -404,4 +408,349 @@ async fn runtime_observation_creates_edge() {
     // Both pipelines should appear in the pipeline list.
     let pipelines = body["pipelines"].as_array().unwrap();
     assert_eq!(pipelines.len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Column-level lineage API tests (planning doc 35)
+// ---------------------------------------------------------------------------
+
+use flux_engine::NodeId;
+use flux_engine::column_lineage::{ColumnEdge, Confidence, RelationshipKind};
+
+/// Seed column lineage edges: pipeline has a source (src) -> transform (xform) -> sink (sink)
+/// with columns: src produces (id, name, email), xform produces (id, full_name) where
+/// full_name is derived from name, and sink writes (id, full_name) to a resource.
+fn seed_column_lineage(state: &AppState) {
+    let pipeline_id = "00000000-0000-0000-0000-000000000001";
+    let env = "default";
+    let now = chrono::Utc::now().to_rfc3339();
+    let fp = ResourceFingerprint::new("postgres://db/public.users");
+
+    let edges = vec![
+        // Source boundary: external resource → src node (direct)
+        StoredColumnEdge {
+            id: None,
+            pipeline_id: pipeline_id.into(),
+            environment: env.into(),
+            edge: ColumnEdge {
+                upstream_column: "id".into(),
+                upstream_node: Some(NodeId::new("src")),
+                upstream_resource: Some(fp.clone()),
+                downstream_column: "id".into(),
+                downstream_node: Some(NodeId::new("src")),
+                downstream_resource: None,
+                relationship: RelationshipKind::Direct,
+                expression_text: None,
+                confidence: Confidence::Exact,
+            },
+            derived_at: now.clone(),
+            source_run_id: None,
+        },
+        StoredColumnEdge {
+            id: None,
+            pipeline_id: pipeline_id.into(),
+            environment: env.into(),
+            edge: ColumnEdge {
+                upstream_column: "name".into(),
+                upstream_node: Some(NodeId::new("src")),
+                upstream_resource: Some(fp.clone()),
+                downstream_column: "name".into(),
+                downstream_node: Some(NodeId::new("src")),
+                downstream_resource: None,
+                relationship: RelationshipKind::Direct,
+                expression_text: None,
+                confidence: Confidence::Exact,
+            },
+            derived_at: now.clone(),
+            source_run_id: None,
+        },
+        // Transform: src.id -> xform.id (direct passthrough)
+        StoredColumnEdge {
+            id: None,
+            pipeline_id: pipeline_id.into(),
+            environment: env.into(),
+            edge: ColumnEdge {
+                upstream_column: "id".into(),
+                upstream_node: Some(NodeId::new("src")),
+                upstream_resource: None,
+                downstream_column: "id".into(),
+                downstream_node: Some(NodeId::new("xform")),
+                downstream_resource: None,
+                relationship: RelationshipKind::Direct,
+                expression_text: None,
+                confidence: Confidence::Exact,
+            },
+            derived_at: now.clone(),
+            source_run_id: None,
+        },
+        // Transform: src.name -> xform.full_name (derived)
+        StoredColumnEdge {
+            id: None,
+            pipeline_id: pipeline_id.into(),
+            environment: env.into(),
+            edge: ColumnEdge {
+                upstream_column: "name".into(),
+                upstream_node: Some(NodeId::new("src")),
+                upstream_resource: None,
+                downstream_column: "full_name".into(),
+                downstream_node: Some(NodeId::new("xform")),
+                downstream_resource: None,
+                relationship: RelationshipKind::Derived,
+                expression_text: Some("UPPER(name)".into()),
+                confidence: Confidence::Exact,
+            },
+            derived_at: now.clone(),
+            source_run_id: None,
+        },
+        // Sink boundary: xform.id -> sink (direct, with resource fingerprint)
+        StoredColumnEdge {
+            id: None,
+            pipeline_id: pipeline_id.into(),
+            environment: env.into(),
+            edge: ColumnEdge {
+                upstream_column: "id".into(),
+                upstream_node: Some(NodeId::new("xform")),
+                upstream_resource: None,
+                downstream_column: "id".into(),
+                downstream_node: Some(NodeId::new("sink")),
+                downstream_resource: Some(ResourceFingerprint::new(
+                    "postgres://db/public.users_out",
+                )),
+                relationship: RelationshipKind::Direct,
+                expression_text: None,
+                confidence: Confidence::Exact,
+            },
+            derived_at: now.clone(),
+            source_run_id: None,
+        },
+        // Sink boundary: xform.full_name -> sink (direct, with resource fingerprint)
+        StoredColumnEdge {
+            id: None,
+            pipeline_id: pipeline_id.into(),
+            environment: env.into(),
+            edge: ColumnEdge {
+                upstream_column: "full_name".into(),
+                upstream_node: Some(NodeId::new("xform")),
+                upstream_resource: None,
+                downstream_column: "full_name".into(),
+                downstream_node: Some(NodeId::new("sink")),
+                downstream_resource: Some(ResourceFingerprint::new(
+                    "postgres://db/public.users_out",
+                )),
+                relationship: RelationshipKind::Direct,
+                expression_text: None,
+                confidence: Confidence::Exact,
+            },
+            derived_at: now,
+            source_run_id: None,
+        },
+    ];
+
+    state
+        .column_lineage_store
+        .as_ref()
+        .unwrap()
+        .save_column_edges(pipeline_id, env, &edges)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn column_upstream_trace() {
+    let state = test_state();
+    seed_column_lineage(&state);
+    let app = test_router(state);
+
+    // Trace upstream of "full_name" at the sink resource.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/lineage/columns/postgres%3A%2F%2Fdb%2Fpublic.users_out/full_name/upstream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let edges = body["edges"].as_array().unwrap();
+    // Should trace: sink.full_name <- xform.full_name <- src.name
+    assert!(
+        edges.len() >= 2,
+        "expected at least 2 edges, got {}",
+        edges.len()
+    );
+    assert_eq!(body["truncated"], false);
+}
+
+#[tokio::test]
+async fn column_downstream_trace() {
+    let state = test_state();
+    seed_column_lineage(&state);
+    let app = test_router(state);
+
+    // Trace downstream of "name" at the source resource.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/lineage/columns/postgres%3A%2F%2Fdb%2Fpublic.users/name/downstream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let edges = body["edges"].as_array().unwrap();
+    // Should trace: src.name -> xform.full_name -> sink.full_name
+    assert!(
+        edges.len() >= 2,
+        "expected at least 2 edges, got {}",
+        edges.len()
+    );
+}
+
+#[tokio::test]
+async fn column_impact_analysis() {
+    let state = test_state();
+    seed_column_lineage(&state);
+    let app = test_router(state);
+
+    // Impact of "id" at the source resource.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/lineage/columns/postgres%3A%2F%2Fdb%2Fpublic.users/id/impact")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let cols = body["affected_columns"].as_array().unwrap();
+    // id flows: src.id -> xform.id -> sink.id
+    assert!(
+        cols.len() >= 2,
+        "expected at least 2 affected columns, got {}",
+        cols.len()
+    );
+    let pipelines = body["affected_pipelines"].as_array().unwrap();
+    assert_eq!(pipelines.len(), 1);
+}
+
+#[tokio::test]
+async fn column_search() {
+    let state = test_state();
+    seed_column_lineage(&state);
+    let app = test_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/lineage/columns/search?query=name")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    // Should find "name" and "full_name" columns.
+    assert!(
+        results.len() >= 2,
+        "expected at least 2 search results, got {}",
+        results.len()
+    );
+}
+
+#[tokio::test]
+async fn column_upstream_empty_for_unknown() {
+    let state = test_state();
+    let app = test_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/lineage/columns/nonexistent/col/upstream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["edges"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn pipeline_column_lineage_returns_edges() {
+    let state = test_state();
+    seed_column_lineage(&state);
+
+    // The pipeline column-lineage endpoint lives on the pipelines router.
+    let app = Router::new()
+        .nest("/api/pipelines", flux_server::api::pipelines::router())
+        .with_state(state);
+
+    let pipeline_id = "00000000-0000-0000-0000-000000000001";
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/api/pipelines/{pipeline_id}/column-lineage"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let edges = body["edges"].as_array().unwrap();
+    // seed_column_lineage creates 6 edges (2 source boundary + 2 transform + 2 sink boundary).
+    assert!(
+        edges.len() >= 6,
+        "expected at least 6 edges, got {}",
+        edges.len()
+    );
+    assert_eq!(body["pipeline_id"], pipeline_id);
+    assert_eq!(body["environment"], "default");
+
+    // Verify edge structure.
+    let first = &edges[0];
+    assert!(first.get("upstream_column").is_some());
+    assert!(first.get("downstream_column").is_some());
+    assert!(first.get("relationship").is_some());
+    assert!(first.get("confidence").is_some());
+}
+
+#[tokio::test]
+async fn column_upstream_with_relationship_filter() {
+    let state = test_state();
+    seed_column_lineage(&state);
+    let app = test_router(state);
+
+    // Only follow "derived" edges from the sink resource.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/lineage/columns/postgres%3A%2F%2Fdb%2Fpublic.users_out/full_name/upstream?relationships=derived")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let edges = body["edges"].as_array().unwrap();
+    // Should only include the derived edge (name -> full_name), not the direct passthrough.
+    for edge in edges {
+        assert_eq!(edge["relationship"], "derived");
+    }
 }

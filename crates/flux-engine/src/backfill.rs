@@ -292,8 +292,7 @@ fn expand_date_range(
         let iter_end_str = format_dt(iter_end, granularity);
         let key = iter_start_str.clone();
 
-        let variables =
-            apply_date_mapping(variable_mapping, &iter_start_str, &iter_end_str)?;
+        let variables = apply_date_mapping(variable_mapping, &iter_start_str, &iter_end_str)?;
 
         iterations.push(ExpandedIteration {
             index,
@@ -309,10 +308,7 @@ fn expand_date_range(
 }
 
 /// Advance a datetime by one granularity step.
-fn advance(
-    dt: chrono::NaiveDateTime,
-    granularity: DateGranularity,
-) -> chrono::NaiveDateTime {
+fn advance(dt: chrono::NaiveDateTime, granularity: DateGranularity) -> chrono::NaiveDateTime {
     use chrono::{Datelike, Days, NaiveDate, TimeDelta};
 
     match granularity {
@@ -394,10 +390,7 @@ pub fn expand_sql_rows(
             let col = placeholder
                 .strip_prefix("$iteration.")
                 .ok_or_else(|| RangeError::UnknownPlaceholder(placeholder.clone()))?;
-            let value = row
-                .get(col)
-                .cloned()
-                .unwrap_or_default();
+            let value = row.get(col).cloned().unwrap_or_default();
             vars.insert(var_name.clone(), Value::String(value));
         }
         // Use first column value as key, or index if empty row.
@@ -425,8 +418,7 @@ mod tests {
 
     #[test]
     fn date_range_daily_31_days() {
-        let mapping =
-            HashMap::from([("run_date".into(), "$iteration.start".into())]);
+        let mapping = HashMap::from([("run_date".into(), "$iteration.start".into())]);
         let range = RangeDefinition::DateRange {
             start: "2024-01-01".into(),
             end: "2024-02-01".into(),
@@ -468,8 +460,7 @@ mod tests {
 
     #[test]
     fn date_range_weekly() {
-        let mapping =
-            HashMap::from([("week_start".into(), "$iteration.start".into())]);
+        let mapping = HashMap::from([("week_start".into(), "$iteration.start".into())]);
         let range = RangeDefinition::DateRange {
             start: "2024-01-01".into(),
             end: "2024-01-22".into(),
@@ -485,8 +476,7 @@ mod tests {
 
     #[test]
     fn date_range_monthly() {
-        let mapping =
-            HashMap::from([("month_start".into(), "$iteration.start".into())]);
+        let mapping = HashMap::from([("month_start".into(), "$iteration.start".into())]);
         let range = RangeDefinition::DateRange {
             start: "2024-01-01".into(),
             end: "2024-04-01".into(),
@@ -502,8 +492,7 @@ mod tests {
 
     #[test]
     fn date_range_monthly_across_year_boundary() {
-        let mapping =
-            HashMap::from([("m".into(), "$iteration.start".into())]);
+        let mapping = HashMap::from([("m".into(), "$iteration.start".into())]);
         let range = RangeDefinition::DateRange {
             start: "2024-11-01".into(),
             end: "2025-02-01".into(),
@@ -531,8 +520,7 @@ mod tests {
 
     #[test]
     fn list_range() {
-        let mapping =
-            HashMap::from([("region".into(), "$iteration.value".into())]);
+        let mapping = HashMap::from([("region".into(), "$iteration.value".into())]);
         let range = RangeDefinition::List {
             values: vec!["US".into(), "EU".into(), "APAC".into()],
             variable_mapping: mapping,
@@ -549,8 +537,7 @@ mod tests {
             HashMap::from([("tenant_id".into(), "t1".into())]),
             HashMap::from([("tenant_id".into(), "t2".into())]),
         ];
-        let mapping =
-            HashMap::from([("tid".into(), "$iteration.tenant_id".into())]);
+        let mapping = HashMap::from([("tid".into(), "$iteration.tenant_id".into())]);
         let iters = expand_sql_rows(&rows, &mapping).unwrap();
         assert_eq!(iters.len(), 2);
         assert_eq!(iters[0].variables["tid"], Value::String("t1".into()));
@@ -559,8 +546,7 @@ mod tests {
 
     #[test]
     fn unknown_placeholder_is_error() {
-        let mapping =
-            HashMap::from([("x".into(), "$iteration.bogus".into())]);
+        let mapping = HashMap::from([("x".into(), "$iteration.bogus".into())]);
         let range = RangeDefinition::List {
             values: vec!["a".into()],
             variable_mapping: mapping,

@@ -5,13 +5,17 @@
 
 use crate::block_on;
 use deadpool_postgres::Pool;
-use flux_datafusion::error::{IncrementalStateError, LineageStoreError, RunStoreError};
+use flux_datafusion::error::{
+    ColumnLineageStoreError, IncrementalStateError, LineageStoreError, RunStoreError,
+};
 use flux_datafusion::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use flux_datafusion::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use flux_datafusion::storage::{
-    IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage, StoredResourceBinding,
+    ColumnLineageStorage, IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage,
+    StoredColumnEdge, StoredResourceBinding,
 };
 use flux_engine::NodeId;
+use flux_engine::column_lineage::{Confidence, RelationshipKind};
 use flux_engine::lineage::{BindingDirection, ResourceFingerprint};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -734,6 +738,289 @@ impl LineageStorage for PostgresRunStore {
                 .map_err(lineage_err)?;
             Ok(deleted)
         })
+    }
+}
+
+fn col_lineage_err(e: impl std::fmt::Display) -> ColumnLineageStoreError {
+    ColumnLineageStoreError::Database(e.to_string())
+}
+
+impl ColumnLineageStorage for PostgresRunStore {
+    fn save_column_edges(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        edges: &[StoredColumnEdge],
+    ) -> Result<(), ColumnLineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(col_lineage_err)?;
+            client
+                .execute(
+                    "DELETE FROM column_lineage_edges
+                     WHERE pipeline_id = $1 AND environment = $2",
+                    &[&pipeline_id, &environment],
+                )
+                .await
+                .map_err(col_lineage_err)?;
+            for e in edges {
+                let downstream_is_external = e.edge.downstream_resource.is_some() as i32;
+                let upstream_is_external = e.edge.upstream_resource.is_some() as i32;
+                let downstream_node_id = e
+                    .edge
+                    .downstream_node
+                    .as_ref()
+                    .map(|n| n.0.as_str())
+                    .unwrap_or("");
+                let upstream_node_id = e.edge.upstream_node.as_ref().map(|n| n.0.clone());
+                let downstream_resource = e.edge.downstream_resource.as_ref().map(|r| r.0.clone());
+                let upstream_resource = e.edge.upstream_resource.as_ref().map(|r| r.0.clone());
+                let relationship = e.edge.relationship.to_string();
+                let confidence = e.edge.confidence.to_string();
+                client
+                    .execute(
+                        "INSERT INTO column_lineage_edges
+                            (pipeline_id, environment,
+                             downstream_node_id, downstream_column,
+                             downstream_is_external, downstream_resource_fingerprint,
+                             upstream_node_id, upstream_column,
+                             upstream_is_external, upstream_resource_fingerprint,
+                             relationship, expression_text, confidence,
+                             derived_at, source_run_id)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                        &[
+                            &e.pipeline_id,
+                            &e.environment,
+                            &downstream_node_id,
+                            &e.edge.downstream_column,
+                            &downstream_is_external,
+                            &downstream_resource,
+                            &upstream_node_id,
+                            &e.edge.upstream_column,
+                            &upstream_is_external,
+                            &upstream_resource,
+                            &relationship,
+                            &e.edge.expression_text,
+                            &confidence,
+                            &e.derived_at,
+                            &e.source_run_id,
+                        ],
+                    )
+                    .await
+                    .map_err(col_lineage_err)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn load_column_edges(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(col_lineage_err)?;
+            let rows = client
+                .query(
+                    "SELECT id, pipeline_id, environment,
+                            downstream_node_id, downstream_column,
+                            downstream_is_external, downstream_resource_fingerprint,
+                            upstream_node_id, upstream_column,
+                            upstream_is_external, upstream_resource_fingerprint,
+                            relationship, expression_text, confidence,
+                            derived_at, source_run_id
+                     FROM column_lineage_edges
+                     WHERE pipeline_id = $1 AND environment = $2
+                     ORDER BY downstream_node_id, downstream_column",
+                    &[&pipeline_id, &environment],
+                )
+                .await
+                .map_err(col_lineage_err)?;
+            Ok(rows.iter().map(pg_row_to_stored_column_edge).collect())
+        })
+    }
+
+    fn load_column_edges_for_node(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        node_id: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(col_lineage_err)?;
+            let rows = client
+                .query(
+                    "SELECT id, pipeline_id, environment,
+                            downstream_node_id, downstream_column,
+                            downstream_is_external, downstream_resource_fingerprint,
+                            upstream_node_id, upstream_column,
+                            upstream_is_external, upstream_resource_fingerprint,
+                            relationship, expression_text, confidence,
+                            derived_at, source_run_id
+                     FROM column_lineage_edges
+                     WHERE pipeline_id = $1 AND environment = $2
+                       AND downstream_node_id = $3
+                     ORDER BY downstream_column",
+                    &[&pipeline_id, &environment, &node_id],
+                )
+                .await
+                .map_err(col_lineage_err)?;
+            Ok(rows.iter().map(pg_row_to_stored_column_edge).collect())
+        })
+    }
+
+    fn all_column_edges(
+        &self,
+        environment: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(col_lineage_err)?;
+            let rows = client
+                .query(
+                    "SELECT id, pipeline_id, environment,
+                            downstream_node_id, downstream_column,
+                            downstream_is_external, downstream_resource_fingerprint,
+                            upstream_node_id, upstream_column,
+                            upstream_is_external, upstream_resource_fingerprint,
+                            relationship, expression_text, confidence,
+                            derived_at, source_run_id
+                     FROM column_lineage_edges
+                     WHERE environment = $1
+                     ORDER BY pipeline_id, downstream_node_id, downstream_column",
+                    &[&environment],
+                )
+                .await
+                .map_err(col_lineage_err)?;
+            Ok(rows.iter().map(pg_row_to_stored_column_edge).collect())
+        })
+    }
+
+    fn delete_column_edges(&self, pipeline_id: &str) -> Result<(), ColumnLineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(col_lineage_err)?;
+            client
+                .execute(
+                    "DELETE FROM column_lineage_edges WHERE pipeline_id = $1",
+                    &[&pipeline_id],
+                )
+                .await
+                .map_err(col_lineage_err)?;
+            Ok(())
+        })
+    }
+
+    fn enforce_column_lineage_retention(
+        &self,
+        older_than: &str,
+    ) -> Result<u64, ColumnLineageStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool)
+                .await
+                .map_err(col_lineage_err)?;
+            let deleted = client
+                .execute(
+                    "DELETE FROM column_lineage_edges WHERE derived_at < $1",
+                    &[&older_than],
+                )
+                .await
+                .map_err(col_lineage_err)?;
+            Ok(deleted)
+        })
+    }
+}
+
+fn pg_row_to_stored_column_edge(row: &tokio_postgres::Row) -> StoredColumnEdge {
+    use flux_engine::column_lineage::ColumnEdge;
+
+    let id: i64 = row.get(0);
+    let pipeline_id: String = row.get(1);
+    let environment: String = row.get(2);
+    let downstream_node_id: String = row.get(3);
+    let downstream_column: String = row.get(4);
+    let downstream_is_external: i32 = row.get(5);
+    let downstream_resource_fp: Option<String> = row.get(6);
+    let upstream_node_id: Option<String> = row.get(7);
+    let upstream_column: String = row.get(8);
+    let upstream_is_external: i32 = row.get(9);
+    let upstream_resource_fp: Option<String> = row.get(10);
+    let relationship_str: String = row.get(11);
+    let expression_text: Option<String> = row.get(12);
+    let confidence_str: String = row.get(13);
+    let derived_at: String = row.get(14);
+    let source_run_id: Option<String> = row.get(15);
+
+    let relationship = parse_relationship_kind(&relationship_str);
+    let confidence = parse_confidence(&confidence_str);
+
+    let downstream_node = if downstream_node_id.is_empty() {
+        None
+    } else {
+        Some(NodeId::new(downstream_node_id))
+    };
+    let upstream_node = upstream_node_id.filter(|s| !s.is_empty()).map(NodeId::new);
+    let downstream_resource = if downstream_is_external != 0 {
+        downstream_resource_fp.map(ResourceFingerprint::new)
+    } else {
+        None
+    };
+    let upstream_resource = if upstream_is_external != 0 {
+        upstream_resource_fp.map(ResourceFingerprint::new)
+    } else {
+        None
+    };
+
+    StoredColumnEdge {
+        id: Some(id),
+        pipeline_id,
+        environment,
+        edge: ColumnEdge {
+            upstream_column,
+            upstream_node,
+            upstream_resource,
+            downstream_column,
+            downstream_node,
+            downstream_resource,
+            relationship,
+            expression_text,
+            confidence,
+        },
+        derived_at,
+        source_run_id,
+    }
+}
+
+fn parse_relationship_kind(s: &str) -> RelationshipKind {
+    match s {
+        "direct" => RelationshipKind::Direct,
+        "derived" => RelationshipKind::Derived,
+        "cast" => RelationshipKind::Cast,
+        "filter" => RelationshipKind::Filter,
+        "join_key" => RelationshipKind::JoinKey,
+        "join_passthrough" => RelationshipKind::JoinPassthrough,
+        "group_by" => RelationshipKind::GroupBy,
+        "aggregate_input" => RelationshipKind::AggregateInput,
+        "window_partition" => RelationshipKind::WindowPartition,
+        "window_order" => RelationshipKind::WindowOrder,
+        "window_input" => RelationshipKind::WindowInput,
+        _ => RelationshipKind::Opaque,
+    }
+}
+
+fn parse_confidence(s: &str) -> Confidence {
+    match s {
+        "exact" => Confidence::Exact,
+        "lazyframe" => Confidence::LazyFrame,
+        "annotation" => Confidence::Annotation,
+        _ => Confidence::Opaque,
     }
 }
 

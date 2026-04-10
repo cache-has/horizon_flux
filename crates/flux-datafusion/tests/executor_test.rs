@@ -695,6 +695,8 @@ async fn execute_with_run_store_persists_history() {
         lineage_store: None,
         fingerprint_fn: None,
         pipeline_id: None,
+        column_lineage_store: None,
+        on_column_lineage_updated: None,
     };
 
     let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -750,6 +752,8 @@ async fn failed_run_persists_error() {
         lineage_store: None,
         fingerprint_fn: None,
         pipeline_id: None,
+        column_lineage_store: None,
+        on_column_lineage_updated: None,
     };
 
     let err = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -826,6 +830,8 @@ async fn cancellation_stops_execution() {
         lineage_store: None,
         fingerprint_fn: None,
         pipeline_id: None,
+        column_lineage_store: None,
+        on_column_lineage_updated: None,
     };
 
     // Set cancel before execution so it triggers after the first node.

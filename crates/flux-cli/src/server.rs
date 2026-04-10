@@ -109,6 +109,7 @@ pub fn start(
     let lineage_store = stores.lineage_store;
     let trigger_store = stores.trigger_store;
     let backfill_store = stores.backfill_store;
+    let column_lineage_store = stores.column_lineage_store;
     let connector_registry = Arc::new(flux_connectors::default_registry());
     let environment_store = stores.environment_store;
 
@@ -188,6 +189,8 @@ pub fn start(
         plugin_scan_roots: None,
         metadata_dir: Some(plugin_cwd.join("metadata")),
         catalog_event_tx: flux_server::AppState::new_catalog_event_channel(),
+        column_lineage_store,
+        column_lineage_event_tx: flux_server::AppState::new_column_lineage_event_channel(),
     };
 
     #[cfg(feature = "tray")]
@@ -229,9 +232,7 @@ pub fn start(
             use flux_datafusion::ExecutionEvent;
             loop {
                 match event_rx.recv().await {
-                    Ok(ExecutionEvent::RunCompleted {
-                        run_id, status, ..
-                    }) => {
+                    Ok(ExecutionEvent::RunCompleted { run_id, status, .. }) => {
                         // Look up pipeline name and environment from the run store.
                         if let Ok(Some(run)) = completion_run_store.get_run(&run_id) {
                             let status_str = status.as_str();

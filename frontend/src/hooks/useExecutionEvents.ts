@@ -14,6 +14,7 @@ import { usePluginStore } from '../stores/pluginStore';
 import { useTriggerStore } from '../stores/triggerStore';
 import { useBackfillStore } from '../stores/backfillStore';
 import { useCatalogStore } from '../stores/catalogStore';
+import { useColumnLineageStore } from '../stores/columnLineageStore';
 
 /** Matches the backend's ExecutionEvent variants (serialized as tagged JSON). */
 interface NodeStartedEvent {
@@ -132,6 +133,13 @@ interface MetadataUpdatedEvent {
   fingerprint: string;
 }
 
+interface ColumnLineageUpdatedEvent {
+  type: 'column_lineage_updated';
+  pipeline_id: string;
+  environment: string;
+  edge_count: number;
+}
+
 type ExecutionEvent =
   | RunStartedEvent
   | NodeStartedEvent
@@ -149,7 +157,8 @@ type ExecutionEvent =
   | IterationSkippedEvent
   | BackfillCompletedEvent
   | BackfillCancelledEvent
-  | MetadataUpdatedEvent;
+  | MetadataUpdatedEvent
+  | ColumnLineageUpdatedEvent;
 
 export function useExecutionEvents() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -262,6 +271,9 @@ export function useExecutionEvents() {
               break;
             case 'metadata_updated':
               useCatalogStore.getState().handleMetadataUpdated(event.fingerprint);
+              break;
+            case 'column_lineage_updated':
+              useColumnLineageStore.getState().handleLineageUpdated(event.pipeline_id);
               break;
           }
         } catch {

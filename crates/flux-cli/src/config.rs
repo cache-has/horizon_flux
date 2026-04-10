@@ -143,6 +143,7 @@ pub struct MetadataStores {
     pub lineage_store: Arc<dyn flux_datafusion::LineageStorage>,
     pub trigger_store: Arc<dyn flux_scheduler::TriggerStorage>,
     pub backfill_store: Arc<dyn flux_datafusion::BackfillStorage>,
+    pub column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>>,
 }
 
 /// Open the metadata stores according to the resolved backend.
@@ -175,7 +176,9 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
     let run_store: Arc<dyn flux_datafusion::RunStorage> = run_store_concrete.clone();
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
         run_store_concrete.clone();
-    let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete;
+    let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete.clone();
+    let column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>> =
+        Some(run_store_concrete);
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
         flux_datafusion::SqliteEnvironmentStore::open(&data_dir.join("environments.db"))
             .context("failed to open environment store")?,
@@ -196,6 +199,7 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
         lineage_store,
         trigger_store,
         backfill_store,
+        column_lineage_store,
     })
 }
 
@@ -228,7 +232,9 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
     let run_store: Arc<dyn flux_datafusion::RunStorage> = run_store_concrete.clone();
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
         run_store_concrete.clone();
-    let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete;
+    let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete.clone();
+    let column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>> =
+        Some(run_store_concrete);
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
         flux_postgres::PostgresEnvironmentStore::new(pool)
             .map_err(|e| anyhow::anyhow!("{e}"))
@@ -255,6 +261,7 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
         lineage_store,
         trigger_store,
         backfill_store,
+        column_lineage_store,
     })
 }
 

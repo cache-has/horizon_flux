@@ -10,14 +10,14 @@ use crate::error::ExecutorError;
 use crate::executor::{ExecutionOptions, PipelineExecutor};
 use crate::provider::ProviderRegistry;
 use crate::storage::BackfillStorage;
+use flux_engine::Pipeline;
 use flux_engine::backfill::{
     Backfill, BackfillId, BackfillIteration, BackfillProgress, BackfillStatus, ExpandedIteration,
     IterationStatus, expand_range,
 };
-use flux_engine::Pipeline;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Semaphore, mpsc};
 use tracing::info;
 
@@ -212,12 +212,7 @@ pub fn cancel_backfill(
     store: &dyn BackfillStorage,
 ) -> Result<(), BackfillError> {
     let now = chrono::Utc::now().to_rfc3339();
-    store.update_backfill_status(
-        backfill_id,
-        BackfillStatus::Cancelled,
-        None,
-        Some(&now),
-    )?;
+    store.update_backfill_status(backfill_id, BackfillStatus::Cancelled, None, Some(&now))?;
     Ok(())
 }
 
@@ -314,6 +309,8 @@ async fn run_coordinator_with_skip(
             lineage_store: opts.base_options.lineage_store.clone(),
             fingerprint_fn: opts.base_options.fingerprint_fn,
             pipeline_id: opts.base_options.pipeline_id.clone(),
+            column_lineage_store: opts.base_options.column_lineage_store.clone(),
+            on_column_lineage_updated: opts.base_options.on_column_lineage_updated.clone(),
         };
 
         // Merge iteration variables into the overrides.
@@ -345,8 +342,7 @@ async fn run_coordinator_with_skip(
             }
 
             // Execute the pipeline.
-            let result =
-                PipelineExecutor::execute(&pipeline, &registry, &iter_options).await;
+            let result = PipelineExecutor::execute(&pipeline, &registry, &iter_options).await;
 
             let end_ts = chrono::Utc::now().to_rfc3339();
             match result {
@@ -417,12 +413,8 @@ async fn run_coordinator_with_skip(
     };
 
     let end_ts = chrono::Utc::now().to_rfc3339();
-    opts.backfill_store.update_backfill_status(
-        backfill_id,
-        final_status,
-        None,
-        Some(&end_ts),
-    )?;
+    opts.backfill_store
+        .update_backfill_status(backfill_id, final_status, None, Some(&end_ts))?;
 
     if let Some(tx) = &opts.progress {
         let _ = tx.send(BackfillEvent::BackfillCompleted {

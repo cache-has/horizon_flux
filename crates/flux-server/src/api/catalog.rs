@@ -14,6 +14,7 @@ use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post, put};
+use flux_datafusion::{PipelineRun, RunStatus};
 use flux_engine::catalog::{
     self, AnnotationFile, AnnotationOwner, AnnotationResource, Catalog, CatalogEntry,
     ColumnAnnotation, DiscoveredResource, ResourceAnnotation,
@@ -21,7 +22,6 @@ use flux_engine::catalog::{
 use flux_engine::lineage::{LineageGraph, ResourceBinding, ResourceFingerprint};
 use flux_engine::pipeline_store::PipelineId;
 use serde::{Deserialize, Serialize};
-use flux_datafusion::{PipelineRun, RunStatus};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use tracing::warn;
@@ -183,10 +183,7 @@ fn enrich_from_runs(state: &AppState, catalog: &mut Catalog) {
             continue;
         }
         if let Ok(runs) = state.run_store.list_runs(Some(name), 10) {
-            if let Some(run) = runs
-                .into_iter()
-                .find(|r| r.status == RunStatus::Success)
-            {
+            if let Some(run) = runs.into_iter().find(|r| r.status == RunStatus::Success) {
                 name_to_latest.insert(name.clone(), run);
             }
         }
@@ -209,7 +206,12 @@ fn enrich_from_runs(state: &AppState, catalog: &mut Catalog) {
                     .unwrap_or_default();
                 let iso = format_epoch_ms(ts.as_millis() as i64);
                 // Keep the most recent timestamp if multiple producers.
-                if entry.derived.last_updated.as_ref().is_none_or(|existing| iso > *existing) {
+                if entry
+                    .derived
+                    .last_updated
+                    .as_ref()
+                    .is_none_or(|existing| iso > *existing)
+                {
                     entry.derived.last_updated = Some(iso);
                 }
             }
@@ -222,8 +224,7 @@ fn enrich_from_runs(state: &AppState, catalog: &mut Catalog) {
             {
                 let rows = node_stats.rows_out;
                 if rows > 0 {
-                    entry.derived.row_count =
-                        Some(entry.derived.row_count.unwrap_or(0).max(rows));
+                    entry.derived.row_count = Some(entry.derived.row_count.unwrap_or(0).max(rows));
                 }
             }
 
@@ -293,11 +294,7 @@ async fn list_resources(
 
     let entries: Vec<CatalogEntry> = if let Some(query) = &q.q {
         // Full-text search first, then apply filters.
-        catalog
-            .search(query)
-            .into_iter()
-            .cloned()
-            .collect()
+        catalog.search(query).into_iter().cloned().collect()
     } else {
         catalog.entries.clone()
     };
@@ -331,7 +328,10 @@ async fn list_resources(
         .collect();
 
     let total = entries.len();
-    Ok(Json(ResourceListResponse { data: entries, total }))
+    Ok(Json(ResourceListResponse {
+        data: entries,
+        total,
+    }))
 }
 
 /// `GET /api/catalog/resources/detail?fingerprint=...` — full detail for a single resource.
@@ -388,7 +388,10 @@ async fn update_metadata(
         match catalog::parse_annotation_file(&file_path) {
             Ok(ann) => Some(ann),
             Err(e) => {
-                warn!("Failed to parse existing annotation at {}: {e}", file_path.display());
+                warn!(
+                    "Failed to parse existing annotation at {}: {e}",
+                    file_path.display()
+                );
                 None
             }
         }
@@ -422,23 +425,20 @@ async fn update_metadata(
 
     // Rebuild the catalog to return the updated entry.
     let catalog = build_catalog(&state, "default")?;
-    let entry = catalog
-        .get(&fp)
-        .cloned()
-        .unwrap_or_else(|| {
-            // Resource not in lineage — create a standalone entry from the annotation.
-            let discovered = HashMap::new();
-            let mut annotations = HashMap::new();
-            annotations.insert(
-                fp.clone(),
-                AnnotationFile {
-                    annotation,
-                    path: file_path,
-                },
-            );
-            let cat = Catalog::from_parts(&discovered, &annotations);
-            cat.entries.into_iter().next().unwrap()
-        });
+    let entry = catalog.get(&fp).cloned().unwrap_or_else(|| {
+        // Resource not in lineage — create a standalone entry from the annotation.
+        let discovered = HashMap::new();
+        let mut annotations = HashMap::new();
+        annotations.insert(
+            fp.clone(),
+            AnnotationFile {
+                annotation,
+                path: file_path,
+            },
+        );
+        let cat = Catalog::from_parts(&discovered, &annotations);
+        cat.entries.into_iter().next().unwrap()
+    });
 
     Ok((StatusCode::OK, Json(entry)))
 }
@@ -465,14 +465,20 @@ fn build_annotation_from_request(
 
     let base = existing.unwrap_or(&default_ann);
 
-    let owner = body.owner.as_ref().map(|o| AnnotationOwner {
-        team: o.team.clone().or_else(|| {
-            base.owner.as_ref().and_then(|bo| bo.team.clone())
-        }),
-        contact: o.contact.clone().or_else(|| {
-            base.owner.as_ref().and_then(|bo| bo.contact.clone())
-        }),
-    }).or_else(|| base.owner.clone());
+    let owner = body
+        .owner
+        .as_ref()
+        .map(|o| AnnotationOwner {
+            team: o
+                .team
+                .clone()
+                .or_else(|| base.owner.as_ref().and_then(|bo| bo.team.clone())),
+            contact: o
+                .contact
+                .clone()
+                .or_else(|| base.owner.as_ref().and_then(|bo| bo.contact.clone())),
+        })
+        .or_else(|| base.owner.clone());
 
     let columns = body
         .columns
@@ -508,7 +514,10 @@ fn build_annotation_from_request(
             environment: base.resource.environment.clone(),
         },
         name: body.name.clone().or_else(|| base.name.clone()),
-        description: body.description.clone().or_else(|| base.description.clone()),
+        description: body
+            .description
+            .clone()
+            .or_else(|| base.description.clone()),
         owner,
         tags: body.tags.clone().unwrap_or_else(|| base.tags.clone()),
         columns,

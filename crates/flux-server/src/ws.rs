@@ -36,6 +36,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut rx = state.event_tx.subscribe();
     let mut plugin_rx = state.plugin_event_tx.subscribe();
     let mut catalog_rx = state.catalog_event_tx.subscribe();
+    let mut col_lineage_rx = state.column_lineage_event_tx.subscribe();
     let mut filter: Option<HashSet<RunId>> = None;
 
     loop {
@@ -56,6 +57,26 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!("WebSocket client lagged, dropped {n} catalog events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+
+            // Column lineage events. Not subject to run-id filtering.
+            result = col_lineage_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        match serde_json::to_string(&event) {
+                            Ok(json) => {
+                                if socket.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => warn!("Failed to serialize column lineage event: {e}"),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("WebSocket client lagged, dropped {n} column lineage events");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }

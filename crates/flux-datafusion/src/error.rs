@@ -129,6 +129,16 @@ pub enum LineageStoreError {
     Database(String),
 }
 
+/// Errors from the column lineage store (planning doc 35).
+#[derive(Debug, thiserror::Error)]
+pub enum ColumnLineageStoreError {
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    #[error("database error: {0}")]
+    Database(String),
+}
+
 /// Errors from the backfill store (planning doc 33).
 #[derive(Debug, thiserror::Error)]
 pub enum BackfillStoreError {

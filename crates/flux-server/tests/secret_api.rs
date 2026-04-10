@@ -52,6 +52,8 @@ fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
         plugin_scan_roots: Some(Vec::new()),
         metadata_dir: None,
         catalog_event_tx: AppState::new_catalog_event_channel(),
+        column_lineage_store: None,
+        column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
     };
     (state, tmp)
 }
@@ -89,6 +91,8 @@ fn test_state_locked() -> (AppState, tempfile::TempDir) {
         plugin_scan_roots: Some(Vec::new()),
         metadata_dir: None,
         catalog_event_tx: AppState::new_catalog_event_channel(),
+        column_lineage_store: None,
+        column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
     };
     (state, tmp)
 }

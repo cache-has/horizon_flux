@@ -62,6 +62,8 @@ fn test_state_with_metadata(metadata_dir: std::path::PathBuf) -> AppState {
         plugin_scan_roots: Some(Vec::new()),
         metadata_dir: Some(metadata_dir),
         catalog_event_tx: AppState::new_catalog_event_channel(),
+        column_lineage_store: None,
+        column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
     }
 }
 
@@ -106,24 +108,26 @@ fn seed_resources(state: &AppState) {
         .save_bindings(
             id_b,
             env,
-            &[StoredResourceBinding {
-                pipeline_id: id_b.to_string(),
-                node_id: "src1".to_string(),
-                direction: BindingDirection::Source,
-                resource_fingerprint: ResourceFingerprint::new(
-                    "postgres://db:5432/analytics/public.orders",
-                ),
-                environment: env.to_string(),
-                updated_at_ms: now,
-            },
-            StoredResourceBinding {
-                pipeline_id: id_b.to_string(),
-                node_id: "src2".to_string(),
-                direction: BindingDirection::Source,
-                resource_fingerprint: ResourceFingerprint::new("file:///data/raw.csv"),
-                environment: env.to_string(),
-                updated_at_ms: now,
-            }],
+            &[
+                StoredResourceBinding {
+                    pipeline_id: id_b.to_string(),
+                    node_id: "src1".to_string(),
+                    direction: BindingDirection::Source,
+                    resource_fingerprint: ResourceFingerprint::new(
+                        "postgres://db:5432/analytics/public.orders",
+                    ),
+                    environment: env.to_string(),
+                    updated_at_ms: now,
+                },
+                StoredResourceBinding {
+                    pipeline_id: id_b.to_string(),
+                    node_id: "src2".to_string(),
+                    direction: BindingDirection::Source,
+                    resource_fingerprint: ResourceFingerprint::new("file:///data/raw.csv"),
+                    environment: env.to_string(),
+                    updated_at_ms: now,
+                },
+            ],
         )
         .unwrap();
 }
@@ -184,14 +188,12 @@ async fn get_resource_detail() {
     let app = test_router(state);
 
     let fp = "postgres://db:5432/analytics/public.orders";
-    let uri = format!("/api/catalog/resources/detail?fingerprint={}", encode_qp(fp));
+    let uri = format!(
+        "/api/catalog/resources/detail?fingerprint={}",
+        encode_qp(fp)
+    );
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri(&uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -240,10 +242,12 @@ async fn search_resources() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["total"], 1);
-    assert!(body["data"][0]["fingerprint"]
-        .as_str()
-        .unwrap()
-        .contains("orders"));
+    assert!(
+        body["data"][0]["fingerprint"]
+            .as_str()
+            .unwrap()
+            .contains("orders")
+    );
 }
 
 #[tokio::test]
@@ -322,8 +326,13 @@ async fn update_metadata_creates_annotation() {
     assert_eq!(resp_body["tags"][0], "commerce");
 
     // Verify the YAML file was created on disk.
-    let expected_file = dir.path().join("postgres/db__5432__analytics__public.orders.yaml");
-    assert!(expected_file.exists(), "annotation file should exist on disk");
+    let expected_file = dir
+        .path()
+        .join("postgres/db__5432__analytics__public.orders.yaml");
+    assert!(
+        expected_file.exists(),
+        "annotation file should exist on disk"
+    );
 
     // Verify WebSocket event was sent.
     let event = catalog_rx.try_recv().unwrap();
@@ -414,10 +423,12 @@ tags: [commerce]
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["total"], 1);
-    assert!(body["data"][0]["fingerprint"]
-        .as_str()
-        .unwrap()
-        .contains("orders"));
+    assert!(
+        body["data"][0]["fingerprint"]
+            .as_str()
+            .unwrap()
+            .contains("orders")
+    );
 }
 
 #[tokio::test]
@@ -490,12 +501,7 @@ async fn auto_derived_freshness_from_run_history() {
         encode_qp(fp)
     );
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri(&uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
 

@@ -3,6 +3,7 @@
 
 pub mod backfill;
 pub mod backfill_store;
+pub mod column_lineage;
 pub mod column_stats;
 pub mod environment;
 pub mod error;
@@ -27,11 +28,17 @@ pub mod test_assertion;
 pub mod udfs;
 pub mod watermark;
 
-pub use column_stats::{ColumnStats, compute_column_stats};
-pub use environment::{Environment, SqliteEnvironmentStore, TableOverride};
 pub use backfill::{BackfillError, BackfillEvent, BackfillRunOptions};
 pub use backfill_store::SqliteBackfillStore;
-pub use error::{BackfillStoreError, IncrementalStateError, LineageStoreError};
+pub use column_lineage::{
+    derive_column_lineage, derive_opaque_lineage, derive_sink_boundary_lineage,
+    derive_source_boundary_lineage,
+};
+pub use column_stats::{ColumnStats, compute_column_stats};
+pub use environment::{Environment, SqliteEnvironmentStore, TableOverride};
+pub use error::{
+    BackfillStoreError, ColumnLineageStoreError, IncrementalStateError, LineageStoreError,
+};
 pub use executor::{ExecutionOptions, PipelineExecutor, SecretResolver};
 pub use friendly_sql::{PreprocessError, preprocess_sql};
 pub use incremental_state::{IncrementalSchemaRecord, IncrementalState};
@@ -52,8 +59,8 @@ pub use run_store::SqliteRunStore;
 pub use session::{SessionFactory, SessionFactoryConfig};
 pub use stats::NodeStats;
 pub use storage::{
-    BackfillStorage, EnvironmentStorage, IncrementalStateStorage, LineageObservation,
-    LineageStorage, RunStorage, StoredResourceBinding,
+    BackfillStorage, ColumnLineageStorage, EnvironmentStorage, IncrementalStateStorage,
+    LineageObservation, LineageStorage, RunStorage, StoredColumnEdge, StoredResourceBinding,
 };
 pub use test_assertion::{AssertionResult, TestNodeResult};
 pub use udfs::{UdfDefinition, UdfError, UdfRegistry};

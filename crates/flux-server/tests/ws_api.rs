@@ -6,7 +6,9 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use flux_connectors::ConnectorRegistry;
-use flux_datafusion::{ExecutionEvent, RunId, SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore};
+use flux_datafusion::{
+    ExecutionEvent, RunId, SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore,
+};
 use flux_engine::SqlitePipelineStore;
 use flux_scheduler;
 use flux_server::AppState;
@@ -46,6 +48,8 @@ fn test_state() -> AppState {
         plugin_scan_roots: Some(Vec::new()),
         metadata_dir: None,
         catalog_event_tx: AppState::new_catalog_event_channel(),
+        column_lineage_store: None,
+        column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
     }
 }
 

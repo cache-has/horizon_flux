@@ -10,12 +10,12 @@
 use crate::api::ApiError;
 use crate::state::AppState;
 use axum::Json;
+use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::post;
-use axum::Router;
-use flux_scheduler::{TriggerStorage, TriggerId, TriggerKind, TriggerState};
+use flux_scheduler::{TriggerId, TriggerKind, TriggerState, TriggerStorage};
 use serde::Serialize;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -48,9 +48,7 @@ async fn webhook_handler(
     State(state): State<AppState>,
     Path(trigger_id): Path<String>,
     headers: HeaderMap,
-    axum::extract::Query(params): axum::extract::Query<
-        std::collections::HashMap<String, String>,
-    >,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
     body: Option<Json<serde_json::Value>>,
 ) -> impl IntoResponse {
     // Parse trigger ID.
@@ -82,15 +80,18 @@ async fn webhook_handler(
     match provided_token {
         Some(tok) if tok == expected_token => {}
         Some(_) => {
-            return (StatusCode::UNAUTHORIZED, Json(ApiError::new("invalid token")))
-                .into_response()
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ApiError::new("invalid token")),
+            )
+                .into_response();
         }
         None => {
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(ApiError::new("missing authentication token")),
             )
-                .into_response()
+                .into_response();
         }
     }
 
@@ -125,9 +126,7 @@ fn ensure_webhook_token(
     store: &Arc<dyn TriggerStorage>,
     trigger_id: &TriggerId,
 ) -> Result<String, String> {
-    let state = store
-        .get_state(trigger_id)
-        .map_err(|e| e.to_string())?;
+    let state = store.get_state(trigger_id).map_err(|e| e.to_string())?;
 
     // Try to read existing token.
     if let Some(ref s) = state {
@@ -151,15 +150,16 @@ fn ensure_webhook_token(
         sensor_state: Some(serde_json::to_value(&ws).unwrap()),
         consecutive_errors: state.as_ref().map_or(0, |s| s.consecutive_errors),
     };
-    store
-        .upsert_state(&new_state)
-        .map_err(|e| e.to_string())?;
+    store.upsert_state(&new_state).map_err(|e| e.to_string())?;
 
     Ok(token)
 }
 
 /// Extract bearer token from `Authorization` header or `token` query param.
-fn extract_token(headers: &HeaderMap, params: &std::collections::HashMap<String, String>) -> Option<String> {
+fn extract_token(
+    headers: &HeaderMap,
+    params: &std::collections::HashMap<String, String>,
+) -> Option<String> {
     // Try Authorization: Bearer <token>
     if let Some(auth) = headers.get("authorization") {
         if let Ok(val) = auth.to_str() {

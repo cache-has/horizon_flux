@@ -15,11 +15,14 @@ use crate::provider::{
 };
 use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
-use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus, TestResultSummary};
+use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use crate::schema_diff::{SchemaAction, apply_policy, compute_schema_diff, schema_fingerprint};
 use crate::session::SessionFactory;
 use crate::stats::NodeStats;
-use crate::storage::{IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage};
+use crate::storage::{
+    ColumnLineageStorage, IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage,
+    StoredColumnEdge,
+};
 use crate::udfs::UdfRegistry;
 use crate::watermark::{
     build_filter_expr, fold_max_watermark, scalar_to_stored, stored_to_scalar,
@@ -74,6 +77,10 @@ pub trait SecretResolver: Send + Sync {
 }
 
 /// Options controlling a pipeline execution.
+/// Callback fired after column lineage edges are persisted.
+/// Receives `(pipeline_id, environment, edge_count)`.
+pub type ColumnLineageCallback = dyn Fn(&str, &str, usize) + Send + Sync;
+
 pub struct ExecutionOptions {
     /// Environment name for this run (e.g. "dev", "prod").
     pub environment: String,
@@ -131,6 +138,12 @@ pub struct ExecutionOptions {
     pub fingerprint_fn: Option<flux_engine::FingerprintFn>,
     /// Pipeline ID string for lineage observation recording.
     pub pipeline_id: Option<String>,
+    /// Optional column-level lineage store for persisting lineage edges derived
+    /// from SQL transform logical plans (planning doc 35). When `Some`, the
+    /// executor derives and persists column-level lineage for every transform.
+    pub column_lineage_store: Option<Arc<dyn ColumnLineageStorage>>,
+    /// Optional callback fired after column lineage edges are persisted.
+    pub on_column_lineage_updated: Option<Arc<ColumnLineageCallback>>,
 }
 
 impl Default for ExecutionOptions {
@@ -151,6 +164,8 @@ impl Default for ExecutionOptions {
             lineage_store: None,
             fingerprint_fn: None,
             pipeline_id: None,
+            column_lineage_store: None,
+            on_column_lineage_updated: None,
         }
     }
 }
@@ -327,6 +342,9 @@ impl PipelineExecutor {
             // doc-27 materialization receipt to NodeRunStats and broadcast
             // it on the NodeCompleted event.
             let mut sink_receipt: Option<MaterializationReceipt> = None;
+            // Sink-only: column names and upstream node IDs captured before
+            // the sink consumes the data, used for boundary column lineage.
+            let mut sink_boundary_info: Option<(Vec<String>, Vec<NodeId>)> = None;
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
                 NodeKind::Source(src_cfg) => {
@@ -391,14 +409,46 @@ impl PipelineExecutor {
                                 match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
                                     Ok(data) => {
                                         let interpolated_sql = resolved_vars.interpolate(&code);
-                                        Self::execute_sql_transform(
+                                        // Derive column lineage when a store is configured.
+                                        let derive_lineage = options.column_lineage_store.is_some();
+                                        let lineage_node_id =
+                                            if derive_lineage { Some(node_id) } else { None };
+                                        match Self::execute_sql_transform_with_lineage(
                                             &interpolated_sql,
                                             data,
                                             options.environment_resolver.as_ref(),
                                             options.session_factory.as_deref(),
                                             Some(&udf_registry),
+                                            lineage_node_id,
                                         )
                                         .await
+                                        {
+                                            Ok((batches, lineage)) => {
+                                                // Persist column lineage edges if derived.
+                                                if let (
+                                                    Some(store),
+                                                    Some(pid),
+                                                    Some(node_lineage),
+                                                ) = (
+                                                    &options.column_lineage_store,
+                                                    &options.pipeline_id,
+                                                    lineage,
+                                                ) {
+                                                    persist_column_lineage(
+                                                        store.as_ref(),
+                                                        pid,
+                                                        &options.environment,
+                                                        &node_lineage,
+                                                        Some(&run.id),
+                                                        options
+                                                            .on_column_lineage_updated
+                                                            .as_deref(),
+                                                    );
+                                                }
+                                                Ok(batches)
+                                            }
+                                            Err(e) => Err(e),
+                                        }
                                     }
                                     Err(e) => Err(e),
                                 }
@@ -409,13 +459,60 @@ impl PipelineExecutor {
                                     Ok(data) => {
                                         let py_config =
                                             crate::python_runtime::PythonConfig::default();
-                                        crate::python_runtime::execute_python_transform(
+                                        // Capture input columns before the borrow is consumed.
+                                        let input_columns_for_lineage: Option<
+                                            Vec<(NodeId, Vec<String>)>,
+                                        > = if options.column_lineage_store.is_some()
+                                            && options.pipeline_id.is_some()
+                                        {
+                                            Some(
+                                                data.iter()
+                                                    .map(|(nid, bs)| {
+                                                        (nid.clone(), extract_column_names(bs))
+                                                    })
+                                                    .collect(),
+                                            )
+                                        } else {
+                                            None
+                                        };
+                                        match crate::python_runtime::execute_python_transform(
                                             &code,
                                             data,
                                             resolved_vars.as_map(),
                                             &py_config,
                                         )
                                         .await
+                                        {
+                                            Ok(batches) => {
+                                                // Persist opaque column lineage for Python transforms.
+                                                if let (Some(store), Some(pid), Some(input_cols)) = (
+                                                    &options.column_lineage_store,
+                                                    &options.pipeline_id,
+                                                    input_columns_for_lineage,
+                                                ) {
+                                                    let output_columns =
+                                                        extract_column_names(&batches);
+                                                    let opaque_lineage =
+                                                        crate::column_lineage::derive_opaque_lineage(
+                                                            node_id,
+                                                            &input_cols,
+                                                            &output_columns,
+                                                        );
+                                                    persist_column_lineage(
+                                                        store.as_ref(),
+                                                        pid,
+                                                        &options.environment,
+                                                        &opaque_lineage,
+                                                        Some(&run.id),
+                                                        options
+                                                            .on_column_lineage_updated
+                                                            .as_deref(),
+                                                    );
+                                                }
+                                                Ok(batches)
+                                            }
+                                            Err(e) => Err(e),
+                                        }
                                     }
                                     Err(e) => Err(e),
                                 }
@@ -469,6 +566,18 @@ impl PipelineExecutor {
                                             });
                                         }
                                     }
+                                }
+                                // Capture sink input columns for boundary lineage before
+                                // the data is consumed by execute_sink.
+                                if options.column_lineage_store.is_some()
+                                    && options.pipeline_id.is_some()
+                                    && options.fingerprint_fn.is_some()
+                                {
+                                    let cols = extract_column_names(&all_batches);
+                                    sink_boundary_info = Some((
+                                        cols,
+                                        upstream_ids.iter().cloned().cloned().collect(),
+                                    ));
                                 }
                                 Self::execute_sink(
                                     node_id,
@@ -622,6 +731,54 @@ impl PipelineExecutor {
                             if let Err(e) = lineage_store.record_observation(&obs) {
                                 warn!(node = %node_id, error = %e, "failed to record lineage observation");
                             }
+                        }
+                    }
+
+                    // Doc 35: derive boundary column lineage for source/sink nodes.
+                    if let (Some(col_store), Some(fp_fn), Some(pid)) = (
+                        &options.column_lineage_store,
+                        &options.fingerprint_fn,
+                        &options.pipeline_id,
+                    ) {
+                        match &node.kind {
+                            NodeKind::Source(src) => {
+                                if let Some(fp) = fp_fn(&src.connector, &src.config) {
+                                    let columns = extract_column_names(&batches);
+                                    let boundary =
+                                        crate::column_lineage::derive_source_boundary_lineage(
+                                            node_id, &fp, &columns,
+                                        );
+                                    persist_column_lineage(
+                                        col_store.as_ref(),
+                                        pid,
+                                        &options.environment,
+                                        &boundary,
+                                        Some(&run.id),
+                                        options.on_column_lineage_updated.as_deref(),
+                                    );
+                                }
+                            }
+                            NodeKind::Sink(sink) => {
+                                if let Some(fp) = fp_fn(&sink.connector, &sink.config) {
+                                    if let Some((columns, upstream_nodes)) = &sink_boundary_info {
+                                        for upstream in upstream_nodes {
+                                            let boundary =
+                                                crate::column_lineage::derive_sink_boundary_lineage(
+                                                    node_id, &fp, columns, upstream,
+                                                );
+                                            persist_column_lineage(
+                                                col_store.as_ref(),
+                                                pid,
+                                                &options.environment,
+                                                &boundary,
+                                                Some(&run.id),
+                                                options.on_column_lineage_updated.as_deref(),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
 
@@ -874,6 +1031,32 @@ impl PipelineExecutor {
         session_factory: Option<&SessionFactory>,
         udf_registry: Option<&Arc<UdfRegistry>>,
     ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
+        let (batches, _lineage) = Self::execute_sql_transform_with_lineage(
+            sql,
+            upstream_data,
+            resolver,
+            session_factory,
+            udf_registry,
+            None, // no lineage derivation
+        )
+        .await?;
+        Ok(batches)
+    }
+
+    /// Execute a SQL transform and optionally derive column-level lineage.
+    ///
+    /// When `node_id` is `Some`, the DataFusion logical plan is walked to
+    /// produce column-level lineage edges (doc 35). When `None`, lineage
+    /// derivation is skipped and the second element of the returned tuple is
+    /// `None`.
+    pub async fn execute_sql_transform_with_lineage(
+        sql: &str,
+        upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
+        resolver: Option<&Arc<EnvironmentResolver>>,
+        session_factory: Option<&SessionFactory>,
+        udf_registry: Option<&Arc<UdfRegistry>>,
+        node_id: Option<&NodeId>,
+    ) -> Result<(Vec<RecordBatch>, Option<flux_engine::NodeColumnLineage>), NodeErrorKind> {
         let ctx = match session_factory {
             Some(factory) => factory.create_context(),
             None => SessionContext::new(),
@@ -916,15 +1099,25 @@ impl PipelineExecutor {
         let processed_sql = crate::friendly_sql::preprocess_sql(&inlined_sql, &table_schemas)?;
 
         let df = ctx.sql(&processed_sql).await?;
+
+        // Derive column-level lineage from the logical plan before execution.
+        let lineage = node_id.map(|nid| {
+            let table_to_node: HashMap<String, NodeId> = upstream_data
+                .keys()
+                .map(|uid| (uid.to_string(), uid.clone()))
+                .collect();
+            crate::column_lineage::derive_column_lineage(df.logical_plan(), nid, &table_to_node)
+        });
+
         let df_schema = df.schema();
         let schema: Arc<Schema> = Arc::new(df_schema.as_arrow().clone());
         let batches = df.collect().await?;
         // Ensure we always return at least one batch so the schema is preserved
         // for downstream nodes that reference this table (e.g. 0-row join results).
         if batches.is_empty() {
-            Ok(vec![RecordBatch::new_empty(schema)])
+            Ok((vec![RecordBatch::new_empty(schema)], lineage))
         } else {
-            Ok(batches)
+            Ok((batches, lineage))
         }
     }
 
@@ -1149,6 +1342,58 @@ fn merge_override(base: &mut Value, override_val: &Value) {
             base_map.insert(k.clone(), v.clone());
         }
     }
+}
+
+/// Persist column-level lineage edges for a single node.
+///
+/// Converts [`NodeColumnLineage`] into [`StoredColumnEdge`] rows and saves
+/// them. Errors are logged and swallowed — column lineage is best-effort
+/// and must never block execution.
+fn persist_column_lineage(
+    store: &dyn ColumnLineageStorage,
+    pipeline_id: &str,
+    environment: &str,
+    lineage: &flux_engine::NodeColumnLineage,
+    run_id: Option<&RunId>,
+    on_updated: Option<&ColumnLineageCallback>,
+) {
+    let now = chrono::Utc::now().to_rfc3339();
+    let edges: Vec<StoredColumnEdge> = lineage
+        .edges
+        .iter()
+        .map(|edge| StoredColumnEdge {
+            id: None,
+            pipeline_id: pipeline_id.to_string(),
+            environment: environment.to_string(),
+            edge: edge.clone(),
+            derived_at: now.clone(),
+            source_run_id: run_id.map(|r| r.0.to_string()),
+        })
+        .collect();
+    let edge_count = edges.len();
+    if let Err(e) = store.save_column_edges(pipeline_id, environment, &edges) {
+        warn!(
+            pipeline = pipeline_id,
+            error = %e,
+            "failed to persist column lineage edges"
+        );
+    } else if let Some(cb) = on_updated {
+        cb(pipeline_id, environment, edge_count);
+    }
+}
+
+/// Extract column names from record batches for opaque lineage derivation.
+fn extract_column_names(batches: &[RecordBatch]) -> Vec<String> {
+    batches
+        .first()
+        .map(|b| {
+            b.schema()
+                .fields()
+                .iter()
+                .map(|f| f.name().clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Send a progress event if a sender is available. Silently ignores closed channels.

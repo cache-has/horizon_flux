@@ -368,6 +368,8 @@ async fn run_upstream_dry_run(
         lineage_store: None,
         fingerprint_fn: None,
         pipeline_id: None,
+        column_lineage_store: None,
+        on_column_lineage_updated: None,
     };
     let (pipeline_result, _run) =
         flux_datafusion::PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)

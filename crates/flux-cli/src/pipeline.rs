@@ -55,6 +55,7 @@ pub(crate) struct Stores {
     pub(crate) lineage_store: Arc<dyn flux_datafusion::LineageStorage>,
     pub(crate) connector_registry: flux_connectors::ConnectorRegistry,
     pub(crate) output_cache: flux_datafusion::OutputCache,
+    pub(crate) column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>>,
 }
 
 pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
@@ -78,6 +79,7 @@ pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
         lineage_store: meta.lineage_store,
         connector_registry,
         output_cache,
+        column_lineage_store: meta.column_lineage_store,
     })
 }
 
@@ -296,6 +298,8 @@ async fn execute_pipeline(
         lineage_store: Some(Arc::clone(&stores.lineage_store)),
         fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
         pipeline_id: Some(record.id.0.to_string()),
+        column_lineage_store: stores.column_lineage_store.clone(),
+        on_column_lineage_updated: None,
     };
 
     let result =
@@ -981,6 +985,8 @@ async fn execute_tests(
             lineage_store: None,
             fingerprint_fn: None,
             pipeline_id: None,
+            column_lineage_store: None,
+            on_column_lineage_updated: None,
         };
 
         let exec_result =

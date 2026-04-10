@@ -144,11 +144,9 @@ pub fn handle(
                 &on_status,
                 &env,
             )?;
-            let run_policy: RunPolicy = run_policy
-                .parse()
-                .map_err(|e: String| anyhow::anyhow!(e))?;
-            let trigger_name =
-                name.unwrap_or_else(|| format!("{pipeline}-{kind}"));
+            let run_policy: RunPolicy =
+                run_policy.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+            let trigger_name = name.unwrap_or_else(|| format!("{pipeline}-{kind}"));
             let now = chrono::Utc::now().to_rfc3339();
             let trigger = Trigger {
                 id: TriggerId::new(),
@@ -251,7 +249,10 @@ fn list(
             }
         }
         OutputFormat::Json => {
-            let items: Vec<_> = triggers.iter().map(|t| serde_json::to_value(t).unwrap()).collect();
+            let items: Vec<_> = triggers
+                .iter()
+                .map(|t| serde_json::to_value(t).unwrap())
+                .collect();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({ "triggers": items }))?
@@ -264,9 +265,7 @@ fn list(
 fn show(trigger_id: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     let store = open_store(metadata_url)?;
     let id = parse_trigger_id(trigger_id)?;
-    let trigger = store
-        .get_trigger(&id)
-        .context("failed to get trigger")?;
+    let trigger = store.get_trigger(&id).context("failed to get trigger")?;
     let state = store.get_state(&id).ok().flatten();
 
     match format {
@@ -305,10 +304,9 @@ fn show(trigger_id: &str, format: OutputFormat, metadata_url: Option<&str>) -> R
         OutputFormat::Json => {
             let mut val = serde_json::to_value(&trigger)?;
             if let Some(ref st) = state {
-                val.as_object_mut().unwrap().insert(
-                    "state".to_string(),
-                    serde_json::to_value(st)?,
-                );
+                val.as_object_mut()
+                    .unwrap()
+                    .insert("state".to_string(), serde_json::to_value(st)?);
             }
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
@@ -372,10 +370,16 @@ fn create(trigger: &Trigger, format: OutputFormat, metadata_url: Option<&str>) -
                 kind_label(&trigger.kind),
                 kind_summary(&trigger.kind)
             );
-            println!("  Pipeline: {} (env: {})", trigger.pipeline_id, trigger.environment);
+            println!(
+                "  Pipeline: {} (env: {})",
+                trigger.pipeline_id, trigger.environment
+            );
         }
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&serde_json::to_value(trigger)?)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::to_value(trigger)?)?
+            );
         }
     }
     Ok(())
@@ -455,9 +459,7 @@ fn fire(trigger_id: &str, format: OutputFormat, metadata_url: Option<&str>) -> R
     let id = parse_trigger_id(trigger_id)?;
 
     // Verify the trigger exists and is enabled.
-    let trigger = store
-        .get_trigger(&id)
-        .context("failed to get trigger")?;
+    let trigger = store.get_trigger(&id).context("failed to get trigger")?;
 
     if !trigger.enabled {
         anyhow::bail!("trigger {trigger_id} is disabled — enable it first or use the API");
@@ -541,9 +543,9 @@ fn build_kind(
             })
         }
         "webhook" => {
-            let path = path.map(|s| s.to_string()).unwrap_or_else(|| {
-                format!("/triggers/webhook/{}", uuid::Uuid::new_v4())
-            });
+            let path = path
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("/triggers/webhook/{}", uuid::Uuid::new_v4()));
             Ok(TriggerKind::Webhook {
                 path,
                 auth: "token".to_string(),
@@ -558,7 +560,9 @@ fn build_kind(
                 "success" => CompletionStatus::Success,
                 "failure" => CompletionStatus::Failure,
                 "any" => CompletionStatus::Any,
-                other => anyhow::bail!("unknown completion status: {other} (use success, failure, or any)"),
+                other => anyhow::bail!(
+                    "unknown completion status: {other} (use success, failure, or any)"
+                ),
             };
             Ok(TriggerKind::PipelineCompletion {
                 upstream_pipeline: upstream.to_string(),

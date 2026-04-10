@@ -207,7 +207,10 @@ pub fn parse_annotation_file(path: &Path) -> Result<ResourceAnnotation, CatalogE
 /// fingerprint, plus any parse errors encountered.
 pub fn load_annotations(
     metadata_dir: &Path,
-) -> (HashMap<ResourceFingerprint, AnnotationFile>, Vec<CatalogError>) {
+) -> (
+    HashMap<ResourceFingerprint, AnnotationFile>,
+    Vec<CatalogError>,
+) {
     let mut annotations = HashMap::new();
     let mut errors = Vec::new();
 
@@ -688,10 +691,7 @@ impl SearchIndex {
 
     fn index_token(&mut self, fp: &ResourceFingerprint, token: &str) {
         let lower = token.to_lowercase();
-        self.index
-            .entry(lower)
-            .or_default()
-            .insert(fp.clone());
+        self.index.entry(lower).or_default().insert(fp.clone());
     }
 
     /// Get all fingerprints that have an indexed token containing the query token
@@ -776,9 +776,7 @@ impl Catalog {
     /// Search the catalog by query string.
     pub fn search(&self, query: &str) -> Vec<&CatalogEntry> {
         let fps = self.search_index.search(query);
-        fps.iter()
-            .filter_map(|fp| self.get(fp))
-            .collect()
+        fps.iter().filter_map(|fp| self.get(fp)).collect()
     }
 
     /// Filter entries by tag.
@@ -936,7 +934,10 @@ custom:
     fn filename_postgres() {
         let fp = ResourceFingerprint::new("postgres://host:5432/db/public.orders");
         let path = fingerprint_to_filename(&fp);
-        assert_eq!(path, PathBuf::from("postgres/host__5432__db__public.orders.yaml"));
+        assert_eq!(
+            path,
+            PathBuf::from("postgres/host__5432__db__public.orders.yaml")
+        );
     }
 
     #[test]
@@ -950,10 +951,7 @@ custom:
     fn filename_s3() {
         let fp = ResourceFingerprint::new("s3://my-bucket/exports/parquet");
         let path = fingerprint_to_filename(&fp);
-        assert_eq!(
-            path,
-            PathBuf::from("s3/my-bucket__exports__parquet.yaml")
-        );
+        assert_eq!(path, PathBuf::from("s3/my-bucket__exports__parquet.yaml"));
     }
 
     // -- Resource discovery --
@@ -961,8 +959,18 @@ custom:
     #[test]
     fn discover_groups_by_direction() {
         let graph = make_graph(vec![
-            make_binding("p1", "sink1", BindingDirection::Sink, "postgres://h:5432/db/public.t"),
-            make_binding("p2", "src1", BindingDirection::Source, "postgres://h:5432/db/public.t"),
+            make_binding(
+                "p1",
+                "sink1",
+                BindingDirection::Sink,
+                "postgres://h:5432/db/public.t",
+            ),
+            make_binding(
+                "p2",
+                "src1",
+                BindingDirection::Source,
+                "postgres://h:5432/db/public.t",
+            ),
         ]);
         let resources = discover_resources(&graph);
         assert_eq!(resources.len(), 1);
@@ -1118,7 +1126,10 @@ custom:
 
         let warnings = detect_dangling(&discovered, &annotations);
         assert_eq!(warnings.len(), 1);
-        assert!(matches!(&warnings[0], CatalogWarning::DanglingAnnotation { .. }));
+        assert!(matches!(
+            &warnings[0],
+            CatalogWarning::DanglingAnnotation { .. }
+        ));
     }
 
     // -- Search --
@@ -1276,7 +1287,9 @@ tags: [commerce]
         assert!(errors.is_empty());
         assert_eq!(annotations.len(), 1); // deduped in map
         assert_eq!(warnings.len(), 1);
-        assert!(matches!(&warnings[0], CatalogWarning::DuplicateAnnotation { paths, .. } if paths.len() == 2));
+        assert!(
+            matches!(&warnings[0], CatalogWarning::DuplicateAnnotation { paths, .. } if paths.len() == 2)
+        );
     }
 
     // -- Full catalog build --
@@ -1296,9 +1309,24 @@ owner:
         std::fs::write(dir.path().join("postgres/orders.yaml"), yaml).unwrap();
 
         let graph = make_graph(vec![
-            make_binding("p1", "sink1", BindingDirection::Sink, "postgres://h:5432/db/public.orders"),
-            make_binding("p2", "src1", BindingDirection::Source, "postgres://h:5432/db/public.orders"),
-            make_binding("p3", "src2", BindingDirection::Source, "file:///data/raw.csv"),
+            make_binding(
+                "p1",
+                "sink1",
+                BindingDirection::Sink,
+                "postgres://h:5432/db/public.orders",
+            ),
+            make_binding(
+                "p2",
+                "src1",
+                BindingDirection::Source,
+                "postgres://h:5432/db/public.orders",
+            ),
+            make_binding(
+                "p3",
+                "src2",
+                BindingDirection::Source,
+                "file:///data/raw.csv",
+            ),
         ]);
 
         let catalog = Catalog::build(&graph, dir.path());

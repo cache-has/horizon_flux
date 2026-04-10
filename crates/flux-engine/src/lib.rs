@@ -3,6 +3,7 @@
 
 pub mod backfill;
 pub mod catalog;
+pub mod column_lineage;
 pub mod dag;
 pub mod edge;
 pub mod error;
@@ -23,14 +24,20 @@ pub fn version() -> &'static str {
 }
 
 // Re-export primary types at crate root for ergonomic imports.
+pub use backfill::{
+    Backfill, BackfillId, BackfillIteration, BackfillProgress, BackfillStatus, DateGranularity,
+    ExpandedIteration, IterationStatus, RangeDefinition, RangeError,
+};
 pub use catalog::{
     AnnotationFile, AnnotationOwner, AnnotationResource, AutoDerivedFacts, Catalog, CatalogEntry,
     CatalogError, CatalogWarning, ColumnAnnotation, MergedColumn, ResourceAnnotation, SchemaColumn,
     SearchIndex,
 };
-pub use backfill::{
-    Backfill, BackfillId, BackfillIteration, BackfillProgress, BackfillStatus, DateGranularity,
-    ExpandedIteration, IterationStatus, RangeDefinition, RangeError,
+pub use column_lineage::{
+    BoundaryColumn, ColumnEdge, ColumnKey, ColumnLineageGraph, ColumnRef, Confidence,
+    CrossPipelineColumnEdge, CrossPipelineColumnLineage, NodeColumnLineage, OneSidedColumn,
+    OneSidedKind, RelationshipKind, TraceEdge, TraceOptions, TraceResult, canonicalize_column,
+    derive_cross_pipeline_column_lineage,
 };
 pub use edge::Edge;
 pub use error::{DagError, EngineError, ImportError, ImportWarnings, ValidationError};

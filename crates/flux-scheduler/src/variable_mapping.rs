@@ -235,7 +235,10 @@ mod tests {
         };
 
         let result = evaluate_file_arrival(&mapping, &ctx).unwrap();
-        assert_eq!(result["input_file"], Value::String("/data/incoming/orders.parquet".into()));
+        assert_eq!(
+            result["input_file"],
+            Value::String("/data/incoming/orders.parquet".into())
+        );
         assert_eq!(result["name"], Value::String("orders.parquet".into()));
         assert_eq!(result["dir"], Value::String("/data/incoming".into()));
         assert_eq!(result["ext"], Value::String("parquet".into()));
@@ -254,10 +257,7 @@ mod tests {
 
         let result = evaluate_file_arrival(&mapping, &ctx).unwrap();
         assert_eq!(result["count"], serde_json::json!(2));
-        assert_eq!(
-            result["files"],
-            serde_json::json!(["/a.csv", "/b.csv"])
-        );
+        assert_eq!(result["files"], serde_json::json!(["/a.csv", "/b.csv"]));
     }
 
     #[test]
@@ -320,9 +320,7 @@ mod tests {
     fn webhook_unknown_expression() {
         let mut mapping = HashMap::new();
         mapping.insert("x".into(), "$headers.foo".into());
-        let ctx = WebhookContext {
-            body: Value::Null,
-        };
+        let ctx = WebhookContext { body: Value::Null };
         assert!(evaluate_webhook(&mapping, &ctx).is_err());
     }
 

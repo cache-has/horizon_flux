@@ -185,7 +185,8 @@ impl BackfillStorage for SqliteBackfillStore {
         param_values.push(Box::new(limit));
 
         let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let params: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|b| b.as_ref()).collect();
         let mut rows = stmt.query(params.as_slice())?;
         let mut result = Vec::new();
         while let Some(row) = rows.next()? {
@@ -412,7 +413,10 @@ mod tests {
         let store = SqliteBackfillStore::open_in_memory().unwrap();
         let bf = make_backfill("bf1");
         store.create_backfill(&bf).unwrap();
-        let loaded = store.get_backfill(&BackfillId("bf1".into())).unwrap().unwrap();
+        let loaded = store
+            .get_backfill(&BackfillId("bf1".into()))
+            .unwrap()
+            .unwrap();
         assert_eq!(loaded.pipeline_id, "test-pipe");
         assert_eq!(loaded.concurrency, 2);
         assert!(loaded.full_refresh);
@@ -479,7 +483,12 @@ mod tests {
         store.create_backfill(&make_backfill("bf5")).unwrap();
         store.create_iterations(&make_iterations("bf5")).unwrap();
         assert!(store.delete_backfill(&BackfillId("bf5".into())).unwrap());
-        assert!(store.get_backfill(&BackfillId("bf5".into())).unwrap().is_none());
+        assert!(
+            store
+                .get_backfill(&BackfillId("bf5".into()))
+                .unwrap()
+                .is_none()
+        );
         let iters = store.list_iterations(&BackfillId("bf5".into())).unwrap();
         assert!(iters.is_empty());
     }
@@ -495,9 +504,7 @@ mod tests {
         let all = store.list_backfills(None, None, 100).unwrap();
         assert_eq!(all.len(), 2);
 
-        let filtered = store
-            .list_backfills(Some("test-pipe"), None, 100)
-            .unwrap();
+        let filtered = store.list_backfills(Some("test-pipe"), None, 100).unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id.0, "bf6");
     }

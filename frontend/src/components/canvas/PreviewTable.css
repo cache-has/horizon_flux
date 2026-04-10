@@ -334,3 +334,19 @@
   color: #d97706;
   background: rgba(217, 119, 6, 0.1);
 }
+
+/* Column lineage highlighting */
+.preview-table__th--highlighted {
+  background: rgba(96, 165, 250, 0.15) !important;
+  border-bottom: 2px solid #3b82f6;
+}
+
+.preview-table__th--highlight-source {
+  background: rgba(96, 165, 250, 0.25) !important;
+  border-bottom: 2px solid #60a5fa;
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.3);
+}
+
+.preview-table__td--highlighted {
+  background: rgba(96, 165, 250, 0.08);
+}

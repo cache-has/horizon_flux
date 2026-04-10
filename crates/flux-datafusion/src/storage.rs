@@ -10,13 +10,15 @@
 
 use crate::environment::{Environment, TableOverride};
 use crate::error::{
-    BackfillStoreError, EnvironmentError, IncrementalStateError, LineageStoreError, RunStoreError,
+    BackfillStoreError, ColumnLineageStoreError, EnvironmentError, IncrementalStateError,
+    LineageStoreError, RunStoreError,
 };
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use flux_engine::backfill::{
     Backfill, BackfillId, BackfillIteration, BackfillProgress, BackfillStatus, IterationStatus,
 };
+use flux_engine::column_lineage::ColumnEdge;
 use flux_engine::lineage::{BindingDirection, ResourceFingerprint};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
@@ -258,6 +260,78 @@ pub trait LineageStorage: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// ColumnLineageStorage (planning doc 35)
+// ---------------------------------------------------------------------------
+
+/// A persisted column-level lineage edge, enriched with pipeline/environment
+/// context for storage and cross-pipeline queries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredColumnEdge {
+    /// Auto-generated row ID (populated on load, ignored on save).
+    pub id: Option<i64>,
+    pub pipeline_id: String,
+    pub environment: String,
+    /// The edge payload (upstream/downstream columns, relationship, etc.).
+    pub edge: ColumnEdge,
+    /// ISO-8601 timestamp of when this edge was derived.
+    pub derived_at: String,
+    /// Optional run ID that triggered the derivation.
+    pub source_run_id: Option<String>,
+}
+
+/// Backend-agnostic storage interface for column-level lineage edges
+/// (planning doc 35).
+///
+/// Edges are derived on pipeline save or execution. The primary write
+/// operation is an atomic replacement of all edges for a
+/// `(pipeline_id, environment)` pair.
+///
+/// Implementations must be safe to share across threads (`Send + Sync`).
+pub trait ColumnLineageStorage: Send + Sync {
+    /// Replace all column lineage edges for a pipeline in the given environment.
+    ///
+    /// Deletes any existing edges for `(pipeline_id, environment)` and inserts
+    /// the new set atomically.
+    fn save_column_edges(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        edges: &[StoredColumnEdge],
+    ) -> Result<(), ColumnLineageStoreError>;
+
+    /// Load all column lineage edges for a pipeline and environment.
+    fn load_column_edges(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError>;
+
+    /// Load column lineage edges for a specific node within a pipeline.
+    fn load_column_edges_for_node(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        node_id: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError>;
+
+    /// Load all column lineage edges across all pipelines in an environment.
+    fn all_column_edges(
+        &self,
+        environment: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError>;
+
+    /// Delete all column lineage edges for a pipeline (all environments).
+    fn delete_column_edges(&self, pipeline_id: &str) -> Result<(), ColumnLineageStoreError>;
+
+    /// Delete edges older than the given ISO-8601 timestamp.
+    /// Returns the number of rows deleted.
+    fn enforce_column_lineage_retention(
+        &self,
+        older_than: &str,
+    ) -> Result<u64, ColumnLineageStoreError>;
+}
+
+// ---------------------------------------------------------------------------
 // BackfillStorage (planning doc 33)
 // ---------------------------------------------------------------------------
 
@@ -269,10 +343,8 @@ pub trait BackfillStorage: Send + Sync {
     fn create_backfill(&self, backfill: &Backfill) -> Result<(), BackfillStoreError>;
 
     /// Insert a batch of iteration records for a backfill.
-    fn create_iterations(
-        &self,
-        iterations: &[BackfillIteration],
-    ) -> Result<(), BackfillStoreError>;
+    fn create_iterations(&self, iterations: &[BackfillIteration])
+    -> Result<(), BackfillStoreError>;
 
     /// Load a backfill by ID.
     fn get_backfill(&self, id: &BackfillId) -> Result<Option<Backfill>, BackfillStoreError>;
@@ -314,8 +386,10 @@ pub trait BackfillStorage: Send + Sync {
     ) -> Result<(), BackfillStoreError>;
 
     /// Compute aggregated progress for a backfill.
-    fn get_progress(&self, backfill_id: &BackfillId)
-        -> Result<BackfillProgress, BackfillStoreError>;
+    fn get_progress(
+        &self,
+        backfill_id: &BackfillId,
+    ) -> Result<BackfillProgress, BackfillStoreError>;
 
     /// Delete a backfill and its iterations.
     fn delete_backfill(&self, id: &BackfillId) -> Result<bool, BackfillStoreError>;

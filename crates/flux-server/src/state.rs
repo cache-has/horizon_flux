@@ -5,8 +5,9 @@
 
 use flux_connectors::ConnectorRegistry;
 use flux_datafusion::{
-    BackfillStorage, EnvironmentStorage, ExecutionEvent, IncrementalStateStorage, LineageStorage,
-    OutputCache, RunStorage, SecretResolver, SessionFactory,
+    BackfillStorage, ColumnLineageStorage, EnvironmentStorage, ExecutionEvent,
+    IncrementalStateStorage, LineageStorage, OutputCache, RunStorage, SecretResolver,
+    SessionFactory,
 };
 use flux_engine::PipelineStorage;
 use flux_plugin_host::PluginRegistry;
@@ -61,6 +62,25 @@ pub enum CatalogEvent {
 
 /// Capacity for the catalog event broadcast channel.
 const CATALOG_EVENT_CHANNEL_CAPACITY: usize = 32;
+
+/// Capacity for the column lineage event broadcast channel.
+const COLUMN_LINEAGE_EVENT_CHANNEL_CAPACITY: usize = 32;
+
+/// Column lineage lifecycle events broadcast over the WebSocket so the
+/// frontend can refresh lineage views without polling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ColumnLineageEvent {
+    /// Column lineage edges were re-derived for a pipeline.
+    ColumnLineageUpdated {
+        /// The pipeline whose lineage was updated.
+        pipeline_id: String,
+        /// The environment in which lineage was derived.
+        environment: String,
+        /// Number of edges in the new lineage set.
+        edge_count: usize,
+    },
+}
 
 /// How long the secret store stays unlocked without activity (30 minutes).
 const SECRET_AUTO_LOCK_SECS: u64 = 30 * 60;
@@ -293,6 +313,12 @@ pub struct AppState {
     /// Broadcast channel for catalog events (metadata annotation changes).
     /// WebSocket clients receive these alongside execution and plugin events.
     pub catalog_event_tx: broadcast::Sender<CatalogEvent>,
+    /// Column-level lineage storage (planning doc 35). `None` when the
+    /// backend does not implement `ColumnLineageStorage` (e.g. PostgreSQL).
+    pub column_lineage_store: Option<Arc<dyn ColumnLineageStorage>>,
+    /// Broadcast channel for column lineage events. Fired when lineage
+    /// edges are re-derived so the frontend can refresh lineage views.
+    pub column_lineage_event_tx: broadcast::Sender<ColumnLineageEvent>,
 }
 
 impl AppState {
@@ -309,6 +335,11 @@ impl AppState {
     /// Create a new broadcast sender for catalog events.
     pub fn new_catalog_event_channel() -> broadcast::Sender<CatalogEvent> {
         broadcast::channel(CATALOG_EVENT_CHANNEL_CAPACITY).0
+    }
+
+    /// Create a new broadcast sender for column lineage events.
+    pub fn new_column_lineage_event_channel() -> broadcast::Sender<ColumnLineageEvent> {
+        broadcast::channel(COLUMN_LINEAGE_EVENT_CHANNEL_CAPACITY).0
     }
 
     /// Build a [`SecretResolver`] backed by the current secret session.

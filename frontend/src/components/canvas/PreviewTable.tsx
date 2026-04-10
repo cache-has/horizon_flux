@@ -6,6 +6,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ApiPreviewNodeResponse, ApiColumnInfo } from '../../api/pipelines';
 import type { ColumnDiff } from './schemaDiff';
 import { classifyType, formatCell, formatColumnStatsTooltip } from './previewUtils';
+import { useColumnLineageStore, type HighlightedColumn } from '../../stores/columnLineageStore';
 import './PreviewTable.css';
 
 /** Short display label for the type badge. */
@@ -77,9 +78,11 @@ export interface PreviewTableProps {
   sampleMethod?: string;
   /** Per-column diff info (parallel to preview.columns). When provided, column headers are color-coded. */
   columnDiffs?: ColumnDiff[];
+  /** Node ID for column lineage highlighting. When set, hovering columns traces upstream. */
+  nodeId?: string;
 }
 
-export function PreviewTable({ preview, loading, error, sampleMethod, columnDiffs }: PreviewTableProps) {
+export function PreviewTable({ preview, loading, error, sampleMethod, columnDiffs, nodeId }: PreviewTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState | null>(null);
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
@@ -95,6 +98,26 @@ export function PreviewTable({ preview, loading, error, sampleMethod, columnDiff
     () => columns.map((c) => classifyType(c.data_type)),
     [columns],
   );
+
+  // Column lineage highlighting
+  const highlightedColumns = useColumnLineageStore((s) => s.highlightedColumns);
+  const highlightSource = useColumnLineageStore((s) => s.highlightSource);
+  const setHighlight = useColumnLineageStore((s) => s.setHighlight);
+  const clearHighlight = useColumnLineageStore((s) => s.clearHighlight);
+
+  // Check which columns in THIS node's preview are highlighted
+  const highlightedSet = useMemo(() => {
+    if (!nodeId) return new Map<string, HighlightedColumn>();
+    const map = new Map<string, HighlightedColumn>();
+    for (const h of highlightedColumns) {
+      if (h.nodeId === nodeId) {
+        map.set(h.column, h);
+      }
+    }
+    return map;
+  }, [nodeId, highlightedColumns]);
+
+  const isSourceNode = highlightSource?.nodeId === nodeId;
 
   // Sorted rows
   const sortedRows = useMemo(() => {
@@ -248,14 +271,22 @@ export function PreviewTable({ preview, loading, error, sampleMethod, columnDiff
                   : diff?.kind === 'added'
                     ? '\nNew column'
                     : '';
+              const isHighlighted = highlightedSet.has(col.name);
+              const isSource = isSourceNode && highlightSource?.column === col.name;
+              const highlightInfo = highlightedSet.get(col.name);
+              const provenanceTooltip = highlightInfo
+                ? `\nLineage: ${highlightInfo.relationship} (${highlightInfo.confidence})${highlightInfo.expression ? `\nExpression: ${highlightInfo.expression}` : ''}`
+                : '';
               return (
                 <div
                   key={col.name}
-                  className={`preview-table__th preview-table__th--${columnKinds[ci]}${diffClass}`}
+                  className={`preview-table__th preview-table__th--${columnKinds[ci]}${diffClass}${isHighlighted ? ' preview-table__th--highlighted' : ''}${isSource ? ' preview-table__th--highlight-source' : ''}`}
                   style={{ width: w, minWidth: w }}
                   onClick={() => handleSort(col.name)}
+                  onMouseEnter={() => nodeId && setHighlight(nodeId, col.name)}
+                  onMouseLeave={() => clearHighlight()}
                   role="columnheader"
-                  title={`${col.name} (${col.data_type})${diffTooltip}${statsTooltip}\n— click to sort`}
+                  title={`${col.name} (${col.data_type})${diffTooltip}${provenanceTooltip}${statsTooltip}\n— click to sort`}
                 >
                   <span className="preview-table__col-name">{col.name}</span>
                   <span className={`preview-table__type-badge preview-table__type-badge--${columnKinds[ci]}`}>
@@ -306,6 +337,7 @@ export function PreviewTable({ preview, loading, error, sampleMethod, columnDiff
                     const kind = columnKinds[ci];
                     const { text, isNull } = formatCell(row[col.name], kind);
                     const w = colWidths[col.name] ?? DEFAULT_COL_WIDTH;
+                    const cellHighlighted = highlightedSet.has(col.name) || (isSourceNode && highlightSource?.column === col.name);
                     return (
                       <div
                         key={col.name}
@@ -313,6 +345,7 @@ export function PreviewTable({ preview, loading, error, sampleMethod, columnDiff
                           'preview-table__td',
                           `preview-table__td--${kind}`,
                           isNull ? 'preview-table__td--null' : '',
+                          cellHighlighted ? 'preview-table__td--highlighted' : '',
                         ]
                           .filter(Boolean)
                           .join(' ')}

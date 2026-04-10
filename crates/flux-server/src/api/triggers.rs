@@ -163,10 +163,12 @@ async fn create_trigger(
     let _ = state.trigger_store.upsert_state(&initial_state);
 
     // Broadcast trigger creation event.
-    let _ = state.event_tx.send(flux_datafusion::ExecutionEvent::TriggerChanged {
-        trigger_id: trigger.id.to_string(),
-        action: "created".to_string(),
-    });
+    let _ = state
+        .event_tx
+        .send(flux_datafusion::ExecutionEvent::TriggerChanged {
+            trigger_id: trigger.id.to_string(),
+            action: "created".to_string(),
+        });
 
     (
         StatusCode::CREATED,
@@ -179,10 +181,7 @@ async fn create_trigger(
 }
 
 /// `GET /api/triggers/:id`
-async fn get_trigger(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_trigger(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let tid = match parse_trigger_id(&id) {
         Ok(t) => t,
         Err(resp) => return resp,
@@ -255,10 +254,12 @@ async fn update_trigger(
         let _ = state.trigger_store.upsert_state(&ts);
     }
 
-    let _ = state.event_tx.send(flux_datafusion::ExecutionEvent::TriggerChanged {
-        trigger_id: trigger.id.to_string(),
-        action: "updated".to_string(),
-    });
+    let _ = state
+        .event_tx
+        .send(flux_datafusion::ExecutionEvent::TriggerChanged {
+            trigger_id: trigger.id.to_string(),
+            action: "updated".to_string(),
+        });
 
     let trigger_state = state.trigger_store.get_state(&tid).ok().flatten();
     Json(TriggerResponse {
@@ -280,10 +281,12 @@ async fn delete_trigger(
 
     match state.trigger_store.delete_trigger(&tid) {
         Ok(()) => {
-            let _ = state.event_tx.send(flux_datafusion::ExecutionEvent::TriggerChanged {
-                trigger_id: id,
-                action: "deleted".to_string(),
-            });
+            let _ = state
+                .event_tx
+                .send(flux_datafusion::ExecutionEvent::TriggerChanged {
+                    trigger_id: id,
+                    action: "deleted".to_string(),
+                });
             StatusCode::NO_CONTENT.into_response()
         }
         Err(flux_scheduler::TriggerStoreError::NotFound(_)) => {
@@ -326,10 +329,12 @@ async fn set_enabled(state: AppState, id: &str, enabled: bool) -> axum::response
     }
 
     let action = if enabled { "enabled" } else { "disabled" };
-    let _ = state.event_tx.send(flux_datafusion::ExecutionEvent::TriggerChanged {
-        trigger_id: id.to_string(),
-        action: action.to_string(),
-    });
+    let _ = state
+        .event_tx
+        .send(flux_datafusion::ExecutionEvent::TriggerChanged {
+            trigger_id: id.to_string(),
+            action: action.to_string(),
+        });
 
     // Return updated trigger.
     let mut updated = trigger;
@@ -343,10 +348,7 @@ async fn set_enabled(state: AppState, id: &str, enabled: bool) -> axum::response
 }
 
 /// `POST /api/triggers/:id/fire`
-async fn fire_trigger(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn fire_trigger(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let tid = match parse_trigger_id(&id) {
         Ok(t) => t,
         Err(resp) => return resp,

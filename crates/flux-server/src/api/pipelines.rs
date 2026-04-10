@@ -15,6 +15,7 @@ use flux_datafusion::{
     ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, StoredResourceBinding,
     UdfRegistry, compute_column_stats,
 };
+use flux_engine::column_lineage::{Confidence, RelationshipKind};
 use flux_engine::lineage::BindingDirection;
 use flux_engine::node::NodeKind;
 use flux_engine::pipeline_store::PipelineId;
@@ -95,6 +96,7 @@ pub fn router() -> Router<AppState> {
             "/{id}/versions/{version}",
             get(get_version).post(restore_version),
         )
+        .route("/{id}/column-lineage", get(pipeline_column_lineage))
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +498,17 @@ async fn run_pipeline(
         lineage_store: Some(Arc::clone(&state.lineage_store)),
         fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
         pipeline_id: Some(pipeline_id.0.to_string()),
+        column_lineage_store: state.column_lineage_store.clone(),
+        on_column_lineage_updated: {
+            let tx = state.column_lineage_event_tx.clone();
+            Some(Arc::new(move |pid: &str, env: &str, count: usize| {
+                let _ = tx.send(crate::state::ColumnLineageEvent::ColumnLineageUpdated {
+                    pipeline_id: pid.to_string(),
+                    environment: env.to_string(),
+                    edge_count: count,
+                });
+            }))
+        },
     };
 
     let (result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
@@ -1082,6 +1095,80 @@ async fn bulk_export(
         json,
     )
         .into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Column lineage
+// ---------------------------------------------------------------------------
+
+/// Query parameters for per-pipeline column lineage.
+#[derive(Debug, Deserialize)]
+pub struct PipelineColumnLineageQuery {
+    #[serde(default = "default_pipeline_env")]
+    pub environment: String,
+}
+
+fn default_pipeline_env() -> String {
+    "default".to_string()
+}
+
+/// Response for per-pipeline column lineage edges.
+#[derive(Debug, Serialize)]
+pub struct PipelineColumnLineageResponse {
+    pub pipeline_id: String,
+    pub environment: String,
+    pub edges: Vec<PipelineColumnEdgeDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PipelineColumnEdgeDto {
+    pub upstream_column: String,
+    pub upstream_node: Option<String>,
+    pub upstream_resource: Option<String>,
+    pub downstream_column: String,
+    pub downstream_node: Option<String>,
+    pub downstream_resource: Option<String>,
+    pub relationship: RelationshipKind,
+    pub expression_text: Option<String>,
+    pub confidence: Confidence,
+}
+
+/// `GET /api/pipelines/:id/column-lineage` — per-pipeline column edges.
+async fn pipeline_column_lineage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<PipelineColumnLineageQuery>,
+) -> Result<Json<PipelineColumnLineageResponse>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let store = state
+        .column_lineage_store
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("column lineage storage not available"))?;
+
+    let edges = store
+        .load_column_edges(&pipeline_id.0.to_string(), &q.environment)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let dto_edges: Vec<PipelineColumnEdgeDto> = edges
+        .into_iter()
+        .map(|se| PipelineColumnEdgeDto {
+            upstream_column: se.edge.upstream_column,
+            upstream_node: se.edge.upstream_node.map(|n| n.0),
+            upstream_resource: se.edge.upstream_resource.map(|r| r.0),
+            downstream_column: se.edge.downstream_column,
+            downstream_node: se.edge.downstream_node.map(|n| n.0),
+            downstream_resource: se.edge.downstream_resource.map(|r| r.0),
+            relationship: se.edge.relationship,
+            expression_text: se.edge.expression_text,
+            confidence: se.edge.confidence,
+        })
+        .collect();
+
+    Ok(Json(PipelineColumnLineageResponse {
+        pipeline_id: pipeline_id.0.to_string(),
+        environment: q.environment,
+        edges: dto_edges,
+    }))
 }
 
 // ---------------------------------------------------------------------------

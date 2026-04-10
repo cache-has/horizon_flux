@@ -48,6 +48,8 @@ fn test_state() -> AppState {
         plugin_scan_roots: Some(Vec::new()),
         metadata_dir: None,
         catalog_event_tx: AppState::new_catalog_event_channel(),
+        column_lineage_store: None,
+        column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
     }
 }
 
@@ -128,6 +130,8 @@ async fn list_connectors_empty_registry() {
         plugin_scan_roots: Some(Vec::new()),
         metadata_dir: None,
         catalog_event_tx: AppState::new_catalog_event_channel(),
+        column_lineage_store: None,
+        column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
     };
     let app = test_router(state);
     let resp = app

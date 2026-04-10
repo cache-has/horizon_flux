@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `flux lineage` subcommands — cross-pipeline lineage graph queries
-//! (planning doc 31).
+//! (planning doc 31) and column-level lineage queries (planning doc 35).
+
+use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use flux_engine::column_lineage::{
+    BoundaryColumn, ColumnLineageGraph, Confidence, RelationshipKind, TraceOptions,
+    derive_cross_pipeline_column_lineage,
+};
 use flux_engine::lineage::{BindingDirection, LineageGraph, ResourceBinding, ResourceFingerprint};
 use flux_engine::pipeline_store::PipelineId;
 
@@ -61,6 +67,74 @@ pub enum LineageAction {
         #[arg(long, short)]
         env: Option<String>,
     },
+    /// Column-level lineage queries (doc 35).
+    Column {
+        #[command(subcommand)]
+        action: ColumnAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ColumnAction {
+    /// Trace upstream columns that contribute to a given column.
+    Upstream {
+        /// Resource fingerprint identifying the column's resource.
+        fingerprint: String,
+        /// Column name.
+        column: String,
+        /// Environment scope (default: "default").
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Maximum traversal depth (default: 10).
+        #[arg(long, default_value_t = 10)]
+        max_depth: usize,
+        /// Comma-separated relationship kinds to include (e.g. "direct,derived").
+        #[arg(long)]
+        relationships: Option<String>,
+        /// Comma-separated confidence levels to include (e.g. "exact,annotation").
+        #[arg(long)]
+        confidence: Option<String>,
+    },
+    /// Trace downstream columns that depend on a given column.
+    Downstream {
+        /// Resource fingerprint identifying the column's resource.
+        fingerprint: String,
+        /// Column name.
+        column: String,
+        /// Environment scope (default: "default").
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Maximum traversal depth (default: 10).
+        #[arg(long, default_value_t = 10)]
+        max_depth: usize,
+        /// Comma-separated relationship kinds to include (e.g. "direct,derived").
+        #[arg(long)]
+        relationships: Option<String>,
+        /// Comma-separated confidence levels to include (e.g. "exact,annotation").
+        #[arg(long)]
+        confidence: Option<String>,
+    },
+    /// Impact analysis: what breaks if a column is renamed or dropped?
+    Impact {
+        /// Resource fingerprint identifying the column's resource.
+        fingerprint: String,
+        /// Column name.
+        column: String,
+        /// Environment scope (default: "default").
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Maximum traversal depth (default: 10).
+        #[arg(long, default_value_t = 10)]
+        max_depth: usize,
+    },
+    /// Search for columns by name across all resources.
+    Search {
+        /// Search query (substring match on column name).
+        query: String,
+        /// Environment scope (default: "default").
+        #[arg(long, short)]
+        env: Option<String>,
+    },
 }
 
 pub fn handle(
@@ -81,6 +155,7 @@ pub fn handle(
         }
         LineageAction::Cycles { env } => cycles(env.as_deref(), format, metadata_url),
         LineageAction::Orphans { env } => orphans(env.as_deref(), format, metadata_url),
+        LineageAction::Column { action } => handle_column(action, format, metadata_url),
     }
 }
 
@@ -116,8 +191,6 @@ fn build_graph(
 
 /// Derive static edges by matching sink fingerprints to source fingerprints.
 fn derive_edges(bindings: &[ResourceBinding]) -> Vec<flux_engine::lineage::LineageEdge> {
-    use std::collections::HashMap;
-
     let mut sinks_by_fp: HashMap<&ResourceFingerprint, Vec<&ResourceBinding>> = HashMap::new();
     for b in bindings {
         if b.direction == BindingDirection::Sink {
@@ -619,6 +692,472 @@ fn orphans(env: Option<&str>, format: OutputFormat, metadata_url: Option<&str>) 
                 "environment": environment,
                 "dangling_sources": dangling.iter().map(to_json).collect::<Vec<_>>(),
                 "orphaned_sinks": orphaned.iter().map(to_json).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Column-level lineage (doc 35)
+// ---------------------------------------------------------------------------
+
+fn handle_column(
+    action: ColumnAction,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    match action {
+        ColumnAction::Upstream {
+            fingerprint,
+            column,
+            env,
+            max_depth,
+            relationships,
+            confidence,
+        } => column_trace(
+            &fingerprint,
+            &column,
+            env.as_deref(),
+            max_depth,
+            relationships.as_deref(),
+            confidence.as_deref(),
+            true,
+            format,
+            metadata_url,
+        ),
+        ColumnAction::Downstream {
+            fingerprint,
+            column,
+            env,
+            max_depth,
+            relationships,
+            confidence,
+        } => column_trace(
+            &fingerprint,
+            &column,
+            env.as_deref(),
+            max_depth,
+            relationships.as_deref(),
+            confidence.as_deref(),
+            false,
+            format,
+            metadata_url,
+        ),
+        ColumnAction::Impact {
+            fingerprint,
+            column,
+            env,
+            max_depth,
+        } => column_impact(&fingerprint, &column, env.as_deref(), max_depth, format, metadata_url),
+        ColumnAction::Search { query, env } => {
+            column_search(&query, env.as_deref(), format, metadata_url)
+        }
+    }
+}
+
+/// Build a [`ColumnLineageGraph`] from stored column edges.
+fn build_column_graph(
+    store: &dyn flux_datafusion::ColumnLineageStorage,
+    environment: &str,
+) -> Result<ColumnLineageGraph> {
+    let stored_edges = store
+        .all_column_edges(environment)
+        .context("failed to load column lineage edges")?;
+
+    let mut by_pipeline: HashMap<PipelineId, Vec<flux_engine::ColumnEdge>> = HashMap::new();
+    let mut boundary_columns = Vec::new();
+
+    for se in &stored_edges {
+        let pipeline_id: PipelineId = se
+            .pipeline_id
+            .parse()
+            .context("invalid pipeline ID in stored edges")?;
+        by_pipeline
+            .entry(pipeline_id.clone())
+            .or_default()
+            .push(se.edge.clone());
+
+        if let Some(ref fp) = se.edge.downstream_resource {
+            if let Some(ref node) = se.edge.downstream_node {
+                boundary_columns.push(BoundaryColumn {
+                    pipeline_id: pipeline_id.clone(),
+                    node_id: node.clone(),
+                    column: se.edge.downstream_column.clone(),
+                    fingerprint: fp.clone(),
+                    direction: BindingDirection::Sink,
+                });
+            }
+        }
+        if let Some(ref fp) = se.edge.upstream_resource {
+            if let Some(ref node) = se.edge.upstream_node {
+                boundary_columns.push(BoundaryColumn {
+                    pipeline_id,
+                    node_id: node.clone(),
+                    column: se.edge.upstream_column.clone(),
+                    fingerprint: fp.clone(),
+                    direction: BindingDirection::Source,
+                });
+            }
+        }
+    }
+
+    let pipeline_edges: Vec<(PipelineId, Vec<flux_engine::ColumnEdge>)> =
+        by_pipeline.into_iter().collect();
+    let pipeline_edge_refs: Vec<(PipelineId, &[flux_engine::ColumnEdge])> = pipeline_edges
+        .iter()
+        .map(|(id, edges)| (id.clone(), edges.as_slice()))
+        .collect();
+
+    let cross_pipeline = derive_cross_pipeline_column_lineage(&boundary_columns);
+
+    Ok(ColumnLineageGraph::new(
+        &pipeline_edge_refs,
+        &cross_pipeline.edges,
+    ))
+}
+
+/// Parse comma-separated relationship kind strings.
+fn parse_relationships(s: &str) -> std::collections::HashSet<RelationshipKind> {
+    s.split(',')
+        .filter_map(|r| match r.trim() {
+            "direct" => Some(RelationshipKind::Direct),
+            "derived" => Some(RelationshipKind::Derived),
+            "cast" => Some(RelationshipKind::Cast),
+            "filter" => Some(RelationshipKind::Filter),
+            "join_key" => Some(RelationshipKind::JoinKey),
+            "join_passthrough" => Some(RelationshipKind::JoinPassthrough),
+            "group_by" => Some(RelationshipKind::GroupBy),
+            "aggregate_input" => Some(RelationshipKind::AggregateInput),
+            "window_partition" => Some(RelationshipKind::WindowPartition),
+            "window_order" => Some(RelationshipKind::WindowOrder),
+            "window_input" => Some(RelationshipKind::WindowInput),
+            "opaque" => Some(RelationshipKind::Opaque),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Parse comma-separated confidence level strings.
+fn parse_confidences(s: &str) -> std::collections::HashSet<Confidence> {
+    s.split(',')
+        .filter_map(|c| match c.trim() {
+            "exact" => Some(Confidence::Exact),
+            "lazyframe" => Some(Confidence::LazyFrame),
+            "annotation" => Some(Confidence::Annotation),
+            "opaque" => Some(Confidence::Opaque),
+            _ => None,
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn column_trace(
+    fingerprint: &str,
+    column: &str,
+    env: Option<&str>,
+    max_depth: usize,
+    relationships: Option<&str>,
+    confidence: Option<&str>,
+    is_upstream: bool,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let environment = resolve_env(env);
+    let stores = open_stores(metadata_url)?;
+    let col_store = stores
+        .column_lineage_store
+        .as_ref()
+        .context("column lineage storage not available")?;
+    let graph = build_column_graph(&**col_store, &environment)?;
+    let names = pipeline_names(&*stores.pipeline_store)?;
+
+    let fp = ResourceFingerprint(fingerprint.to_string());
+    let keys = graph.resolve_by_fingerprint(&fp, column);
+    if keys.is_empty() {
+        println!("No column `{column}` found for resource `{fingerprint}` (env `{environment}`).");
+        return Ok(());
+    }
+
+    let opts = TraceOptions {
+        max_depth,
+        relationship_filter: relationships.map(parse_relationships).unwrap_or_default(),
+        confidence_filter: confidence.map(parse_confidences).unwrap_or_default(),
+    };
+
+    let direction_label = if is_upstream { "Upstream" } else { "Downstream" };
+
+    // Collect traces from all matching keys.
+    let mut all_edges = Vec::new();
+    let mut any_truncated = false;
+    for key in &keys {
+        let result = if is_upstream {
+            graph.upstream_trace(key, &opts)
+        } else {
+            graph.downstream_trace(key, &opts)
+        };
+        any_truncated |= result.truncated;
+        all_edges.extend(result.edges);
+    }
+
+    match format {
+        OutputFormat::Human => {
+            if all_edges.is_empty() {
+                println!(
+                    "No {lower} columns for `{column}` on `{fingerprint}` (env `{environment}`).",
+                    lower = direction_label.to_lowercase(),
+                );
+                return Ok(());
+            }
+            println!(
+                "{direction_label} of `{column}` on `{fingerprint}` (env `{environment}`):\n"
+            );
+            println!(
+                "{}",
+                crate::color::bold(&format!(
+                    "  {:<30} {:<16} {:<20} {:<14} {:<10} {}",
+                    "PIPELINE", "NODE", "COLUMN", "RELATIONSHIP", "CONFIDENCE", "DEPTH"
+                ))
+            );
+            println!("{}", crate::color::dim(&format!("  {}", "-".repeat(100))));
+            for e in &all_edges {
+                let (target_key, _) = if is_upstream {
+                    (&e.upstream, &e.downstream)
+                } else {
+                    (&e.downstream, &e.upstream)
+                };
+                println!(
+                    "  {:<30} {:<16} {:<20} {:<14} {:<10} {}",
+                    truncate(&display_name(&names, &target_key.pipeline_id), 30),
+                    truncate(&target_key.node_id.0, 16),
+                    truncate(&target_key.column, 20),
+                    format!("{:?}", e.relationship).to_lowercase(),
+                    format!("{:?}", e.confidence).to_lowercase(),
+                    e.depth,
+                );
+            }
+            if any_truncated {
+                println!(
+                    "\n  {} Results truncated at depth {max_depth}. Use --max-depth to increase.",
+                    crate::color::dim("(truncated)"),
+                );
+            }
+        }
+        OutputFormat::Json => {
+            let out = serde_json::json!({
+                "fingerprint": fingerprint,
+                "column": column,
+                "environment": environment,
+                "direction": direction_label.to_lowercase(),
+                "truncated": any_truncated,
+                "edges": all_edges.iter().map(|e| serde_json::json!({
+                    "upstream": {
+                        "pipeline_id": e.upstream.pipeline_id.to_string(),
+                        "pipeline_name": display_name(&names, &e.upstream.pipeline_id),
+                        "node_id": e.upstream.node_id.0,
+                        "column": e.upstream.column,
+                    },
+                    "downstream": {
+                        "pipeline_id": e.downstream.pipeline_id.to_string(),
+                        "pipeline_name": display_name(&names, &e.downstream.pipeline_id),
+                        "node_id": e.downstream.node_id.0,
+                        "column": e.downstream.column,
+                    },
+                    "relationship": format!("{:?}", e.relationship).to_lowercase(),
+                    "confidence": format!("{:?}", e.confidence).to_lowercase(),
+                    "expression": e.expression_text,
+                    "depth": e.depth,
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+    }
+    Ok(())
+}
+
+fn column_impact(
+    fingerprint: &str,
+    column: &str,
+    env: Option<&str>,
+    max_depth: usize,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let environment = resolve_env(env);
+    let stores = open_stores(metadata_url)?;
+    let col_store = stores
+        .column_lineage_store
+        .as_ref()
+        .context("column lineage storage not available")?;
+    let graph = build_column_graph(&**col_store, &environment)?;
+    let names = pipeline_names(&*stores.pipeline_store)?;
+
+    let fp = ResourceFingerprint(fingerprint.to_string());
+    let keys = graph.resolve_by_fingerprint(&fp, column);
+    if keys.is_empty() {
+        println!("No column `{column}` found for resource `{fingerprint}` (env `{environment}`).");
+        return Ok(());
+    }
+
+    let opts = TraceOptions {
+        max_depth,
+        ..TraceOptions::default()
+    };
+
+    // Gather downstream edges from all matching keys.
+    let mut all_edges = Vec::new();
+    let mut any_truncated = false;
+    for key in &keys {
+        let result = graph.downstream_trace(key, &opts);
+        any_truncated |= result.truncated;
+        all_edges.extend(result.edges);
+    }
+
+    // Group affected columns by pipeline.
+    let mut by_pipeline: HashMap<PipelineId, Vec<&flux_engine::TraceEdge>> = HashMap::new();
+    for e in &all_edges {
+        by_pipeline
+            .entry(e.downstream.pipeline_id.clone())
+            .or_default()
+            .push(e);
+    }
+
+    match format {
+        OutputFormat::Human => {
+            if all_edges.is_empty() {
+                println!(
+                    "No downstream impact from `{column}` on `{fingerprint}` (env `{environment}`)."
+                );
+                return Ok(());
+            }
+            println!(
+                "Impact of `{column}` on `{fingerprint}` (env `{environment}`):\n"
+            );
+            println!(
+                "  {} affected column(s) across {} pipeline(s):",
+                all_edges.len(),
+                by_pipeline.len(),
+            );
+            for (pid, edges) in &by_pipeline {
+                println!(
+                    "\n  {}",
+                    crate::color::bold(&display_name(&names, pid)),
+                );
+                for e in edges {
+                    let marker = if e.depth == 1 { "direct" } else { "transitive" };
+                    println!(
+                        "    {} ({}, {:?}, depth {})",
+                        e.downstream.column,
+                        marker,
+                        e.relationship,
+                        e.depth,
+                    );
+                }
+            }
+            if any_truncated {
+                println!(
+                    "\n  {} Results truncated at depth {max_depth}.",
+                    crate::color::dim("(truncated)"),
+                );
+            }
+        }
+        OutputFormat::Json => {
+            let affected: Vec<serde_json::Value> = by_pipeline
+                .iter()
+                .map(|(pid, edges)| {
+                    serde_json::json!({
+                        "pipeline_id": pid.to_string(),
+                        "pipeline_name": display_name(&names, pid),
+                        "columns": edges.iter().map(|e| serde_json::json!({
+                            "column": e.downstream.column,
+                            "node_id": e.downstream.node_id.0,
+                            "relationship": format!("{:?}", e.relationship).to_lowercase(),
+                            "confidence": format!("{:?}", e.confidence).to_lowercase(),
+                            "depth": e.depth,
+                        })).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            let out = serde_json::json!({
+                "fingerprint": fingerprint,
+                "column": column,
+                "environment": environment,
+                "truncated": any_truncated,
+                "total_affected": all_edges.len(),
+                "affected_pipelines": affected,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+    }
+    Ok(())
+}
+
+fn column_search(
+    query: &str,
+    env: Option<&str>,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let environment = resolve_env(env);
+    let stores = open_stores(metadata_url)?;
+    let col_store = stores
+        .column_lineage_store
+        .as_ref()
+        .context("column lineage storage not available")?;
+    let graph = build_column_graph(&**col_store, &environment)?;
+    let names = pipeline_names(&*stores.pipeline_store)?;
+
+    let query_lower = query.to_lowercase();
+    let matches: Vec<_> = graph
+        .all_columns()
+        .into_iter()
+        .filter(|k| k.column.to_lowercase().contains(&query_lower))
+        .collect();
+
+    match format {
+        OutputFormat::Human => {
+            if matches.is_empty() {
+                println!("No columns matching `{query}` (env `{environment}`).");
+                return Ok(());
+            }
+            println!(
+                "{} column(s) matching `{query}` (env `{environment}`):\n",
+                matches.len(),
+            );
+            println!(
+                "{}",
+                crate::color::bold(&format!(
+                    "  {:<30} {:<16} {}",
+                    "PIPELINE", "NODE", "COLUMN"
+                ))
+            );
+            println!("{}", crate::color::dim(&format!("  {}", "-".repeat(70))));
+            for k in &matches {
+                println!(
+                    "  {:<30} {:<16} {}",
+                    truncate(&display_name(&names, &k.pipeline_id), 30),
+                    truncate(&k.node_id.0, 16),
+                    k.column,
+                );
+            }
+        }
+        OutputFormat::Json => {
+            let results: Vec<serde_json::Value> = matches
+                .iter()
+                .map(|k| {
+                    serde_json::json!({
+                        "pipeline_id": k.pipeline_id.to_string(),
+                        "pipeline_name": display_name(&names, &k.pipeline_id),
+                        "node_id": k.node_id.0,
+                        "column": k.column,
+                    })
+                })
+                .collect();
+            let out = serde_json::json!({
+                "query": query,
+                "environment": environment,
+                "results": results,
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
         }

@@ -151,6 +151,35 @@ CREATE TABLE IF NOT EXISTS lineage_observations (
 
 CREATE INDEX IF NOT EXISTS idx_lo_fingerprint
     ON lineage_observations (resource_fingerprint, environment, observed_at);
+
+-- Column-level lineage edges (planning doc 35).
+CREATE TABLE IF NOT EXISTS column_lineage_edges (
+    id                             BIGSERIAL PRIMARY KEY,
+    pipeline_id                    TEXT NOT NULL,
+    environment                    TEXT NOT NULL,
+    downstream_node_id             TEXT NOT NULL,
+    downstream_column              TEXT NOT NULL,
+    downstream_is_external         INTEGER NOT NULL,
+    downstream_resource_fingerprint TEXT,
+    upstream_node_id               TEXT,
+    upstream_column                TEXT NOT NULL,
+    upstream_is_external           INTEGER NOT NULL,
+    upstream_resource_fingerprint  TEXT,
+    relationship                   TEXT NOT NULL,
+    expression_text                TEXT,
+    confidence                     TEXT NOT NULL,
+    derived_at                     TEXT NOT NULL,
+    source_run_id                  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cle_downstream
+    ON column_lineage_edges (pipeline_id, environment, downstream_node_id, downstream_column);
+CREATE INDEX IF NOT EXISTS idx_cle_upstream
+    ON column_lineage_edges (pipeline_id, environment, upstream_node_id, upstream_column);
+CREATE INDEX IF NOT EXISTS idx_cle_downstream_resource
+    ON column_lineage_edges (downstream_resource_fingerprint, downstream_column);
+CREATE INDEX IF NOT EXISTS idx_cle_upstream_resource
+    ON column_lineage_edges (upstream_resource_fingerprint, upstream_column);
 "#;
 
 /// Ensure the database schema is up to date.

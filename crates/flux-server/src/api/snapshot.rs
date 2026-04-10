@@ -299,6 +299,8 @@ async fn snapshot_diff(
         lineage_store: None,
         fingerprint_fn: None,
         pipeline_id: None,
+        column_lineage_store: None,
+        on_column_lineage_updated: None,
     };
     let (pipeline_result, _run) = PipelineExecutor::execute(
         &record.pipeline,

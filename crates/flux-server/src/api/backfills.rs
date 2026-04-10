@@ -21,8 +21,8 @@ use flux_engine::backfill::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::mpsc;
 
 /// Build the `/backfills` sub-router.
@@ -127,9 +127,7 @@ async fn create_backfill(
     };
     let record = match state.pipeline_store.get(&pipeline_id) {
         Ok(Some(r)) => r,
-        Ok(None) => {
-            return ApiError::not_found("pipeline", &req.pipeline_id).into_response()
-        }
+        Ok(None) => return ApiError::not_found("pipeline", &req.pipeline_id).into_response(),
         Err(e) => return ApiError::internal(e.to_string()).into_response(),
     };
 
@@ -195,6 +193,8 @@ async fn create_backfill(
         lineage_store: Some(Arc::clone(&state.lineage_store)),
         fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
         pipeline_id: Some(req.pipeline_id),
+        column_lineage_store: state.column_lineage_store.clone(),
+        on_column_lineage_updated: None,
     };
 
     let opts = BackfillRunOptions {
@@ -225,10 +225,7 @@ async fn create_backfill(
 }
 
 /// `GET /api/backfills/:id`
-async fn get_backfill(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_backfill(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let bf_id = BackfillId(id.clone());
 
     let backfill = match state.backfill_store.get_backfill(&bf_id) {
@@ -311,7 +308,7 @@ async fn resume_backfill(
     let pipeline_id = match backfill.pipeline_id.parse::<flux_engine::PipelineId>() {
         Ok(id) => id,
         Err(_) => {
-            return ApiError::internal("invalid pipeline ID in backfill record").into_response()
+            return ApiError::internal("invalid pipeline ID in backfill record").into_response();
         }
     };
     let record = match state.pipeline_store.get(&pipeline_id) {
@@ -321,7 +318,7 @@ async fn resume_backfill(
                 "pipeline `{}` no longer exists",
                 backfill.pipeline_id
             ))
-            .into_response()
+            .into_response();
         }
         Err(e) => return ApiError::internal(e.to_string()).into_response(),
     };
@@ -354,6 +351,8 @@ async fn resume_backfill(
         lineage_store: Some(Arc::clone(&state.lineage_store)),
         fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
         pipeline_id: Some(backfill.pipeline_id.clone()),
+        column_lineage_store: state.column_lineage_store.clone(),
+        on_column_lineage_updated: None,
     };
 
     let opts = BackfillRunOptions {

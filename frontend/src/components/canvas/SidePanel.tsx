@@ -375,7 +375,7 @@ interface NodeContentProps {
   feedsSink?: boolean;
 }
 
-function SourceContent({ apiNode, preview, previewLoading, previewError, sampleMethod, runStats, sampleConfig, onSampleConfigChange, onCacheRowLimitChange }: NodeContentProps) {
+function SourceContent({ node, apiNode, preview, previewLoading, previewError, sampleMethod, runStats, sampleConfig, onSampleConfigChange, onCacheRowLimitChange }: NodeContentProps) {
   const connector = apiNode?.connector ?? 'unknown';
   const config = apiNode?.config as Record<string, unknown> | undefined;
 
@@ -429,7 +429,7 @@ function SourceContent({ apiNode, preview, previewLoading, previewError, sampleM
             <SampleConfigDropdown value={sampleConfig} onChange={onSampleConfigChange} />
           )}
         </div>
-        <PreviewTable preview={preview} loading={previewLoading} error={previewError} sampleMethod={sampleMethod} />
+        <PreviewTable preview={preview} loading={previewLoading} error={previewError} sampleMethod={sampleMethod} nodeId={node.id} />
       </div>
 
       <div className="side-panel__section">
@@ -445,6 +445,7 @@ function SourceContent({ apiNode, preview, previewLoading, previewError, sampleM
 // ---------------------------------------------------------------------------
 
 function TransformContent({
+  node,
   apiNode,
   preview,
   previewLoading,
@@ -544,6 +545,7 @@ function TransformContent({
           error={previewError}
           sampleMethod={sampleMethod}
           columnDiffs={schemaDiff?.outputDiffs}
+          nodeId={node.id}
         />
       </div>
 

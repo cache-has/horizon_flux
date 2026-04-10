@@ -1,0 +1,33 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.confidence-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: help;
+}
+
+.confidence-badge--exact {
+  background: #059669;
+  color: #ecfdf5;
+}
+
+.confidence-badge--lazyframe {
+  background: #2563eb;
+  color: #eff6ff;
+}
+
+.confidence-badge--annotation {
+  background: #7c3aed;
+  color: #f5f3ff;
+}
+
+.confidence-badge--opaque {
+  background: #6b7280;
+  color: #f9fafb;
+}

@@ -4,8 +4,8 @@
 //! CLI commands for managing backfills (planning doc 33).
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
@@ -122,18 +122,10 @@ pub fn handle(
             format,
             metadata_url,
         ),
-        BackfillAction::Status { backfill_id } => {
-            show_status(&backfill_id, format, metadata_url)
-        }
-        BackfillAction::Resume { backfill_id } => {
-            resume(&backfill_id, format, metadata_url)
-        }
-        BackfillAction::Cancel { backfill_id } => {
-            cancel(&backfill_id, format, metadata_url)
-        }
-        BackfillAction::Delete { backfill_id } => {
-            delete(&backfill_id, format, metadata_url)
-        }
+        BackfillAction::Status { backfill_id } => show_status(&backfill_id, format, metadata_url),
+        BackfillAction::Resume { backfill_id } => resume(&backfill_id, format, metadata_url),
+        BackfillAction::Cancel { backfill_id } => cancel(&backfill_id, format, metadata_url),
+        BackfillAction::Delete { backfill_id } => delete(&backfill_id, format, metadata_url),
     }
 }
 
@@ -159,9 +151,9 @@ fn parse_granularity(s: &str) -> Result<DateGranularity> {
         "day" => Ok(DateGranularity::Day),
         "week" => Ok(DateGranularity::Week),
         "month" => Ok(DateGranularity::Month),
-        other => anyhow::bail!(
-            "unknown granularity `{other}` (expected hour, day, week, or month)"
-        ),
+        other => {
+            anyhow::bail!("unknown granularity `{other}` (expected hour, day, week, or month)")
+        }
     }
 }
 
@@ -181,9 +173,9 @@ fn build_range_definition(
     let mapping: HashMap<String, String> = var_mapping.into_iter().collect();
 
     if let Some(dr) = date_range {
-        let (start, end) = dr
-            .split_once("..")
-            .ok_or_else(|| anyhow::anyhow!("date range must be in START..END format, got `{dr}`"))?;
+        let (start, end) = dr.split_once("..").ok_or_else(|| {
+            anyhow::anyhow!("date range must be in START..END format, got `{dr}`")
+        })?;
         let gran = parse_granularity(granularity)?;
         Ok(RangeDefinition::DateRange {
             start: start.to_string(),
@@ -218,8 +210,7 @@ fn start(
 ) -> Result<()> {
     let stores = crate::pipeline::open_stores(metadata_url)?;
     let record = crate::pipeline::resolve_pipeline(&*stores.pipeline_store, pipeline_name)?;
-    let range_definition =
-        build_range_definition(date_range, granularity, list, var_mapping)?;
+    let range_definition = build_range_definition(date_range, granularity, list, var_mapping)?;
 
     // Validate the range expands successfully before committing.
     if !matches!(range_definition, RangeDefinition::Sql { .. }) {
@@ -280,6 +271,8 @@ fn start(
         lineage_store: Some(Arc::clone(&stores.lineage_store)),
         fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
         pipeline_id: Some(record.id.0.to_string()),
+        column_lineage_store: stores.column_lineage_store.clone(),
+        on_column_lineage_updated: None,
     };
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
@@ -317,11 +310,7 @@ fn start(
     }
 }
 
-fn resume(
-    backfill_id: &str,
-    format: OutputFormat,
-    metadata_url: Option<&str>,
-) -> Result<()> {
+fn resume(backfill_id: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     let data_dir = crate::config::data_dir()?;
     let backend = crate::config::MetadataBackend::resolve(metadata_url, &data_dir)?;
     let meta_stores = crate::config::open_stores(&backend, &data_dir)?;
@@ -334,10 +323,7 @@ fn resume(
         .ok_or_else(|| anyhow::anyhow!("backfill `{backfill_id}` not found"))?;
 
     let stores = crate::pipeline::open_stores(metadata_url)?;
-    let record = crate::pipeline::resolve_pipeline(
-        &*stores.pipeline_store,
-        &backfill.pipeline_id,
-    )?;
+    let record = crate::pipeline::resolve_pipeline(&*stores.pipeline_store, &backfill.pipeline_id)?;
 
     let cancel = Arc::new(AtomicBool::new(false));
     let provider_registry = stores.connector_registry.to_provider_registry();
@@ -365,6 +351,8 @@ fn resume(
         lineage_store: Some(Arc::clone(&stores.lineage_store)),
         fingerprint_fn: Some(flux_connectors::fingerprint::fingerprint),
         pipeline_id: Some(record.id.0.to_string()),
+        column_lineage_store: stores.column_lineage_store.clone(),
+        on_column_lineage_updated: None,
     };
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
@@ -402,11 +390,7 @@ fn resume(
     }
 }
 
-fn cancel(
-    backfill_id: &str,
-    format: OutputFormat,
-    metadata_url: Option<&str>,
-) -> Result<()> {
+fn cancel(backfill_id: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     let store = open_backfill_store(metadata_url)?;
     let bf_id = BackfillId(backfill_id.to_string());
 
@@ -418,10 +402,7 @@ fn cancel(
     match backfill.status {
         BackfillStatus::Pending | BackfillStatus::Running => {}
         other => {
-            anyhow::bail!(
-                "cannot cancel backfill in '{}' status",
-                other.as_str()
-            );
+            anyhow::bail!("cannot cancel backfill in '{}' status", other.as_str());
         }
     }
 
@@ -442,11 +423,7 @@ fn cancel(
     Ok(())
 }
 
-fn delete(
-    backfill_id: &str,
-    format: OutputFormat,
-    metadata_url: Option<&str>,
-) -> Result<()> {
+fn delete(backfill_id: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     let store = open_backfill_store(metadata_url)?;
     let bf_id = BackfillId(backfill_id.to_string());
 
@@ -540,11 +517,7 @@ fn list_backfills(
     Ok(())
 }
 
-fn show_status(
-    backfill_id: &str,
-    format: OutputFormat,
-    metadata_url: Option<&str>,
-) -> Result<()> {
+fn show_status(backfill_id: &str, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     let store = open_backfill_store(metadata_url)?;
     let bf_id = BackfillId(backfill_id.to_string());
 
@@ -688,10 +661,7 @@ fn print_backfill_event(event: &flux_datafusion::BackfillEvent) {
             );
         }
         BackfillEvent::BackfillCancelled { .. } => {
-            eprintln!(
-                "  {} Backfill cancelled",
-                crate::color::yellow("■"),
-            );
+            eprintln!("  {} Backfill cancelled", crate::color::yellow("■"),);
         }
     }
 }

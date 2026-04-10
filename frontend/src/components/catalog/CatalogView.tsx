@@ -10,6 +10,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCatalogStore } from '../../stores/catalogStore';
 import type { CatalogEntry, MergedColumn, MetadataUpdateRequest } from '../../api/catalog';
+import { ImpactAnalysisModal } from '../lineage/ImpactAnalysisModal';
+import { ColumnLineageGraph } from '../lineage/ColumnLineageGraph';
 import './CatalogView.css';
 
 // ---------------------------------------------------------------------------
@@ -302,6 +304,8 @@ function ResourceDetail({
   onNavigateToPipeline?: (id: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [impactColumn, setImpactColumn] = useState<string | null>(null);
+  const [lineageColumn, setLineageColumn] = useState<string | null>(null);
 
   return (
     <div className="catalog-view">
@@ -331,7 +335,31 @@ function ResourceDetail({
         ) : (
           <>
             <DetailSummary entry={entry} onNavigateToPipeline={onNavigateToPipeline} />
-            <SchemaTable columns={entry.columns} />
+            <SchemaTable
+              columns={entry.columns}
+              fingerprint={entry.fingerprint}
+              onShowImpact={setImpactColumn}
+              onShowLineage={setLineageColumn}
+            />
+            {lineageColumn && (
+              <div className="catalog-view__section">
+                <ColumnLineageGraph
+                  fingerprint={entry.fingerprint}
+                  column={lineageColumn}
+                  onClose={() => setLineageColumn(null)}
+                  onNavigateToPipeline={onNavigateToPipeline}
+                />
+              </div>
+            )}
+
+            {impactColumn && (
+              <ImpactAnalysisModal
+                fingerprint={entry.fingerprint}
+                column={impactColumn}
+                onClose={() => setImpactColumn(null)}
+                onNavigateToPipeline={onNavigateToPipeline}
+              />
+            )}
             {Object.keys(entry.custom).length > 0 && (
               <div className="catalog-view__section">
                 <h3 className="catalog-view__section-title">Custom Metadata</h3>
@@ -484,7 +512,17 @@ function DetailSummary({
 // Schema Table (merged auto-detected + annotated columns)
 // ---------------------------------------------------------------------------
 
-function SchemaTable({ columns }: { columns: MergedColumn[] }) {
+function SchemaTable({
+  columns,
+  fingerprint,
+  onShowImpact,
+  onShowLineage,
+}: {
+  columns: MergedColumn[];
+  fingerprint?: string;
+  onShowImpact?: (column: string) => void;
+  onShowLineage?: (column: string) => void;
+}) {
   if (columns.length === 0) return null;
 
   return (
@@ -498,6 +536,7 @@ function SchemaTable({ columns }: { columns: MergedColumn[] }) {
             <th>Nullable</th>
             <th>Description</th>
             <th>Accepted Values</th>
+            <th>Lineage</th>
           </tr>
         </thead>
         <tbody>
@@ -511,6 +550,26 @@ function SchemaTable({ columns }: { columns: MergedColumn[] }) {
                 {col.accepted_values?.map((v) => (
                   <code key={v} className="catalog-view__accepted-value">{v}</code>
                 ))}
+              </td>
+              <td className="catalog-view__col-actions">
+                {fingerprint && (
+                  <>
+                    <button
+                      className="catalog-view__col-action-btn"
+                      title="Show upstream/downstream lineage"
+                      onClick={() => onShowLineage?.(col.name)}
+                    >
+                      &#8644;
+                    </button>
+                    <button
+                      className="catalog-view__col-action-btn"
+                      title="Impact analysis: what breaks?"
+                      onClick={() => onShowImpact?.(col.name)}
+                    >
+                      &#9888;
+                    </button>
+                  </>
+                )}
               </td>
             </tr>
           ))}

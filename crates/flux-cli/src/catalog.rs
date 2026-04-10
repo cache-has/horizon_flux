@@ -8,9 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use flux_engine::catalog::{
-    self, Catalog, CatalogEntry, CatalogWarning, DiscoveredResource,
-};
+use flux_engine::catalog::{self, Catalog, CatalogEntry, CatalogWarning, DiscoveredResource};
 use flux_engine::lineage::{BindingDirection, LineageGraph, ResourceBinding, ResourceFingerprint};
 use flux_engine::pipeline_store::PipelineId;
 
@@ -74,9 +72,13 @@ pub fn handle(
     metadata_url: Option<&str>,
 ) -> Result<()> {
     match action {
-        CatalogAction::List { tag, owner, env } => {
-            list(tag.as_deref(), owner.as_deref(), env.as_deref(), format, metadata_url)
-        }
+        CatalogAction::List { tag, owner, env } => list(
+            tag.as_deref(),
+            owner.as_deref(),
+            env.as_deref(),
+            format,
+            metadata_url,
+        ),
         CatalogAction::Show { fingerprint, env } => {
             show(&fingerprint, env.as_deref(), format, metadata_url)
         }
@@ -87,7 +89,13 @@ pub fn handle(
             fingerprint,
             all,
             env,
-        } => describe(fingerprint.as_deref(), all, env.as_deref(), format, metadata_url),
+        } => describe(
+            fingerprint.as_deref(),
+            all,
+            env.as_deref(),
+            format,
+            metadata_url,
+        ),
         CatalogAction::Validate { env } => validate(env.as_deref(), format, metadata_url),
     }
 }
@@ -233,10 +241,7 @@ fn list(
                 println!("No resources in catalog (env `{environment}`).");
                 return Ok(());
             }
-            println!(
-                "{} resource(s) (env `{environment}`)\n",
-                entries.len(),
-            );
+            println!("{} resource(s) (env `{environment}`)\n", entries.len(),);
             println!(
                 "{}",
                 crate::color::bold(&format!(
@@ -246,11 +251,7 @@ fn list(
             );
             println!("{}", crate::color::dim(&"-".repeat(100)));
             for entry in &entries {
-                let rtype = entry
-                    .derived
-                    .resource_type
-                    .as_deref()
-                    .unwrap_or("-");
+                let rtype = entry.derived.resource_type.as_deref().unwrap_or("-");
                 let owner_str = entry
                     .owner
                     .as_ref()
@@ -515,11 +516,7 @@ fn search(
             );
             println!("{}", crate::color::dim(&"-".repeat(80)));
             for entry in &results {
-                let rtype = entry
-                    .derived
-                    .resource_type
-                    .as_deref()
-                    .unwrap_or("-");
+                let rtype = entry.derived.resource_type.as_deref().unwrap_or("-");
                 println!(
                     "{:<40} {:<12} {}",
                     truncate(&entry.name, 40),
@@ -587,10 +584,7 @@ fn describe_one(
     let full_path = metadata_dir.join(&rel_path);
 
     if full_path.exists() {
-        anyhow::bail!(
-            "annotation file already exists: {}",
-            full_path.display()
-        );
+        anyhow::bail!("annotation file already exists: {}", full_path.display());
     }
 
     let yaml = catalog::scaffold_annotation(resource);
@@ -708,9 +702,7 @@ mod tests {
 
         describe_one(&resource, dir.path(), OutputFormat::Human).unwrap();
 
-        let expected = dir
-            .path()
-            .join("postgres/h__5432__db__public.orders.yaml");
+        let expected = dir.path().join("postgres/h__5432__db__public.orders.yaml");
         assert!(expected.exists(), "scaffold file should exist");
 
         // Parse the written file to confirm it's valid YAML.
@@ -797,17 +789,14 @@ mod tests {
         assert!(b_path.exists(), "b.csv annotation should be created");
 
         let a_path = dir.path().join("files/data__a.csv.yaml");
-        assert!(!a_path.exists(), "a.csv should have been skipped (existing in map)");
+        assert!(
+            !a_path.exists(),
+            "a.csv should have been skipped (existing in map)"
+        );
     }
 }
 
-
-
-fn validate(
-    env: Option<&str>,
-    format: OutputFormat,
-    metadata_url: Option<&str>,
-) -> Result<()> {
+fn validate(env: Option<&str>, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
     let environment = resolve_env(env);
     let stores = open_stores(metadata_url)?;
     let catalog = build_catalog(&*stores.lineage_store, &environment)?;

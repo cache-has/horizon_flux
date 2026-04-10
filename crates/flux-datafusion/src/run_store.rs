@@ -3,13 +3,17 @@
 
 //! SQLite-backed storage for pipeline execution history.
 
-use crate::error::{IncrementalStateError, LineageStoreError, RunStoreError};
+use crate::error::{
+    ColumnLineageStoreError, IncrementalStateError, LineageStoreError, RunStoreError,
+};
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use crate::storage::{
-    IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage, StoredResourceBinding,
+    ColumnLineageStorage, IncrementalStateStorage, LineageObservation, LineageStorage, RunStorage,
+    StoredColumnEdge, StoredResourceBinding,
 };
 use flux_engine::NodeId;
+use flux_engine::column_lineage::{ColumnEdge, Confidence, RelationshipKind};
 use flux_engine::lineage::BindingDirection;
 use flux_engine::lineage::ResourceFingerprint;
 use rusqlite::{Connection, params};
@@ -138,7 +142,40 @@ impl SqliteRunStore {
             );
 
             CREATE INDEX IF NOT EXISTS idx_lo_fingerprint
-                ON lineage_observations (resource_fingerprint, environment, observed_at);",
+                ON lineage_observations (resource_fingerprint, environment, observed_at);
+
+            -- Column-level lineage edges (planning doc 35).
+            CREATE TABLE IF NOT EXISTS column_lineage_edges (
+                id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+                pipeline_id                     TEXT NOT NULL,
+                environment                     TEXT NOT NULL,
+                downstream_node_id              TEXT NOT NULL,
+                downstream_column               TEXT NOT NULL,
+                downstream_is_external          INTEGER NOT NULL,
+                downstream_resource_fingerprint TEXT,
+                upstream_node_id                TEXT,
+                upstream_column                 TEXT NOT NULL,
+                upstream_is_external            INTEGER NOT NULL,
+                upstream_resource_fingerprint   TEXT,
+                relationship                    TEXT NOT NULL,
+                expression_text                 TEXT,
+                confidence                      TEXT NOT NULL,
+                derived_at                      TEXT NOT NULL,
+                source_run_id                   TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cle_downstream
+                ON column_lineage_edges
+                   (pipeline_id, environment, downstream_node_id, downstream_column);
+            CREATE INDEX IF NOT EXISTS idx_cle_upstream
+                ON column_lineage_edges
+                   (pipeline_id, environment, upstream_node_id, upstream_column);
+            CREATE INDEX IF NOT EXISTS idx_cle_downstream_resource
+                ON column_lineage_edges
+                   (downstream_resource_fingerprint, downstream_column);
+            CREATE INDEX IF NOT EXISTS idx_cle_upstream_resource
+                ON column_lineage_edges
+                   (upstream_resource_fingerprint, upstream_column);",
         )?;
         // Idempotent migration: older databases created before doc 27 don't
         // have the receipt column. SQLite has no `ADD COLUMN IF NOT EXISTS`,
@@ -785,6 +822,250 @@ fn row_to_observation(row: &rusqlite::Row<'_>) -> Result<LineageObservation, Lin
     })
 }
 
+// ---------------------------------------------------------------------------
+// ColumnLineageStorage (planning doc 35)
+// ---------------------------------------------------------------------------
+
+impl ColumnLineageStorage for SqliteRunStore {
+    fn save_column_edges(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        edges: &[StoredColumnEdge],
+    ) -> Result<(), ColumnLineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        // Atomic replace: delete existing, then insert new.
+        conn.execute(
+            "DELETE FROM column_lineage_edges
+             WHERE pipeline_id = ?1 AND environment = ?2",
+            params![pipeline_id, environment],
+        )?;
+        let mut stmt = conn.prepare(
+            "INSERT INTO column_lineage_edges
+                (pipeline_id, environment,
+                 downstream_node_id, downstream_column,
+                 downstream_is_external, downstream_resource_fingerprint,
+                 upstream_node_id, upstream_column,
+                 upstream_is_external, upstream_resource_fingerprint,
+                 relationship, expression_text, confidence,
+                 derived_at, source_run_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        )?;
+        for e in edges {
+            let downstream_is_external = e.edge.downstream_resource.is_some() as i32;
+            let upstream_is_external = e.edge.upstream_resource.is_some() as i32;
+            stmt.execute(params![
+                e.pipeline_id,
+                e.environment,
+                e.edge
+                    .downstream_node
+                    .as_ref()
+                    .map(|n| n.0.as_str())
+                    .unwrap_or(""),
+                e.edge.downstream_column,
+                downstream_is_external,
+                e.edge.downstream_resource.as_ref().map(|r| r.0.as_str()),
+                e.edge.upstream_node.as_ref().map(|n| n.0.as_str()),
+                e.edge.upstream_column,
+                upstream_is_external,
+                e.edge.upstream_resource.as_ref().map(|r| r.0.as_str()),
+                e.edge.relationship.to_string(),
+                e.edge.expression_text,
+                e.edge.confidence.to_string(),
+                e.derived_at,
+                e.source_run_id,
+            ])?;
+        }
+        Ok(())
+    }
+
+    fn load_column_edges(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, pipeline_id, environment,
+                    downstream_node_id, downstream_column,
+                    downstream_is_external, downstream_resource_fingerprint,
+                    upstream_node_id, upstream_column,
+                    upstream_is_external, upstream_resource_fingerprint,
+                    relationship, expression_text, confidence,
+                    derived_at, source_run_id
+             FROM column_lineage_edges
+             WHERE pipeline_id = ?1 AND environment = ?2
+             ORDER BY downstream_node_id, downstream_column",
+        )?;
+        let mut rows = stmt.query(params![pipeline_id, environment])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_stored_column_edge(row)?);
+        }
+        Ok(out)
+    }
+
+    fn load_column_edges_for_node(
+        &self,
+        pipeline_id: &str,
+        environment: &str,
+        node_id: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, pipeline_id, environment,
+                    downstream_node_id, downstream_column,
+                    downstream_is_external, downstream_resource_fingerprint,
+                    upstream_node_id, upstream_column,
+                    upstream_is_external, upstream_resource_fingerprint,
+                    relationship, expression_text, confidence,
+                    derived_at, source_run_id
+             FROM column_lineage_edges
+             WHERE pipeline_id = ?1 AND environment = ?2
+               AND downstream_node_id = ?3
+             ORDER BY downstream_column",
+        )?;
+        let mut rows = stmt.query(params![pipeline_id, environment, node_id])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_stored_column_edge(row)?);
+        }
+        Ok(out)
+    }
+
+    fn all_column_edges(
+        &self,
+        environment: &str,
+    ) -> Result<Vec<StoredColumnEdge>, ColumnLineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, pipeline_id, environment,
+                    downstream_node_id, downstream_column,
+                    downstream_is_external, downstream_resource_fingerprint,
+                    upstream_node_id, upstream_column,
+                    upstream_is_external, upstream_resource_fingerprint,
+                    relationship, expression_text, confidence,
+                    derived_at, source_run_id
+             FROM column_lineage_edges
+             WHERE environment = ?1
+             ORDER BY pipeline_id, downstream_node_id, downstream_column",
+        )?;
+        let mut rows = stmt.query(params![environment])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row_to_stored_column_edge(row)?);
+        }
+        Ok(out)
+    }
+
+    fn delete_column_edges(&self, pipeline_id: &str) -> Result<(), ColumnLineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM column_lineage_edges WHERE pipeline_id = ?1",
+            params![pipeline_id],
+        )?;
+        Ok(())
+    }
+
+    fn enforce_column_lineage_retention(
+        &self,
+        older_than: &str,
+    ) -> Result<u64, ColumnLineageStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute(
+            "DELETE FROM column_lineage_edges WHERE derived_at < ?1",
+            params![older_than],
+        )?;
+        Ok(deleted as u64)
+    }
+}
+
+fn row_to_stored_column_edge(
+    row: &rusqlite::Row<'_>,
+) -> Result<StoredColumnEdge, ColumnLineageStoreError> {
+    let id: i64 = row.get(0)?;
+    let pipeline_id: String = row.get(1)?;
+    let environment: String = row.get(2)?;
+    let downstream_node_id: String = row.get(3)?;
+    let downstream_column: String = row.get(4)?;
+    let downstream_is_external: i32 = row.get(5)?;
+    let downstream_resource_fp: Option<String> = row.get(6)?;
+    let upstream_node_id: Option<String> = row.get(7)?;
+    let upstream_column: String = row.get(8)?;
+    let upstream_is_external: i32 = row.get(9)?;
+    let upstream_resource_fp: Option<String> = row.get(10)?;
+    let relationship_str: String = row.get(11)?;
+    let expression_text: Option<String> = row.get(12)?;
+    let confidence_str: String = row.get(13)?;
+    let derived_at: String = row.get(14)?;
+    let source_run_id: Option<String> = row.get(15)?;
+
+    let relationship = parse_relationship_kind(&relationship_str);
+    let confidence = parse_confidence(&confidence_str);
+
+    let downstream_node = if downstream_node_id.is_empty() {
+        None
+    } else {
+        Some(NodeId::new(downstream_node_id))
+    };
+    let upstream_node = upstream_node_id.filter(|s| !s.is_empty()).map(NodeId::new);
+    let downstream_resource = if downstream_is_external != 0 {
+        downstream_resource_fp.map(ResourceFingerprint::new)
+    } else {
+        None
+    };
+    let upstream_resource = if upstream_is_external != 0 {
+        upstream_resource_fp.map(ResourceFingerprint::new)
+    } else {
+        None
+    };
+
+    Ok(StoredColumnEdge {
+        id: Some(id),
+        pipeline_id,
+        environment,
+        edge: ColumnEdge {
+            upstream_column,
+            upstream_node,
+            upstream_resource,
+            downstream_column,
+            downstream_node,
+            downstream_resource,
+            relationship,
+            expression_text,
+            confidence,
+        },
+        derived_at,
+        source_run_id,
+    })
+}
+
+fn parse_relationship_kind(s: &str) -> RelationshipKind {
+    match s {
+        "direct" => RelationshipKind::Direct,
+        "derived" => RelationshipKind::Derived,
+        "cast" => RelationshipKind::Cast,
+        "filter" => RelationshipKind::Filter,
+        "join_key" => RelationshipKind::JoinKey,
+        "join_passthrough" => RelationshipKind::JoinPassthrough,
+        "group_by" => RelationshipKind::GroupBy,
+        "aggregate_input" => RelationshipKind::AggregateInput,
+        "window_partition" => RelationshipKind::WindowPartition,
+        "window_order" => RelationshipKind::WindowOrder,
+        "window_input" => RelationshipKind::WindowInput,
+        _ => RelationshipKind::Opaque,
+    }
+}
+
+fn parse_confidence(s: &str) -> Confidence {
+    match s {
+        "exact" => Confidence::Exact,
+        "lazyframe" => Confidence::LazyFrame,
+        "annotation" => Confidence::Annotation,
+        _ => Confidence::Opaque,
+    }
+}
+
 fn row_to_incremental_state(
     row: &rusqlite::Row<'_>,
 ) -> Result<IncrementalState, IncrementalStateError> {
@@ -1161,5 +1442,269 @@ mod tests {
         let remaining = store.query_observations("dev", 0).unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].run_id, "new-run");
+    }
+
+    // -- Column lineage storage tests (planning doc 35) --------------------
+
+    fn make_edge(
+        upstream_node: &str,
+        upstream_col: &str,
+        downstream_node: &str,
+        downstream_col: &str,
+        relationship: RelationshipKind,
+        confidence: Confidence,
+    ) -> StoredColumnEdge {
+        StoredColumnEdge {
+            id: None,
+            pipeline_id: "p1".into(),
+            environment: "dev".into(),
+            edge: ColumnEdge {
+                upstream_column: upstream_col.into(),
+                upstream_node: Some(NodeId::new(upstream_node)),
+                upstream_resource: None,
+                downstream_column: downstream_col.into(),
+                downstream_node: Some(NodeId::new(downstream_node)),
+                downstream_resource: None,
+                relationship,
+                expression_text: None,
+                confidence,
+            },
+            derived_at: "2026-04-09T00:00:00Z".into(),
+            source_run_id: Some("run-1".into()),
+        }
+    }
+
+    #[test]
+    fn column_lineage_round_trip() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        // Empty store returns empty vec.
+        assert!(store.load_column_edges("p1", "dev").unwrap().is_empty());
+
+        // Save edges.
+        let e1 = make_edge(
+            "src",
+            "id",
+            "xform",
+            "id",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        let e2 = make_edge(
+            "src",
+            "amount",
+            "xform",
+            "total",
+            RelationshipKind::Derived,
+            Confidence::Exact,
+        );
+        store
+            .save_column_edges("p1", "dev", &[e1.clone(), e2.clone()])
+            .unwrap();
+
+        let loaded = store.load_column_edges("p1", "dev").unwrap();
+        assert_eq!(loaded.len(), 2);
+        // Verify fields round-trip correctly.
+        assert_eq!(loaded[0].edge.downstream_column, "id");
+        assert_eq!(loaded[0].edge.upstream_column, "id");
+        assert_eq!(loaded[0].edge.relationship, RelationshipKind::Direct);
+        assert_eq!(loaded[0].edge.confidence, Confidence::Exact);
+        assert_eq!(loaded[0].source_run_id.as_deref(), Some("run-1"));
+        assert_eq!(loaded[1].edge.downstream_column, "total");
+        assert_eq!(loaded[1].edge.relationship, RelationshipKind::Derived);
+    }
+
+    #[test]
+    fn column_lineage_atomic_replace() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let e1 = make_edge(
+            "src",
+            "id",
+            "xform",
+            "id",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        store.save_column_edges("p1", "dev", &[e1]).unwrap();
+        assert_eq!(store.load_column_edges("p1", "dev").unwrap().len(), 1);
+
+        // Replace with a different set — old edges disappear.
+        let e2 = make_edge(
+            "src",
+            "name",
+            "xform",
+            "full_name",
+            RelationshipKind::Derived,
+            Confidence::Exact,
+        );
+        store.save_column_edges("p1", "dev", &[e2]).unwrap();
+        let loaded = store.load_column_edges("p1", "dev").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].edge.downstream_column, "full_name");
+    }
+
+    #[test]
+    fn column_lineage_environment_isolation() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let e1 = make_edge(
+            "src",
+            "id",
+            "xform",
+            "id",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        store.save_column_edges("p1", "dev", &[e1]).unwrap();
+
+        // prod has no edges.
+        assert!(store.load_column_edges("p1", "prod").unwrap().is_empty());
+
+        // all_column_edges filters by environment.
+        let all_dev = store.all_column_edges("dev").unwrap();
+        assert_eq!(all_dev.len(), 1);
+        let all_prod = store.all_column_edges("prod").unwrap();
+        assert!(all_prod.is_empty());
+    }
+
+    #[test]
+    fn column_lineage_load_for_node() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let e1 = make_edge(
+            "src",
+            "id",
+            "xform1",
+            "id",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        let e2 = make_edge(
+            "src",
+            "name",
+            "xform2",
+            "name",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        store.save_column_edges("p1", "dev", &[e1, e2]).unwrap();
+
+        let node1 = store
+            .load_column_edges_for_node("p1", "dev", "xform1")
+            .unwrap();
+        assert_eq!(node1.len(), 1);
+        assert_eq!(node1[0].edge.downstream_column, "id");
+
+        let node2 = store
+            .load_column_edges_for_node("p1", "dev", "xform2")
+            .unwrap();
+        assert_eq!(node2.len(), 1);
+        assert_eq!(node2[0].edge.downstream_column, "name");
+    }
+
+    #[test]
+    fn column_lineage_delete() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let e1 = make_edge(
+            "src",
+            "id",
+            "xform",
+            "id",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        store.save_column_edges("p1", "dev", &[e1.clone()]).unwrap();
+        store.save_column_edges("p1", "prod", &[e1]).unwrap();
+
+        // Delete removes all environments.
+        store.delete_column_edges("p1").unwrap();
+        assert!(store.load_column_edges("p1", "dev").unwrap().is_empty());
+        assert!(store.load_column_edges("p1", "prod").unwrap().is_empty());
+    }
+
+    #[test]
+    fn column_lineage_retention() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let mut old = make_edge(
+            "src",
+            "id",
+            "xform",
+            "id",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        old.derived_at = "2025-01-01T00:00:00Z".into();
+        let mut recent = make_edge(
+            "src",
+            "name",
+            "xform",
+            "name",
+            RelationshipKind::Direct,
+            Confidence::Exact,
+        );
+        recent.derived_at = "2026-04-09T00:00:00Z".into();
+
+        store
+            .save_column_edges("p1", "dev", &[old, recent])
+            .unwrap();
+
+        let deleted = store
+            .enforce_column_lineage_retention("2026-01-01T00:00:00Z")
+            .unwrap();
+        assert_eq!(deleted, 1);
+
+        let remaining = store.load_column_edges("p1", "dev").unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].edge.downstream_column, "name");
+    }
+
+    #[test]
+    fn column_lineage_all_relationship_kinds_round_trip() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let kinds = [
+            RelationshipKind::Direct,
+            RelationshipKind::Derived,
+            RelationshipKind::Cast,
+            RelationshipKind::Filter,
+            RelationshipKind::JoinKey,
+            RelationshipKind::JoinPassthrough,
+            RelationshipKind::GroupBy,
+            RelationshipKind::AggregateInput,
+            RelationshipKind::WindowPartition,
+            RelationshipKind::WindowOrder,
+            RelationshipKind::WindowInput,
+            RelationshipKind::Opaque,
+        ];
+
+        let edges: Vec<StoredColumnEdge> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| {
+                make_edge(
+                    "src",
+                    &format!("col_{i}"),
+                    "xform",
+                    &format!("out_{i}"),
+                    *kind,
+                    Confidence::Exact,
+                )
+            })
+            .collect();
+
+        store.save_column_edges("p1", "dev", &edges).unwrap();
+        let loaded = store.load_column_edges("p1", "dev").unwrap();
+        assert_eq!(loaded.len(), kinds.len());
+
+        for (i, kind) in kinds.iter().enumerate() {
+            let edge = loaded
+                .iter()
+                .find(|e| e.edge.upstream_column == format!("col_{i}"))
+                .unwrap();
+            assert_eq!(edge.edge.relationship, *kind);
+        }
     }
 }

@@ -13,9 +13,7 @@ use flux_datafusion::backfill::{BackfillEvent, BackfillRunOptions};
 use flux_datafusion::provider::{
     PipelineSink, ProviderError, ProviderRegistry, SourceConnector, WriteOptions, WriteStats,
 };
-use flux_datafusion::{
-    BackfillStorage, ExecutionOptions, SqliteBackfillStore, SqliteRunStore,
-};
+use flux_datafusion::{BackfillStorage, ExecutionOptions, SqliteBackfillStore, SqliteRunStore};
 use flux_engine::backfill::*;
 use flux_engine::edge::Edge;
 use flux_engine::node::*;
@@ -301,11 +299,17 @@ async fn coordinator_respects_concurrency_limit() {
         }),
     );
 
-    let store: Arc<dyn BackfillStorage> =
-        Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
+    let store: Arc<dyn BackfillStorage> = Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
 
     let range = RangeDefinition::List {
-        values: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()],
+        values: vec![
+            "a".into(),
+            "b".into(),
+            "c".into(),
+            "d".into(),
+            "e".into(),
+            "f".into(),
+        ],
         variable_mapping: [("v".to_string(), "$iteration.value".to_string())]
             .into_iter()
             .collect(),
@@ -324,10 +328,9 @@ async fn coordinator_respects_concurrency_limit() {
         progress: opts.progress,
     };
 
-    let (_, progress) =
-        flux_datafusion::backfill::start_backfill(backfill, opts)
-            .await
-            .unwrap();
+    let (_, progress) = flux_datafusion::backfill::start_backfill(backfill, opts)
+        .await
+        .unwrap();
 
     // All 6 iterations should succeed
     assert_eq!(progress.succeeded, 6);
@@ -343,8 +346,7 @@ async fn coordinator_respects_concurrency_limit() {
 /// Test that resume skips already-succeeded iterations.
 #[tokio::test]
 async fn resume_skips_succeeded_iterations() {
-    let store: Arc<dyn BackfillStorage> =
-        Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
+    let store: Arc<dyn BackfillStorage> = Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
 
     let range = RangeDefinition::List {
         values: vec!["a".into(), "b".into(), "c".into()],
@@ -428,15 +430,17 @@ async fn resume_skips_succeeded_iterations() {
     let (opts, mut rx) = make_opts(pipeline, reg, store.clone());
 
     let bf_id = BackfillId("resume-test".into());
-    let (_, progress) =
-        flux_datafusion::backfill::resume_backfill(&bf_id, opts)
-            .await
-            .unwrap();
+    let (_, progress) = flux_datafusion::backfill::resume_backfill(&bf_id, opts)
+        .await
+        .unwrap();
 
     // Iteration 0 ("a") was already succeeded, so it should be skipped.
     // Iterations 1 ("b") and 2 ("c") should run and succeed.
     // The returned progress reflects all iterations (including the pre-existing success).
-    assert_eq!(progress.succeeded, 3, "all 3 iterations should show as succeeded");
+    assert_eq!(
+        progress.succeeded, 3,
+        "all 3 iterations should show as succeeded"
+    );
     assert_eq!(progress.failed, 0);
 
     // Collect events and verify iteration "a" is not among the started events.
@@ -455,8 +459,7 @@ async fn resume_skips_succeeded_iterations() {
 /// Test that cancellation stops new iterations from starting.
 #[tokio::test]
 async fn cancellation_stops_new_iterations() {
-    let store: Arc<dyn BackfillStorage> =
-        Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
+    let store: Arc<dyn BackfillStorage> = Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
 
     let range = RangeDefinition::List {
         values: (0..10).map(|i| i.to_string()).collect(),
@@ -469,10 +472,7 @@ async fn cancellation_stops_new_iterations() {
 
     let pipeline = make_pipeline(
         "cancel-pipe",
-        vec![
-            source_node("src"),
-            sink_node("out"),
-        ],
+        vec![source_node("src"), sink_node("out")],
         vec![Edge::new("src", "out")],
     );
 
@@ -484,18 +484,25 @@ async fn cancellation_stops_new_iterations() {
     // Cancel immediately — the coordinator should not start (many) iterations.
     cancel.store(true, Ordering::Relaxed);
 
-    let (_, progress) =
-        flux_datafusion::backfill::start_backfill(backfill, opts)
-            .await
-            .unwrap();
+    let (_, progress) = flux_datafusion::backfill::start_backfill(backfill, opts)
+        .await
+        .unwrap();
 
     // The backfill should be marked cancelled.
-    let bf = store.get_backfill(&BackfillId("cancel-test".into())).unwrap().unwrap();
+    let bf = store
+        .get_backfill(&BackfillId("cancel-test".into()))
+        .unwrap()
+        .unwrap();
     assert_eq!(bf.status, BackfillStatus::Cancelled);
 
     // Not all 10 iterations should have run.
-    let all_iterations = store.list_iterations(&BackfillId("cancel-test".into())).unwrap();
-    let pending_count = all_iterations.iter().filter(|i| i.status == IterationStatus::Pending).count();
+    let all_iterations = store
+        .list_iterations(&BackfillId("cancel-test".into()))
+        .unwrap();
+    let pending_count = all_iterations
+        .iter()
+        .filter(|i| i.status == IterationStatus::Pending)
+        .count();
     assert!(
         pending_count > 0,
         "expected some iterations to remain pending after cancellation"
@@ -505,8 +512,7 @@ async fn cancellation_stops_new_iterations() {
 /// Test that a failed iteration doesn't block subsequent ones (unless fail_fast).
 #[tokio::test]
 async fn failed_iteration_does_not_block_subsequent() {
-    let store: Arc<dyn BackfillStorage> =
-        Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
+    let store: Arc<dyn BackfillStorage> = Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
 
     let range = RangeDefinition::List {
         values: vec!["a".into(), "b".into(), "c".into()],
@@ -528,29 +534,38 @@ async fn failed_iteration_does_not_block_subsequent() {
 
     // Use a failing sink — all iterations will fail, but they should all run.
     let mut reg = ProviderRegistry::new();
-    reg.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
+    reg.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
     reg.register_sink("failing", Arc::new(FailingSink));
 
     let (opts, _rx) = make_opts(pipeline, reg, store.clone());
 
-    let (_, progress) =
-        flux_datafusion::backfill::start_backfill(backfill, opts)
-            .await
-            .unwrap();
+    let (_, progress) = flux_datafusion::backfill::start_backfill(backfill, opts)
+        .await
+        .unwrap();
 
     // All 3 should have failed, but all should have run (not blocked).
-    assert_eq!(progress.failed, 3, "all iterations should have been attempted");
+    assert_eq!(
+        progress.failed, 3,
+        "all iterations should have been attempted"
+    );
     assert_eq!(progress.succeeded, 0);
 
-    let bf = store.get_backfill(&BackfillId("fail-continue".into())).unwrap().unwrap();
+    let bf = store
+        .get_backfill(&BackfillId("fail-continue".into()))
+        .unwrap()
+        .unwrap();
     assert_eq!(bf.status, BackfillStatus::Failed);
 }
 
 /// Test that fail_fast stops after the first failure.
 #[tokio::test]
 async fn fail_fast_stops_after_first_failure() {
-    let store: Arc<dyn BackfillStorage> =
-        Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
+    let store: Arc<dyn BackfillStorage> = Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
 
     let range = RangeDefinition::List {
         values: (0..10).map(|i| i.to_string()).collect(),
@@ -572,33 +587,49 @@ async fn fail_fast_stops_after_first_failure() {
     );
 
     let mut reg = ProviderRegistry::new();
-    reg.register_source("mock", Arc::new(MockSourceConnector { batches: vec![test_batch()] }));
+    reg.register_source(
+        "mock",
+        Arc::new(MockSourceConnector {
+            batches: vec![test_batch()],
+        }),
+    );
     reg.register_sink("failing", Arc::new(FailingSink));
 
     let (opts, _rx) = make_opts(pipeline, reg, store.clone());
 
-    let (_, progress) =
-        flux_datafusion::backfill::start_backfill(backfill, opts)
-            .await
-            .unwrap();
+    let (_, progress) = flux_datafusion::backfill::start_backfill(backfill, opts)
+        .await
+        .unwrap();
 
     // With fail_fast and serial execution (concurrency=1), the coordinator will
     // spawn up to 2 iterations before the fail_fast flag is observed: the first
     // iteration fails and sets had_failure, but the second is already waiting on
     // the semaphore. The third and subsequent iterations see the flag and stop.
-    assert!(progress.failed <= 2, "fail_fast should limit failures, got {}", progress.failed);
+    assert!(
+        progress.failed <= 2,
+        "fail_fast should limit failures, got {}",
+        progress.failed
+    );
     assert!(progress.failed >= 1, "at least one failure expected");
     // Remaining iterations should be pending.
-    let all_iterations = store.list_iterations(&BackfillId("fail-fast-test".into())).unwrap();
-    let pending_count = all_iterations.iter().filter(|i| i.status == IterationStatus::Pending).count();
-    assert!(pending_count >= 8, "most iterations should remain pending, got {} pending", pending_count);
+    let all_iterations = store
+        .list_iterations(&BackfillId("fail-fast-test".into()))
+        .unwrap();
+    let pending_count = all_iterations
+        .iter()
+        .filter(|i| i.status == IterationStatus::Pending)
+        .count();
+    assert!(
+        pending_count >= 8,
+        "most iterations should remain pending, got {} pending",
+        pending_count
+    );
 }
 
 /// Test that full_refresh is set in execution options.
 #[tokio::test]
 async fn full_refresh_applied_for_backfill() {
-    let store: Arc<dyn BackfillStorage> =
-        Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
+    let store: Arc<dyn BackfillStorage> = Arc::new(SqliteBackfillStore::open_in_memory().unwrap());
 
     let range = RangeDefinition::List {
         values: vec!["a".into()],
@@ -612,10 +643,7 @@ async fn full_refresh_applied_for_backfill() {
 
     let pipeline = make_pipeline(
         "fr-pipe",
-        vec![
-            source_node("src"),
-            sink_node("out"),
-        ],
+        vec![source_node("src"), sink_node("out")],
         vec![Edge::new("src", "out")],
     );
 
@@ -624,16 +652,21 @@ async fn full_refresh_applied_for_backfill() {
     let (opts, _rx) = make_opts(pipeline, reg, store.clone());
 
     // Verify the base options have full_refresh = false by default.
-    assert!(!opts.base_options.full_refresh, "base_options default should be false");
+    assert!(
+        !opts.base_options.full_refresh,
+        "base_options default should be false"
+    );
 
-    let (_, _progress) =
-        flux_datafusion::backfill::start_backfill(backfill, opts)
-            .await
-            .unwrap();
+    let (_, _progress) = flux_datafusion::backfill::start_backfill(backfill, opts)
+        .await
+        .unwrap();
 
     // The full_refresh flag is applied per-iteration inside the coordinator.
     // We verify the backfill completed successfully — the coordinator overrides
     // the base full_refresh flag with the backfill's full_refresh value.
-    let bf = store.get_backfill(&BackfillId("fr-test".into())).unwrap().unwrap();
+    let bf = store
+        .get_backfill(&BackfillId("fr-test".into()))
+        .unwrap()
+        .unwrap();
     assert_eq!(bf.status, BackfillStatus::Completed);
 }
