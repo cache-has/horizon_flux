@@ -7,7 +7,7 @@ use flux_connectors::ConnectorRegistry;
 use flux_datafusion::{
     BackfillStorage, ColumnLineageStorage, EnvironmentStorage, ExecutionEvent,
     IncrementalStateStorage, LineageStorage, OutputCache, RunStorage, SecretResolver,
-    SessionFactory,
+    SessionFactory, SlaStorage,
 };
 use flux_engine::PipelineStorage;
 use flux_plugin_host::PluginRegistry;
@@ -322,6 +322,9 @@ pub struct AppState {
     /// Optional OpenLineage client for emitting lineage events to external
     /// catalogs (planning doc 36, sub-feature 4).
     pub openlineage_client: Option<Arc<flux_observability::openlineage::OpenLineageClient>>,
+    /// SLA evaluation storage (planning doc 37, sub-feature 3). `None` when
+    /// the backend has not been configured.
+    pub sla_store: Option<Arc<dyn SlaStorage>>,
 }
 
 impl AppState {

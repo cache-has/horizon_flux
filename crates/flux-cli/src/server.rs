@@ -110,6 +110,7 @@ pub fn start(
     let trigger_store = stores.trigger_store;
     let backfill_store = stores.backfill_store;
     let column_lineage_store = stores.column_lineage_store;
+    let sla_store = stores.sla_store;
     let connector_registry = Arc::new(flux_connectors::default_registry());
     let environment_store = stores.environment_store;
 
@@ -196,6 +197,7 @@ pub fn start(
         column_lineage_store,
         column_lineage_event_tx: flux_server::AppState::new_column_lineage_event_channel(),
         openlineage_client,
+        sla_store,
     };
 
     #[cfg(feature = "tray")]
@@ -217,12 +219,25 @@ pub fn start(
         // Spawn the scheduler tick loop (evaluates cron, interval, and
         // file-arrival triggers every 15 seconds).
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sla_shutdown_rx = shutdown_rx.clone();
         let sched = scheduler.clone();
         tokio::spawn(async move {
             flux_scheduler::run_scheduler_loop(
                 sched,
                 std::time::Duration::from_secs(15),
                 shutdown_rx,
+            )
+            .await;
+        });
+
+        // Spawn the SLA evaluator: periodically checks resource freshness
+        // against declared SLAs and emits events/metrics (planning doc 37).
+        let sla_state = app_state.clone();
+        tokio::spawn(async move {
+            flux_server::sla_evaluator::run_sla_evaluator_loop(
+                sla_state,
+                std::time::Duration::from_secs(60),
+                sla_shutdown_rx,
             )
             .await;
         });

@@ -49,6 +49,8 @@ pub enum FluxEvent {
     PluginCrashed(PluginCrashed),
     SchemaChangeDetected(SchemaChangeDetected),
     TestAssertionFailed(TestAssertionFailed),
+    SlaBreach(SlaBreach),
+    SlaWarning(SlaWarning),
 }
 
 impl FluxEvent {
@@ -69,6 +71,8 @@ impl FluxEvent {
             Self::PluginCrashed(_) => "plugin_crashed",
             Self::SchemaChangeDetected(_) => "schema_change_detected",
             Self::TestAssertionFailed(_) => "test_assertion_failed",
+            Self::SlaBreach(_) => "sla_breach",
+            Self::SlaWarning(_) => "sla_warning",
         }
     }
 
@@ -158,6 +162,18 @@ impl FluxEvent {
                 environment: None,
                 run_id: Some(&e.run_id),
                 node_id: Some(&e.node_id),
+            },
+            Self::SlaBreach(e) => EventCorrelation {
+                pipeline_id: e.producer_pipeline.as_deref(),
+                environment: None,
+                run_id: None,
+                node_id: None,
+            },
+            Self::SlaWarning(e) => EventCorrelation {
+                pipeline_id: e.producer_pipeline.as_deref(),
+                environment: None,
+                run_id: None,
+                node_id: None,
             },
         }
     }
@@ -297,4 +313,23 @@ pub struct TestAssertionFailed {
     pub node_id: String,
     pub assertion: String,
     pub violating_rows: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SlaBreach {
+    pub resource_fingerprint: String,
+    pub age: String,
+    pub max_age: String,
+    pub producer_pipeline: Option<String>,
+    pub last_success_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SlaWarning {
+    pub resource_fingerprint: String,
+    pub age: String,
+    pub warn_at: String,
+    pub max_age: String,
+    pub producer_pipeline: Option<String>,
+    pub last_success_at: Option<String>,
 }

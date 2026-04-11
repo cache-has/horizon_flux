@@ -718,7 +718,7 @@ async fn execute_with_run_store_persists_history() {
     assert!(loaded.error.is_none());
 
     // Verify list_runs
-    let runs = store.list_runs(Some("persisted"), 10).unwrap();
+    let runs = store.list_runs(Some("persisted"), 10, 0).unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].id, run.id);
 }
@@ -768,7 +768,7 @@ async fn failed_run_persists_error() {
     assert!(matches!(err, ExecutorError::Node { .. }));
 
     // Run should be persisted as Failed
-    let runs = store.list_runs(Some("failing"), 10).unwrap();
+    let runs = store.list_runs(Some("failing"), 10, 0).unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].status, RunStatus::Failed);
     assert!(runs[0].error.is_some());
@@ -884,7 +884,7 @@ fn run_store_lifecycle() {
     let run = store.create_run("lifecycle", "prod").unwrap();
 
     let start = SystemTime::now();
-    store.set_running(&run.id, start).unwrap();
+    store.set_running(&run.id, start, None).unwrap();
 
     let loaded = store.get_run(&run.id).unwrap().unwrap();
     assert_eq!(loaded.status, RunStatus::Running);
@@ -907,13 +907,13 @@ fn run_store_list_filters_by_pipeline() {
     store.create_run("beta", "dev").unwrap();
     store.create_run("alpha", "prod").unwrap();
 
-    let alpha_runs = store.list_runs(Some("alpha"), 10).unwrap();
+    let alpha_runs = store.list_runs(Some("alpha"), 10, 0).unwrap();
     assert_eq!(alpha_runs.len(), 2);
 
-    let beta_runs = store.list_runs(Some("beta"), 10).unwrap();
+    let beta_runs = store.list_runs(Some("beta"), 10, 0).unwrap();
     assert_eq!(beta_runs.len(), 1);
 
-    let all_runs = store.list_runs(None, 10).unwrap();
+    let all_runs = store.list_runs(None, 10, 0).unwrap();
     assert_eq!(all_runs.len(), 3);
 }
 

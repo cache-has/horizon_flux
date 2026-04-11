@@ -10,6 +10,7 @@
 
 use crate::lineage::{BindingDirection, LineageGraph, ResourceFingerprint};
 use crate::pipeline_store::PipelineId;
+use crate::sla::SlaConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -34,6 +35,9 @@ pub struct ResourceAnnotation {
     pub columns: BTreeMap<String, ColumnAnnotation>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub custom: BTreeMap<String, serde_yaml::Value>,
+    /// Freshness SLA configuration (planning doc 37, sub-feature 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sla: Option<SlaConfig>,
 }
 
 /// The `resource:` block in an annotation file. Only `fingerprint` is required.
@@ -466,7 +470,7 @@ fn default_name_from_fingerprint(fp: &ResourceFingerprint) -> String {
 
 /// Merge auto-detected schema columns with annotation column descriptions.
 /// Annotations for columns not in the schema are appended at the end.
-fn merge_columns(
+pub fn merge_columns(
     schema: &[SchemaColumn],
     annotations: &BTreeMap<String, ColumnAnnotation>,
 ) -> Vec<MergedColumn> {
@@ -1017,6 +1021,7 @@ custom:
                     tags: vec!["pii".to_string()],
                     columns: BTreeMap::new(),
                     custom: BTreeMap::new(),
+                    sla: None,
                 },
                 path: PathBuf::from("metadata/postgres/orders.yaml"),
             },
@@ -1119,6 +1124,7 @@ custom:
                     tags: Vec::new(),
                     columns: BTreeMap::new(),
                     custom: BTreeMap::new(),
+                    sla: None,
                 },
                 path: PathBuf::from("metadata/postgres/gone.yaml"),
             },

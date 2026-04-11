@@ -607,7 +607,7 @@ pub fn history(
 
     let runs = stores
         .run_store
-        .list_runs(Some(&record.pipeline.name), limit)
+        .list_runs(Some(&record.pipeline.name), limit, 0)
         .context("failed to list runs")?;
 
     match format {

@@ -14,7 +14,7 @@ vi.mock('../../api/pipelines', async () => {
   return {
     ...actual,
     previewPipeline: vi.fn().mockRejectedValue(new Error('not available')),
-    fetchPipelineRuns: vi.fn().mockRejectedValue(new Error('not available')),
+    fetchPipelineRunsPaginated: vi.fn().mockRejectedValue(new Error('not available')),
   };
 });
 

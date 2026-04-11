@@ -203,6 +203,10 @@ pub struct PipelineRun {
     /// Test node results from the pipeline run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub test_results: Vec<TestResultSummary>,
+    /// How this run was triggered (e.g. "api", "cron:6h", "cli", "pipeline_completion:upstream").
+    /// Populated when the run transitions to `Running`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triggered_by: Option<String>,
 }
 
 impl PipelineRun {
@@ -218,6 +222,7 @@ impl PipelineRun {
             node_stats: Vec::new(),
             error: None,
             test_results: Vec::new(),
+            triggered_by: None,
         }
     }
 

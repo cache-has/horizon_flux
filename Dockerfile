@@ -20,25 +20,40 @@ COPY crates/flux-server/Cargo.toml crates/flux-server/Cargo.toml
 COPY crates/flux-tray/Cargo.toml crates/flux-tray/Cargo.toml
 COPY crates/flux-cli/Cargo.toml crates/flux-cli/Cargo.toml
 COPY crates/flux-postgres/Cargo.toml crates/flux-postgres/Cargo.toml
+COPY crates/flux-observability/Cargo.toml crates/flux-observability/Cargo.toml
+COPY crates/flux-plugin-host/Cargo.toml crates/flux-plugin-host/Cargo.toml
+COPY crates/flux-plugin-protocol/Cargo.toml crates/flux-plugin-protocol/Cargo.toml
+COPY crates/flux-plugin-sdk/Cargo.toml crates/flux-plugin-sdk/Cargo.toml
+COPY crates/flux-scheduler/Cargo.toml crates/flux-scheduler/Cargo.toml
+COPY examples/plugins/parquet-plugin/Cargo.toml examples/plugins/parquet-plugin/Cargo.toml
 
 # Create dummy source files so cargo can resolve the workspace
 RUN for crate in flux-engine flux-datafusion flux-connectors flux-secrets \
-        flux-server flux-tray flux-cli flux-postgres; do \
+        flux-server flux-tray flux-cli flux-postgres \
+        flux-observability flux-plugin-host flux-plugin-protocol \
+        flux-plugin-sdk flux-scheduler; do \
         mkdir -p "crates/$crate/src" && echo "" > "crates/$crate/src/lib.rs"; \
     done \
-    && mkdir -p crates/flux-cli/src && echo "fn main() {}" > crates/flux-cli/src/main.rs
+    && mkdir -p crates/flux-cli/src && echo "fn main() {}" > crates/flux-cli/src/main.rs \
+    && mkdir -p examples/plugins/parquet-plugin/src && echo "fn main() {}" > examples/plugins/parquet-plugin/src/main.rs
 
 # Pre-build dependencies (cached unless Cargo.toml/Cargo.lock change)
 RUN cargo build --release --bin horizon-flux --no-default-features 2>/dev/null || true
 
 # Copy real source and frontend
 COPY crates/ crates/
+COPY examples/ examples/
+# Invalidate cargo's fingerprint cache so it recompiles with real sources
+RUN find crates examples -name '*.rs' -exec touch {} +
+
+# Build frontend (npm workspace: lock file is at root)
+COPY package.json package-lock.json ./
 COPY frontend/ frontend/
+RUN npm ci --workspace=frontend && npm run build --workspace=frontend
 
-# Build frontend
-RUN cd frontend && npm ci && npm run build
-
-# Build the release binary without tray support
+# Build the release binary without tray support.
+# Override codegen-units to reduce peak memory usage in constrained Docker builds.
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_PROFILE_RELEASE_LTO=thin
 RUN cargo build --release --bin horizon-flux --no-default-features
 
 # ── Runtime stage ────────────────────────────────────────────────────

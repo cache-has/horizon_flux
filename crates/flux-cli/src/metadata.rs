@@ -212,7 +212,7 @@ fn handle_export(to_url: &str, format: OutputFormat, metadata_url: Option<&str>)
     // Export runs.
     let runs = source
         .run_store
-        .list_runs(None, u32::MAX)
+        .list_runs(None, u32::MAX, 0)
         .context("failed to list runs")?;
     let mut exported_runs = 0u32;
     for run in &runs {
@@ -371,7 +371,7 @@ fn import_to_sqlite(
 
     // Import runs.
     let runs = source_runs
-        .list_runs(None, u32::MAX)
+        .list_runs(None, u32::MAX, 0)
         .context("failed to list source runs")?;
     let mut imported_runs = 0u32;
     for run in &runs {

@@ -65,6 +65,7 @@ fn test_state_with_metadata(metadata_dir: std::path::PathBuf) -> AppState {
         column_lineage_store: None,
         column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
         openlineage_client: None,
+        sla_store: None,
     }
 }
 
@@ -473,7 +474,7 @@ async fn auto_derived_freshness_from_run_history() {
     let start_time = end_time - Duration::from_secs(60);
     let run = state.run_store.create_run("etl-orders", "default").unwrap();
     let run_id = run.id.clone();
-    state.run_store.set_running(&run_id, start_time).unwrap();
+    state.run_store.set_running(&run_id, start_time, None).unwrap();
     state
         .run_store
         .save_node_stats(

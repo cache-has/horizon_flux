@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     status        TEXT NOT NULL,
     start_time_ms BIGINT,
     end_time_ms   BIGINT,
-    error         TEXT
+    error         TEXT,
+    test_results  TEXT,
+    triggered_by  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_pipeline
@@ -73,6 +75,12 @@ CREATE TABLE IF NOT EXISTS node_run_stats (
 -- receipt landed don't have this column. Postgres supports the idempotent
 -- form so we can run it unconditionally.
 ALTER TABLE node_run_stats ADD COLUMN IF NOT EXISTS materialization_receipt TEXT;
+
+-- Doc 30 migration: test results on runs.
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS test_results TEXT;
+
+-- Doc 37 migration: trigger attribution on runs.
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS triggered_by TEXT;
 
 -- Incremental sink materialization state (planning doc 27).
 -- One row per (pipeline_id, node_id, environment); cascades on pipeline delete.
@@ -180,6 +188,33 @@ CREATE INDEX IF NOT EXISTS idx_cle_downstream_resource
     ON column_lineage_edges (downstream_resource_fingerprint, downstream_column);
 CREATE INDEX IF NOT EXISTS idx_cle_upstream_resource
     ON column_lineage_edges (upstream_resource_fingerprint, upstream_column);
+
+-- Failure reports captured when a node fails (planning doc 37).
+CREATE TABLE IF NOT EXISTS failure_reports (
+    run_id      TEXT   NOT NULL,
+    node_id     TEXT   NOT NULL,
+    report_json TEXT   NOT NULL,
+    captured_at BIGINT NOT NULL,
+    PRIMARY KEY (run_id, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_failure_reports_run ON failure_reports (run_id);
+
+-- SLA evaluations (planning doc 37, sub-feature 3).
+CREATE TABLE IF NOT EXISTS sla_evaluations (
+    fingerprint       TEXT   NOT NULL,
+    evaluated_at      TEXT   NOT NULL,
+    status            TEXT   NOT NULL,
+    age               TEXT,
+    max_age           TEXT   NOT NULL,
+    warn_at           TEXT,
+    producer_pipeline TEXT,
+    last_success_at   TEXT,
+    PRIMARY KEY (fingerprint, evaluated_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sla_evaluations_fp
+    ON sla_evaluations (fingerprint, evaluated_at DESC);
 "#;
 
 /// Ensure the database schema is up to date.

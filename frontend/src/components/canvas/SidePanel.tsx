@@ -9,7 +9,7 @@ import type { ApiNode, ApiColumnInfo, ApiSampleConfig, ApiTestResult, ApiAsserti
 import {
   previewPipeline,
   updatePipeline,
-  fetchPipelineRuns,
+  fetchPipelineRunsPaginated,
   fetchRunIncrementalStats,
   listPipelines,
   type ApiPreviewNodeResponse,
@@ -28,6 +28,7 @@ import {
   fetchDownstream,
   type LineageDirectionResponse,
 } from '../../api/lineage';
+import { ColumnLineageModal } from './ColumnLineageModal';
 import './SidePanel.css';
 
 // ---------------------------------------------------------------------------
@@ -168,6 +169,7 @@ interface RunStatsProps {
   stats: ApiNodeRunStats | null;
   role: string;
   receipt?: MaterializationReceipt | null;
+  onViewFailureReport?: () => void;
 }
 
 function formatWatermark(wm: { value: string; type: string } | undefined): string {
@@ -175,7 +177,7 @@ function formatWatermark(wm: { value: string; type: string } | undefined): strin
   return wm.value;
 }
 
-function RunStats({ stats, role, receipt }: RunStatsProps) {
+function RunStats({ stats, role, receipt, onViewFailureReport }: RunStatsProps) {
   if (!stats) {
     return <span className="side-panel__empty">No run data</span>;
   }
@@ -204,12 +206,23 @@ function RunStats({ stats, role, receipt }: RunStatsProps) {
         <span className="side-panel__kv-value">{formatDuration(stats.duration_ms)}</span>
       </div>
       {stats.error && (
-        <div className="side-panel__kv">
-          <span className="side-panel__kv-key">Error</span>
-          <span className="side-panel__kv-value" style={{ color: '#ef4444' }}>
-            {stats.error}
-          </span>
-        </div>
+        <>
+          <div className="side-panel__kv">
+            <span className="side-panel__kv-key">Error</span>
+            <span className="side-panel__kv-value" style={{ color: '#ef4444' }}>
+              {stats.error}
+            </span>
+          </div>
+          {onViewFailureReport && (
+            <button
+              className="side-panel__action-btn"
+              style={{ marginTop: 6, width: '100%' }}
+              onClick={onViewFailureReport}
+            >
+              View Failure Report
+            </button>
+          )}
+        </>
       )}
       {role === 'sink' && receipt && (
         <div data-testid="run-stats-receipt">
@@ -373,9 +386,11 @@ interface NodeContentProps {
   onCacheRowLimitChange?: (value: number | undefined) => void;
   onMaterializedChange?: (value: boolean) => void;
   feedsSink?: boolean;
+  latestRunId?: string;
+  onViewFailureReport?: (runId: string, nodeId: string) => void;
 }
 
-function SourceContent({ node, apiNode, preview, previewLoading, previewError, sampleMethod, runStats, sampleConfig, onSampleConfigChange, onCacheRowLimitChange }: NodeContentProps) {
+function SourceContent({ node, apiNode, preview, previewLoading, previewError, sampleMethod, runStats, sampleConfig, onSampleConfigChange, onCacheRowLimitChange, latestRunId, onViewFailureReport }: NodeContentProps) {
   const connector = apiNode?.connector ?? 'unknown';
   const config = apiNode?.config as Record<string, unknown> | undefined;
 
@@ -419,7 +434,7 @@ function SourceContent({ node, apiNode, preview, previewLoading, previewError, s
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Last Run</div>
-        <RunStats stats={runStats} role="source" />
+        <RunStats stats={runStats} role="source" onViewFailureReport={runStats?.error && latestRunId && onViewFailureReport ? () => onViewFailureReport(latestRunId, node.id) : undefined} />
       </div>
 
       <div className="side-panel__section">
@@ -461,6 +476,8 @@ function TransformContent({
   onCacheRowLimitChange,
   onMaterializedChange,
   feedsSink,
+  latestRunId,
+  onViewFailureReport,
 }: NodeContentProps) {
   const mode = apiNode?.mode ?? 'sql';
   const code = apiNode?.code ?? '';
@@ -519,7 +536,7 @@ function TransformContent({
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Last Run</div>
-        <RunStats stats={runStats} role="transform" />
+        <RunStats stats={runStats} role="transform" onViewFailureReport={runStats?.error && latestRunId && onViewFailureReport ? () => onViewFailureReport(latestRunId, node.id) : undefined} />
       </div>
 
       <div className="side-panel__section">
@@ -561,7 +578,7 @@ function TransformContent({
 // Sink node content
 // ---------------------------------------------------------------------------
 
-function SinkContent({ node, apiNode, runStats, receipt }: NodeContentProps) {
+function SinkContent({ node, apiNode, runStats, receipt, latestRunId, onViewFailureReport }: NodeContentProps) {
   const connector = apiNode?.connector ?? 'unknown';
   const config = apiNode?.config as Record<string, unknown> | undefined;
 
@@ -602,7 +619,7 @@ function SinkContent({ node, apiNode, runStats, receipt }: NodeContentProps) {
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Last Run</div>
-        <RunStats stats={runStats} role="sink" receipt={receipt} />
+        <RunStats stats={runStats} role="sink" receipt={receipt} onViewFailureReport={runStats?.error && latestRunId && onViewFailureReport ? () => onViewFailureReport(latestRunId, node.id) : undefined} />
       </div>
 
       <div className="side-panel__section">
@@ -955,7 +972,63 @@ function LineageSection({
 // Main SidePanel component
 // ---------------------------------------------------------------------------
 
-export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id: string) => void } = {}) {
+// ---------------------------------------------------------------------------
+// Run history list sub-component
+// ---------------------------------------------------------------------------
+
+function RunHistoryList({
+  runs,
+  onViewRunDetail,
+}: {
+  runs: ApiPipelineRun[];
+  onViewRunDetail?: (runId: string) => void;
+}) {
+  if (runs.length === 0) {
+    return <span className="side-panel__empty">No runs yet</span>;
+  }
+
+  return (
+    <div className="side-panel__run-history">
+      {runs.slice(0, 5).map((run) => {
+        const statusColor =
+          run.status === 'success' ? '#16a34a'
+          : run.status === 'failed' ? '#ef4444'
+          : run.status === 'running' ? '#2563eb'
+          : '#6b7280';
+        const startStr = run.start_time
+          ? new Date(run.start_time).toLocaleString([], {
+              month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+            })
+          : '—';
+
+        return (
+          <div
+            key={run.id}
+            className="side-panel__run-item"
+            onClick={() => onViewRunDetail?.(run.id)}
+            role={onViewRunDetail ? 'button' : undefined}
+            tabIndex={onViewRunDetail ? 0 : undefined}
+          >
+            <span
+              className="side-panel__run-status-dot"
+              style={{ background: statusColor }}
+              title={run.status}
+            />
+            <span className="side-panel__run-id">{run.id.slice(0, 8)}</span>
+            <span className="side-panel__run-date">{startStr}</span>
+            {run.triggered_by && (
+              <span className="side-panel__run-trigger" title={run.triggered_by}>
+                {run.triggered_by}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function SidePanel({ onNavigateToPipeline, onViewFailureReport, onViewRunDetail }: { onNavigateToPipeline?: (id: string) => void; onViewFailureReport?: (runId: string, nodeId: string) => void; onViewRunDetail?: (runId: string) => void } = {}) {
   const selectedNodeId = usePipelineStore((s) => s.selectedNodeId);
   const nodes = usePipelineStore((s) => s.nodes);
   const edges = usePipelineStore((s) => s.edges);
@@ -978,8 +1051,11 @@ export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
   const [testResults, setTestResults] = useState<Map<string, ApiTestResult>>(new Map());
   const [recentRuns, setRecentRuns] = useState<ApiPipelineRun[]>([]);
+  const [runsTotalCount, setRunsTotalCount] = useState(0);
+  const [loadingMoreRuns, setLoadingMoreRuns] = useState(false);
   const [receipts, setReceipts] = useState<Map<string, MaterializationReceipt>>(new Map());
   const [reExecute, setReExecute] = useState(false);
+  const [columnLineageOpen, setColumnLineageOpen] = useState(false);
   const lastRunCompletedAt = usePipelineStore((s) => s.lastRunCompletedAt);
 
   // Cache key: pipeline version — invalidate when pipeline config changes
@@ -1071,9 +1147,11 @@ export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id
     async function loadRuns() {
       try {
         // Fetch up to 10 recent runs for test trend display
-        const runs = await fetchPipelineRuns(pipelineId!, 10, 0);
+        const resp = await fetchPipelineRunsPaginated(pipelineId!, 10, 0);
         if (controller.signal.aborted) return;
+        const runs = resp.data;
         setRecentRuns(runs);
+        setRunsTotalCount(resp.total);
         if (runs.length > 0) {
           const run = runs[0];
           const map = new Map<string, ApiNodeRunStats>();
@@ -1213,6 +1291,22 @@ export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id
     [selectedNodeId, updateNodeConfig],
   );
 
+  const handleLoadMoreRuns = useCallback(async () => {
+    if (!pipelineId || loadingMoreRuns) return;
+    setLoadingMoreRuns(true);
+    try {
+      const resp = await fetchPipelineRunsPaginated(pipelineId, 10, recentRuns.length);
+      setRecentRuns((prev) => [...prev, ...resp.data]);
+      setRunsTotalCount(resp.total);
+    } catch {
+      // Non-fatal — the existing runs remain visible.
+    } finally {
+      setLoadingMoreRuns(false);
+    }
+  }, [pipelineId, recentRuns.length, loadingMoreRuns]);
+
+  const hasMoreRuns = recentRuns.length < runsTotalCount;
+
   // Build content props
   const contentProps: NodeContentProps | null = selectedNode
     ? {
@@ -1235,6 +1329,8 @@ export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id
         onCacheRowLimitChange: handleCacheRowLimitChange,
         onMaterializedChange: handleMaterializedChange,
         feedsSink,
+        latestRunId: recentRuns.length > 0 ? recentRuns[0].id : undefined,
+        onViewFailureReport,
       }
     : null;
 
@@ -1282,6 +1378,22 @@ export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id
             {selectedNode.data.role === 'test' && (
               <TestContent {...contentProps} />
             )}
+            {/* Run history */}
+            {recentRuns.length > 0 && (
+              <div className="side-panel__section">
+                <div className="side-panel__section-title">Recent Runs</div>
+                <RunHistoryList runs={recentRuns} onViewRunDetail={onViewRunDetail} />
+                {hasMoreRuns && (
+                  <button
+                    className="side-panel__load-more"
+                    onClick={handleLoadMoreRuns}
+                    disabled={loadingMoreRuns}
+                  >
+                    {loadingMoreRuns ? 'Loading…' : `Load more (${recentRuns.length} of ${runsTotalCount})`}
+                  </button>
+                )}
+              </div>
+            )}
             {pipelineId && pipelineId !== 'demo' && (
               <LineageSection
                 pipelineId={pipelineId}
@@ -1299,6 +1411,14 @@ export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id
             >
               Edit
             </button>
+            {pipelineId && pipelineId !== 'demo' && (
+              <button
+                className="side-panel__action-btn"
+                onClick={() => setColumnLineageOpen(true)}
+              >
+                Column Lineage
+              </button>
+            )}
             <button className="side-panel__action-btn" onClick={handleDuplicate}>
               Duplicate
             </button>
@@ -1310,6 +1430,17 @@ export function SidePanel({ onNavigateToPipeline }: { onNavigateToPipeline?: (id
             </button>
           </div>
         </>
+      )}
+
+      {columnLineageOpen && pipelineId && selectedNodeId && (
+        <ColumnLineageModal
+          open={columnLineageOpen}
+          pipelineId={pipelineId}
+          nodeId={selectedNodeId}
+          nodeName={selectedNode?.data.label ?? selectedNodeId}
+          environment={activeEnvironment}
+          onClose={() => setColumnLineageOpen(false)}
+        />
       )}
     </div>
   );

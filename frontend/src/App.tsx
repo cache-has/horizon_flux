@@ -6,6 +6,8 @@ import { PipelineCanvas } from './components/canvas';
 import { ProjectLineageView } from './components/lineage/ProjectLineageView';
 import { ProjectTriggersView } from './components/triggers/ProjectTriggersView';
 import { CatalogView } from './components/catalog/CatalogView';
+import { SlaComplianceView } from './components/sla/SlaComplianceView';
+import { HealthDashboardView } from './components/health/HealthDashboardView';
 import { usePipelineStore } from './stores/pipelineStore';
 import { useCatalogStore } from './stores/catalogStore';
 import { useEnvironmentStore } from './stores/environmentStore';
@@ -61,7 +63,7 @@ const DEMO_RESPONSE: ApiPipelineResponse = {
   updated_at: Date.now(),
 };
 
-type ViewMode = 'pipeline' | 'project' | 'triggers' | 'catalog';
+type ViewMode = 'pipeline' | 'project' | 'triggers' | 'catalog' | 'sla' | 'health';
 
 function App() {
   const loadFromResponse = usePipelineStore((s) => s.loadFromResponse);
@@ -114,16 +116,42 @@ function App() {
     setViewMode('project');
   }, []);
 
-  const handleCatalogClick = useCallback((fingerprint?: string) => {
-    if (fingerprint) {
+  const handleCatalogClick = useCallback((fingerprint?: string | unknown) => {
+    if (typeof fingerprint === 'string') {
       useCatalogStore.getState().selectEntry(fingerprint);
     }
     setViewMode('catalog');
   }, []);
 
+  const handleSlaClick = useCallback(() => {
+    setViewMode('sla');
+  }, []);
+
+  const handleHealthClick = useCallback(() => {
+    setViewMode('health');
+  }, []);
+
   const handleBackToPipeline = useCallback(() => {
     setViewMode('pipeline');
   }, []);
+
+  if (viewMode === 'health') {
+    return (
+      <HealthDashboardView
+        onBack={handleBackToPipeline}
+        onNavigateToPipeline={handleNavigateToPipeline}
+      />
+    );
+  }
+
+  if (viewMode === 'sla') {
+    return (
+      <SlaComplianceView
+        onBack={handleBackToPipeline}
+        onNavigateToPipeline={handleNavigateToPipeline}
+      />
+    );
+  }
 
   if (viewMode === 'catalog') {
     return (
@@ -156,6 +184,8 @@ function App() {
     <PipelineCanvas
       onLineageClick={handleLineageClick}
       onCatalogClick={handleCatalogClick}
+      onSlaClick={handleSlaClick}
+      onHealthClick={handleHealthClick}
       onNavigateToPipeline={handleNavigateToPipeline}
     />
   );

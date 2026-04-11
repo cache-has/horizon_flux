@@ -696,6 +696,7 @@ export interface ApiPipelineRun {
   node_stats: ApiNodeRunStats[];
   error?: string;
   test_results?: ApiTestResult[];
+  triggered_by?: string;
 }
 
 /** Request body for single-node preview. */
@@ -882,22 +883,39 @@ export async function resetIncrementalState(
   }
 }
 
+/** Paginated response wrapper matching the backend `PaginatedResponse<T>`. */
+export interface PaginatedRunsResponse {
+  data: ApiPipelineRun[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Fetch run history for a pipeline with pagination metadata. */
+export async function fetchPipelineRunsPaginated(
+  id: string,
+  limit = 10,
+  offset = 0,
+): Promise<PaginatedRunsResponse> {
+  const res = await fetch(`${BASE}/${id}/runs?limit=${limit}&offset=${offset}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch runs: ${res.status} ${res.statusText}`);
+  }
+  const body: PaginatedRunsResponse = await res.json();
+  for (const run of body.data) {
+    for (const stat of run.node_stats) {
+      stat.duration_ms = timestampDurationMs(stat.start_time, stat.end_time);
+    }
+  }
+  return body;
+}
+
 /** Fetch run history for a pipeline. Returns a plain array of runs. */
 export async function fetchPipelineRuns(
   id: string,
   limit = 10,
   offset = 0,
 ): Promise<ApiPipelineRun[]> {
-  const res = await fetch(`${BASE}/${id}/runs?limit=${limit}&offset=${offset}`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch runs: ${res.status} ${res.statusText}`);
-  }
-  const runs: ApiPipelineRun[] = await res.json();
-  // Compute duration_ms from start/end timestamps for each node stat.
-  for (const run of runs) {
-    for (const stat of run.node_stats) {
-      stat.duration_ms = timestampDurationMs(stat.start_time, stat.end_time);
-    }
-  }
-  return runs;
+  const resp = await fetchPipelineRunsPaginated(id, limit, offset);
+  return resp.data;
 }

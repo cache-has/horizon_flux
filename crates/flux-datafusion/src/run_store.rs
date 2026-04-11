@@ -175,7 +175,39 @@ impl SqliteRunStore {
                    (downstream_resource_fingerprint, downstream_column);
             CREATE INDEX IF NOT EXISTS idx_cle_upstream_resource
                 ON column_lineage_edges
-                   (upstream_resource_fingerprint, upstream_column);",
+                   (upstream_resource_fingerprint, upstream_column);
+
+            -- Failure reports captured when a node fails (planning doc 37).
+            -- One report per (run_id, node_id) failure. The report_json column
+            -- stores a serialized FailureReport. Cascade deletion follows the
+            -- run: when a run is cleaned up, its failure reports go with it.
+            CREATE TABLE IF NOT EXISTS failure_reports (
+                run_id      TEXT NOT NULL,
+                node_id     TEXT NOT NULL,
+                report_json TEXT NOT NULL,
+                captured_at INTEGER NOT NULL,
+                PRIMARY KEY (run_id, node_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_failure_reports_run
+                ON failure_reports (run_id);
+
+            -- SLA evaluations (planning doc 37, sub-feature 3).
+            -- One row per (fingerprint, evaluated_at) evaluation tick.
+            CREATE TABLE IF NOT EXISTS sla_evaluations (
+                fingerprint   TEXT    NOT NULL,
+                evaluated_at  TEXT    NOT NULL,
+                status        TEXT    NOT NULL,
+                age           TEXT,
+                max_age       TEXT    NOT NULL,
+                warn_at       TEXT,
+                producer_pipeline TEXT,
+                last_success_at   TEXT,
+                PRIMARY KEY (fingerprint, evaluated_at)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sla_evaluations_fp
+                ON sla_evaluations (fingerprint, evaluated_at DESC);",
         )?;
         // Idempotent migration: older databases created before doc 27 don't
         // have the receipt column. SQLite has no `ADD COLUMN IF NOT EXISTS`,
@@ -200,6 +232,17 @@ impl SqliteRunStore {
                 alter2.map(|_| ())?;
             }
         } else if let Err(e) = alter2 {
+            return Err(e.into());
+        }
+
+        // Idempotent migration: add triggered_by column (doc 37, run detail view).
+        let alter3 =
+            conn.execute("ALTER TABLE pipeline_runs ADD COLUMN triggered_by TEXT", []);
+        if let Err(rusqlite::Error::SqliteFailure(_, Some(msg))) = &alter3 {
+            if !msg.contains("duplicate column") {
+                alter3.map(|_| ())?;
+            }
+        } else if let Err(e) = alter3 {
             return Err(e.into());
         }
 
@@ -252,8 +295,8 @@ impl SqliteRunStore {
         };
 
         conn.execute(
-            "INSERT OR IGNORE INTO pipeline_runs (id, pipeline_name, environment, status, start_time_ms, end_time_ms, error, test_results)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR IGNORE INTO pipeline_runs (id, pipeline_name, environment, status, start_time_ms, end_time_ms, error, test_results, triggered_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 run.id.0.to_string(),
                 run.pipeline_name,
@@ -263,6 +306,7 @@ impl SqliteRunStore {
                 end_ms,
                 run.error,
                 test_results_json,
+                run.triggered_by,
             ],
         )?;
 
@@ -312,13 +356,20 @@ impl RunStorage for SqliteRunStore {
         Ok(run)
     }
 
-    fn set_running(&self, run_id: &RunId, start_time: SystemTime) -> Result<(), RunStoreError> {
+    fn set_running(
+        &self,
+        run_id: &RunId,
+        start_time: SystemTime,
+        triggered_by: Option<&str>,
+    ) -> Result<(), RunStoreError> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute(
-            "UPDATE pipeline_runs SET status = ?1, start_time_ms = ?2 WHERE id = ?3",
+            "UPDATE pipeline_runs SET status = ?1, start_time_ms = ?2, triggered_by = ?3
+             WHERE id = ?4",
             params![
                 RunStatus::Running.as_str(),
                 system_time_to_ms(start_time),
+                triggered_by,
                 run_id.0.to_string(),
             ],
         )?;
@@ -396,7 +447,7 @@ impl RunStorage for SqliteRunStore {
 
         let mut stmt = conn.prepare(
             "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
-                    test_results
+                    test_results, triggered_by
              FROM pipeline_runs WHERE id = ?1",
         )?;
 
@@ -414,6 +465,7 @@ impl RunStorage for SqliteRunStore {
         &self,
         pipeline_name: Option<&str>,
         limit: u32,
+        offset: u32,
     ) -> Result<Vec<PipelineRun>, RunStoreError> {
         let conn = self.conn.lock().unwrap();
 
@@ -423,13 +475,13 @@ impl RunStorage for SqliteRunStore {
             Some(name) => {
                 let mut stmt = conn.prepare(
                     "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
-                            test_results
+                            test_results, triggered_by
                      FROM pipeline_runs
                      WHERE pipeline_name = ?1
                      ORDER BY start_time_ms DESC
-                     LIMIT ?2",
+                     LIMIT ?2 OFFSET ?3",
                 )?;
-                let mut rows = stmt.query(params![name, limit])?;
+                let mut rows = stmt.query(params![name, limit, offset])?;
                 while let Some(row) = rows.next()? {
                     let mut run = row_to_pipeline_run(row)?;
                     let run_id = run.id.clone();
@@ -440,12 +492,12 @@ impl RunStorage for SqliteRunStore {
             None => {
                 let mut stmt = conn.prepare(
                     "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
-                            test_results
+                            test_results, triggered_by
                      FROM pipeline_runs
                      ORDER BY start_time_ms DESC
-                     LIMIT ?1",
+                     LIMIT ?1 OFFSET ?2",
                 )?;
-                let mut rows = stmt.query(params![limit])?;
+                let mut rows = stmt.query(params![limit, offset])?;
                 while let Some(row) = rows.next()? {
                     let mut run = row_to_pipeline_run(row)?;
                     let run_id = run.id.clone();
@@ -456,6 +508,86 @@ impl RunStorage for SqliteRunStore {
         }
 
         Ok(runs)
+    }
+
+    fn count_runs(&self, pipeline_name: Option<&str>) -> Result<u32, RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let count: u32 = match pipeline_name {
+            Some(name) => conn.query_row(
+                "SELECT COUNT(*) FROM pipeline_runs WHERE pipeline_name = ?1",
+                params![name],
+                |row| row.get(0),
+            )?,
+            None => conn.query_row(
+                "SELECT COUNT(*) FROM pipeline_runs",
+                [],
+                |row| row.get(0),
+            )?,
+        };
+        Ok(count)
+    }
+
+    fn list_runs_since(
+        &self,
+        since: SystemTime,
+        limit: u32,
+    ) -> Result<Vec<PipelineRun>, RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let since_ms = system_time_to_ms(since);
+        let mut stmt = conn.prepare(
+            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
+                    test_results, triggered_by
+             FROM pipeline_runs
+             WHERE start_time_ms >= ?1 OR (start_time_ms IS NULL AND status IN ('pending', 'running'))
+             ORDER BY start_time_ms DESC
+             LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![since_ms, limit])?;
+        let mut runs = Vec::new();
+        while let Some(row) = rows.next()? {
+            runs.push(row_to_pipeline_run(row)?);
+        }
+        Ok(runs)
+    }
+
+    fn save_failure_report(
+        &self,
+        report: &crate::failure_report::FailureReport,
+    ) -> Result<(), RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let json = serde_json::to_string(report)
+            .map_err(|e| RunStoreError::Database(format!("failed to serialize failure report: {e}")))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO failure_reports (run_id, node_id, report_json, captured_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![report.run_id, report.node_id, json, report.captured_at_ms],
+        )?;
+        Ok(())
+    }
+
+    fn get_failure_report(
+        &self,
+        run_id: &RunId,
+        node_id: &str,
+    ) -> Result<Option<crate::failure_report::FailureReport>, RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT report_json FROM failure_reports WHERE run_id = ?1 AND node_id = ?2",
+        )?;
+        let mut rows = stmt.query(params![run_id.0.to_string(), node_id])?;
+        match rows.next()? {
+            Some(row) => {
+                let json: String = row.get(0)?;
+                let report: crate::failure_report::FailureReport =
+                    serde_json::from_str(&json).map_err(|e| {
+                        RunStoreError::Database(format!(
+                            "failed to deserialize failure report: {e}"
+                        ))
+                    })?;
+                Ok(Some(report))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -834,12 +966,21 @@ impl ColumnLineageStorage for SqliteRunStore {
         edges: &[StoredColumnEdge],
     ) -> Result<(), ColumnLineageStoreError> {
         let conn = self.conn.lock().unwrap();
-        // Atomic replace: delete existing, then insert new.
-        conn.execute(
-            "DELETE FROM column_lineage_edges
-             WHERE pipeline_id = ?1 AND environment = ?2",
-            params![pipeline_id, environment],
-        )?;
+        // Per-node replace: delete existing edges only for nodes present in the
+        // new batch, then insert. This preserves edges from other nodes that
+        // were derived earlier in the same pipeline execution.
+        let node_ids: std::collections::HashSet<&str> = edges
+            .iter()
+            .filter_map(|e| e.edge.downstream_node.as_ref().map(|n| n.0.as_str()))
+            .collect();
+        for node_id in &node_ids {
+            conn.execute(
+                "DELETE FROM column_lineage_edges
+                 WHERE pipeline_id = ?1 AND environment = ?2
+                   AND downstream_node_id = ?3",
+                params![pipeline_id, environment, node_id],
+            )?;
+        }
         let mut stmt = conn.prepare(
             "INSERT INTO column_lineage_edges
                 (pipeline_id, environment,
@@ -1107,6 +1248,7 @@ fn row_to_pipeline_run(row: &rusqlite::Row<'_>) -> Result<PipelineRun, RunStoreE
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
+    let triggered_by: Option<String> = row.get(8)?;
 
     Ok(PipelineRun {
         id: RunId(
@@ -1122,6 +1264,7 @@ fn row_to_pipeline_run(row: &rusqlite::Row<'_>) -> Result<PipelineRun, RunStoreE
         node_stats: Vec::new(), // populated by caller
         error: row.get(6)?,
         test_results,
+        triggered_by,
     })
 }
 
@@ -1131,6 +1274,123 @@ fn system_time_to_ms(t: SystemTime) -> i64 {
 
 fn ms_to_system_time(ms: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(ms as u64)
+}
+
+// ---------------------------------------------------------------------------
+// SlaStorage (planning doc 37, sub-feature 3)
+// ---------------------------------------------------------------------------
+
+impl crate::storage::SlaStorage for SqliteRunStore {
+    fn save_evaluations(
+        &self,
+        evaluations: &[flux_engine::SlaEvaluation],
+    ) -> Result<(), RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        for eval in evaluations {
+            conn.execute(
+                "INSERT OR REPLACE INTO sla_evaluations
+                 (fingerprint, evaluated_at, status, age, max_age, warn_at,
+                  producer_pipeline, last_success_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    eval.fingerprint,
+                    eval.evaluated_at,
+                    eval.status.as_str(),
+                    eval.age,
+                    eval.max_age,
+                    eval.warn_at,
+                    eval.producer_pipeline,
+                    eval.last_success_at,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn latest_evaluations(&self) -> Result<Vec<flux_engine::SlaEvaluation>, RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint, evaluated_at, status, age, max_age, warn_at,
+                    producer_pipeline, last_success_at
+             FROM sla_evaluations e1
+             WHERE evaluated_at = (
+                 SELECT MAX(e2.evaluated_at)
+                 FROM sla_evaluations e2
+                 WHERE e2.fingerprint = e1.fingerprint
+             )
+             ORDER BY fingerprint",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut results = Vec::new();
+        while let Some(row) = rows.next()? {
+            results.push(row_to_sla_evaluation(row)?);
+        }
+        Ok(results)
+    }
+
+    fn latest_evaluation(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<flux_engine::SlaEvaluation>, RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint, evaluated_at, status, age, max_age, warn_at,
+                    producer_pipeline, last_success_at
+             FROM sla_evaluations
+             WHERE fingerprint = ?1
+             ORDER BY evaluated_at DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![fingerprint])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row_to_sla_evaluation(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn evaluation_history(
+        &self,
+        fingerprint: &str,
+        limit: u32,
+    ) -> Result<Vec<flux_engine::SlaEvaluation>, RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint, evaluated_at, status, age, max_age, warn_at,
+                    producer_pipeline, last_success_at
+             FROM sla_evaluations
+             WHERE fingerprint = ?1
+             ORDER BY evaluated_at DESC
+             LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![fingerprint, limit])?;
+        let mut results = Vec::new();
+        while let Some(row) = rows.next()? {
+            results.push(row_to_sla_evaluation(row)?);
+        }
+        Ok(results)
+    }
+}
+
+fn row_to_sla_evaluation(
+    row: &rusqlite::Row<'_>,
+) -> Result<flux_engine::SlaEvaluation, RunStoreError> {
+    let status_str: String = row.get(2)?;
+    let status = match status_str.as_str() {
+        "ok" => flux_engine::SlaStatus::Ok,
+        "warning" => flux_engine::SlaStatus::Warning,
+        "breach" => flux_engine::SlaStatus::Breach,
+        _ => flux_engine::SlaStatus::Unknown,
+    };
+    Ok(flux_engine::SlaEvaluation {
+        fingerprint: row.get(0)?,
+        evaluated_at: row.get(1)?,
+        status,
+        age: row.get(3)?,
+        max_age: row.get(4)?,
+        warn_at: row.get(5)?,
+        producer_pipeline: row.get(6)?,
+        last_success_at: row.get(7)?,
+    })
 }
 
 #[cfg(test)]
@@ -1143,7 +1403,7 @@ mod tests {
         let store1 = SqliteRunStore::open_in_memory().unwrap();
         let run = store1.create_run("test-pipe", "dev").unwrap();
         let start = SystemTime::now();
-        store1.set_running(&run.id, start).unwrap();
+        store1.set_running(&run.id, start, None).unwrap();
         store1
             .finish_run(&run.id, RunStatus::Success, SystemTime::now(), None)
             .unwrap();
@@ -1250,7 +1510,7 @@ mod tests {
         let full_run = store.get_run(&run.id).unwrap().unwrap();
         store.import_run(&full_run).unwrap();
 
-        let runs = store.list_runs(None, 100).unwrap();
+        let runs = store.list_runs(None, 100, 0).unwrap();
         assert_eq!(runs.len(), 1);
     }
 
@@ -1262,7 +1522,7 @@ mod tests {
 
         let store = SqliteRunStore::open_in_memory().unwrap();
         let run = store.create_run("test-pipe", "dev").unwrap();
-        store.set_running(&run.id, SystemTime::now()).unwrap();
+        store.set_running(&run.id, SystemTime::now(), None).unwrap();
 
         let results = vec![TestResultSummary {
             node_id: NodeId::new("validate_orders"),
@@ -1706,5 +1966,146 @@ mod tests {
                 .unwrap();
             assert_eq!(edge.edge.relationship, *kind);
         }
+    }
+
+    #[test]
+    fn failure_report_round_trip() {
+        use crate::failure_report::{FailureReport, InputSchema, SchemaField};
+
+        let store = SqliteRunStore::open_in_memory().unwrap();
+        let run = store.create_run("pipe-a", "dev").unwrap();
+        store.set_running(&run.id, SystemTime::now(), None).unwrap();
+
+        let report = FailureReport {
+            run_id: run.id.to_string(),
+            node_id: "transform_1".to_string(),
+            pipeline_name: "pipe-a".to_string(),
+            environment: "dev".to_string(),
+            error_chain: vec![
+                "DataFusion error: column not found".into(),
+                "Schema error".into(),
+            ],
+            node_config: Some(serde_json::json!({"type": "transform", "mode": "sql"})),
+            input_schemas: vec![InputSchema {
+                node_id: "source_1".into(),
+                fields: vec![SchemaField {
+                    name: "id".into(),
+                    data_type: "Int32".into(),
+                    nullable: false,
+                }],
+            }],
+            input_sample: vec![serde_json::json!({"id": 1, "name": "alice"})],
+            input_total_rows: 100,
+            executed_sql: Some("SELECT id, name FROM __upstream_source_1".into()),
+            plugin_diagnostics: None,
+            source_query: None,
+            captured_at_ms: 1700000000000,
+        };
+
+        store.save_failure_report(&report).unwrap();
+
+        // Retrieve it.
+        let loaded = store
+            .get_failure_report(&run.id, "transform_1")
+            .unwrap()
+            .expect("report should exist");
+        assert_eq!(loaded.pipeline_name, "pipe-a");
+        assert_eq!(loaded.error_chain.len(), 2);
+        assert_eq!(loaded.executed_sql.as_deref(), Some("SELECT id, name FROM __upstream_source_1"));
+        assert_eq!(loaded.input_sample.len(), 1);
+        assert_eq!(loaded.input_total_rows, 100);
+        assert_eq!(loaded.input_schemas.len(), 1);
+        assert_eq!(loaded.input_schemas[0].fields[0].name, "id");
+
+        // Missing report returns None.
+        let missing = store
+            .get_failure_report(&run.id, "no_such_node")
+            .unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn triggered_by_persisted_and_loaded() {
+        let store = SqliteRunStore::open_in_memory().unwrap();
+        let run = store.create_run("trigger-test", "prod").unwrap();
+        assert!(run.triggered_by.is_none());
+
+        store
+            .set_running(&run.id, SystemTime::now(), Some("cron:6h"))
+            .unwrap();
+
+        let loaded = store.get_run(&run.id).unwrap().unwrap();
+        assert_eq!(loaded.triggered_by.as_deref(), Some("cron:6h"));
+
+        // Runs without triggered_by remain None.
+        let run2 = store.create_run("manual-test", "dev").unwrap();
+        store
+            .set_running(&run2.id, SystemTime::now(), None)
+            .unwrap();
+        let loaded2 = store.get_run(&run2.id).unwrap().unwrap();
+        assert!(loaded2.triggered_by.is_none());
+    }
+
+    #[test]
+    fn triggered_by_survives_import() {
+        let store1 = SqliteRunStore::open_in_memory().unwrap();
+        let run = store1.create_run("import-trigger", "dev").unwrap();
+        store1
+            .set_running(&run.id, SystemTime::now(), Some("api"))
+            .unwrap();
+        store1
+            .finish_run(&run.id, RunStatus::Success, SystemTime::now(), None)
+            .unwrap();
+        let original = store1.get_run(&run.id).unwrap().unwrap();
+        assert_eq!(original.triggered_by.as_deref(), Some("api"));
+
+        let store2 = SqliteRunStore::open_in_memory().unwrap();
+        store2.import_run(&original).unwrap();
+        let imported = store2.get_run(&run.id).unwrap().unwrap();
+        assert_eq!(imported.triggered_by.as_deref(), Some("api"));
+    }
+
+    #[test]
+    fn sla_evaluations_roundtrip() {
+        use crate::storage::SlaStorage;
+
+        let store = SqliteRunStore::open_in_memory().unwrap();
+
+        let eval = flux_engine::SlaEvaluation {
+            fingerprint: "postgres://h:5432/db/public.orders".into(),
+            evaluated_at: "2026-04-10T12:00:00Z".into(),
+            status: flux_engine::SlaStatus::Warning,
+            age: Some("PT5H".into()),
+            max_age: "PT6H".into(),
+            warn_at: Some("PT4H".into()),
+            producer_pipeline: Some("ingest-orders".into()),
+            last_success_at: Some("2026-04-10T07:00:00Z".into()),
+        };
+
+        store.save_evaluations(&[eval]).unwrap();
+
+        // latest_evaluation
+        let latest = store
+            .latest_evaluation("postgres://h:5432/db/public.orders")
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.status, flux_engine::SlaStatus::Warning);
+        assert_eq!(latest.age.as_deref(), Some("PT5H"));
+        assert_eq!(latest.producer_pipeline.as_deref(), Some("ingest-orders"));
+
+        // latest_evaluations (all)
+        let all = store.latest_evaluations().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].fingerprint, "postgres://h:5432/db/public.orders");
+
+        // evaluation_history
+        let history = store
+            .evaluation_history("postgres://h:5432/db/public.orders", 10)
+            .unwrap();
+        assert_eq!(history.len(), 1);
+
+        // Non-existent resource returns None
+        let none = store.latest_evaluation("nonexistent").unwrap();
+        assert!(none.is_none());
     }
 }

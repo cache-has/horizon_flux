@@ -777,6 +777,7 @@ mod tests {
                     tags: Vec::new(),
                     columns: std::collections::BTreeMap::new(),
                     custom: std::collections::BTreeMap::new(),
+                    sla: None,
                 },
                 path: dir.path().join("files/data__a.csv.yaml"),
             },

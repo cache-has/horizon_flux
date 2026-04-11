@@ -182,6 +182,21 @@ pub fn record_test_assertion(pipeline: &str, node_id: &str, kind: &str, status: 
     counter!("flux_test_assertions_total", &labels).increment(1);
 }
 
+// ── SLA metrics ─────────────────────────────────────────────────────────
+
+/// Set the SLA status for a resource. Encodes status as a numeric gauge:
+/// 0 = ok, 1 = warning, 2 = breach, 3 = unknown.
+pub fn record_sla_status(resource: &str, severity: &str) {
+    let value = match severity {
+        "ok" => 0.0,
+        "warning" => 1.0,
+        "breach" => 2.0,
+        _ => 3.0,
+    };
+    let labels = labels!("resource" => resource, "severity" => severity);
+    gauge!("flux_sla_status", &labels).set(value);
+}
+
 // ── System metrics ───────────────────────────────────────────────────────
 
 /// Increment the scheduler tick counter.
@@ -224,6 +239,7 @@ mod tests {
         record_plugin_write_duration("parquet", "parquet", 0.3);
         record_plugin_crash("parquet");
         record_test_assertion("test_pipeline", "node1", "assertion", "passed");
+        record_sla_status("postgres://h:5432/db/public.orders", "ok");
         record_scheduler_tick();
         set_active_runs("dev", 1.0);
         set_queued_runs("dev", 0.0);

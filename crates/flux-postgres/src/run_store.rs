@@ -58,15 +58,23 @@ impl RunStorage for PostgresRunStore {
         })
     }
 
-    fn set_running(&self, run_id: &RunId, start_time: SystemTime) -> Result<(), RunStoreError> {
+    fn set_running(
+        &self,
+        run_id: &RunId,
+        start_time: SystemTime,
+        triggered_by: Option<&str>,
+    ) -> Result<(), RunStoreError> {
         block_on(async {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let triggered_owned = triggered_by.map(|s| s.to_string());
             let rows_affected = client
                 .execute(
-                    "UPDATE pipeline_runs SET status = $1, start_time_ms = $2 WHERE id = $3",
+                    "UPDATE pipeline_runs SET status = $1, start_time_ms = $2, triggered_by = $3
+                     WHERE id = $4",
                     &[
                         &RunStatus::Running.as_str(),
                         &system_time_to_ms(start_time),
+                        &triggered_owned as &(dyn tokio_postgres::types::ToSql + Sync),
                         &run_id.0.to_string(),
                     ],
                 )
@@ -173,7 +181,7 @@ impl RunStorage for PostgresRunStore {
             let row = client
                 .query_opt(
                     "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
-                            test_results
+                            test_results, triggered_by
                      FROM pipeline_runs WHERE id = $1",
                     &[&run_id.0.to_string()],
                 )
@@ -194,6 +202,7 @@ impl RunStorage for PostgresRunStore {
         &self,
         pipeline_name: Option<&str>,
         limit: u32,
+        offset: u32,
     ) -> Result<Vec<PipelineRun>, RunStoreError> {
         block_on(async {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
@@ -202,13 +211,13 @@ impl RunStorage for PostgresRunStore {
                 Some(name) => {
                     client
                         .query(
-                            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
-                                    test_results
+                            "SELECT id, pipeline_name, environment, status, start_time_ms,
+                                    end_time_ms, error, test_results, triggered_by
                              FROM pipeline_runs
                              WHERE pipeline_name = $1
                              ORDER BY start_time_ms DESC NULLS LAST
-                             LIMIT $2",
-                            &[&name, &(limit as i64)],
+                             LIMIT $2 OFFSET $3",
+                            &[&name, &(limit as i64), &(offset as i64)],
                         )
                         .await
                         .map_err(pg_err)?
@@ -216,12 +225,12 @@ impl RunStorage for PostgresRunStore {
                 None => {
                     client
                         .query(
-                            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
-                                    test_results
+                            "SELECT id, pipeline_name, environment, status, start_time_ms,
+                                    end_time_ms, error, test_results, triggered_by
                              FROM pipeline_runs
                              ORDER BY start_time_ms DESC NULLS LAST
-                             LIMIT $1",
-                            &[&(limit as i64)],
+                             LIMIT $1 OFFSET $2",
+                            &[&(limit as i64), &(offset as i64)],
                         )
                         .await
                         .map_err(pg_err)?
@@ -236,6 +245,118 @@ impl RunStorage for PostgresRunStore {
                 runs.push(run);
             }
             Ok(runs)
+        })
+    }
+
+    fn count_runs(&self, pipeline_name: Option<&str>) -> Result<u32, RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let row = match pipeline_name {
+                Some(name) => {
+                    client
+                        .query_one(
+                            "SELECT COUNT(*)::int4 FROM pipeline_runs WHERE pipeline_name = $1",
+                            &[&name],
+                        )
+                        .await
+                        .map_err(pg_err)?
+                }
+                None => {
+                    client
+                        .query_one(
+                            "SELECT COUNT(*)::int4 FROM pipeline_runs",
+                            &[],
+                        )
+                        .await
+                        .map_err(pg_err)?
+                }
+            };
+            let count: i32 = row.get(0);
+            Ok(count as u32)
+        })
+    }
+
+    fn list_runs_since(
+        &self,
+        since: SystemTime,
+        limit: u32,
+    ) -> Result<Vec<PipelineRun>, RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let since_ms = system_time_to_ms(since);
+            let rows = client
+                .query(
+                    "SELECT id, pipeline_name, environment, status, start_time_ms,
+                            end_time_ms, error, test_results, triggered_by
+                     FROM pipeline_runs
+                     WHERE start_time_ms >= $1
+                        OR (start_time_ms IS NULL AND status IN ('pending', 'running'))
+                     ORDER BY start_time_ms DESC NULLS LAST
+                     LIMIT $2",
+                    &[&since_ms, &(limit as i64)],
+                )
+                .await
+                .map_err(pg_err)?;
+
+            let mut runs = Vec::with_capacity(rows.len());
+            for row in &rows {
+                runs.push(row_to_pipeline_run(row)?);
+            }
+            Ok(runs)
+        })
+    }
+
+    fn save_failure_report(
+        &self,
+        report: &flux_datafusion::failure_report::FailureReport,
+    ) -> Result<(), RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let json = serde_json::to_string(report).map_err(|e| {
+                RunStoreError::Database(format!("failed to serialize failure report: {e}"))
+            })?;
+            client
+                .execute(
+                    "INSERT INTO failure_reports (run_id, node_id, report_json, captured_at)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (run_id, node_id) DO UPDATE SET
+                        report_json = EXCLUDED.report_json,
+                        captured_at = EXCLUDED.captured_at",
+                    &[&report.run_id, &report.node_id, &json, &report.captured_at_ms],
+                )
+                .await
+                .map_err(pg_err)?;
+            Ok(())
+        })
+    }
+
+    fn get_failure_report(
+        &self,
+        run_id: &RunId,
+        node_id: &str,
+    ) -> Result<Option<flux_datafusion::failure_report::FailureReport>, RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let rows = client
+                .query(
+                    "SELECT report_json FROM failure_reports WHERE run_id = $1 AND node_id = $2",
+                    &[&run_id.0.to_string(), &node_id],
+                )
+                .await
+                .map_err(pg_err)?;
+            match rows.first() {
+                Some(row) => {
+                    let json: String = row.get(0);
+                    let report: flux_datafusion::failure_report::FailureReport =
+                        serde_json::from_str(&json).map_err(|e| {
+                            RunStoreError::Database(format!(
+                                "failed to deserialize failure report: {e}"
+                            ))
+                        })?;
+                    Ok(Some(report))
+                }
+                None => Ok(None),
+            }
         })
     }
 }
@@ -284,6 +405,7 @@ fn row_to_pipeline_run(row: &tokio_postgres::Row) -> Result<PipelineRun, RunStor
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
+    let triggered_by: Option<String> = row.get(8);
 
     Ok(PipelineRun {
         id: RunId(
@@ -299,6 +421,7 @@ fn row_to_pipeline_run(row: &tokio_postgres::Row) -> Result<PipelineRun, RunStor
         node_stats: Vec::new(),
         error: row.get(6),
         test_results,
+        triggered_by,
     })
 }
 
@@ -756,14 +879,24 @@ impl ColumnLineageStorage for PostgresRunStore {
             let client = crate::retry::get_client(&self.pool)
                 .await
                 .map_err(col_lineage_err)?;
-            client
-                .execute(
-                    "DELETE FROM column_lineage_edges
-                     WHERE pipeline_id = $1 AND environment = $2",
-                    &[&pipeline_id, &environment],
-                )
-                .await
-                .map_err(col_lineage_err)?;
+            // Per-node replace: delete existing edges only for nodes present
+            // in the new batch, preserving edges from other nodes derived
+            // earlier in the same pipeline execution.
+            let node_ids: std::collections::HashSet<&str> = edges
+                .iter()
+                .filter_map(|e| e.edge.downstream_node.as_ref().map(|n| n.0.as_str()))
+                .collect();
+            for node_id in &node_ids {
+                client
+                    .execute(
+                        "DELETE FROM column_lineage_edges
+                         WHERE pipeline_id = $1 AND environment = $2
+                           AND downstream_node_id = $3",
+                        &[&pipeline_id, &environment, node_id],
+                    )
+                    .await
+                    .map_err(col_lineage_err)?;
+            }
             for e in edges {
                 let downstream_is_external = e.edge.downstream_resource.is_some() as i32;
                 let upstream_is_external = e.edge.upstream_resource.is_some() as i32;
@@ -1090,4 +1223,137 @@ fn system_time_to_ms(t: SystemTime) -> i64 {
 
 fn ms_to_system_time(ms: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(ms as u64)
+}
+
+// ---------------------------------------------------------------------------
+// SlaStorage (planning doc 37, sub-feature 3)
+// ---------------------------------------------------------------------------
+
+impl flux_datafusion::SlaStorage for PostgresRunStore {
+    fn save_evaluations(
+        &self,
+        evaluations: &[flux_engine::SlaEvaluation],
+    ) -> Result<(), flux_datafusion::error::RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            for eval in evaluations {
+                client
+                    .execute(
+                        "INSERT INTO sla_evaluations
+                         (fingerprint, evaluated_at, status, age, max_age, warn_at,
+                          producer_pipeline, last_success_at)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                         ON CONFLICT (fingerprint, evaluated_at) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            age = EXCLUDED.age,
+                            max_age = EXCLUDED.max_age,
+                            warn_at = EXCLUDED.warn_at,
+                            producer_pipeline = EXCLUDED.producer_pipeline,
+                            last_success_at = EXCLUDED.last_success_at",
+                        &[
+                            &eval.fingerprint,
+                            &eval.evaluated_at,
+                            &eval.status.as_str().to_string(),
+                            &eval.age as &(dyn tokio_postgres::types::ToSql + Sync),
+                            &eval.max_age,
+                            &eval.warn_at as &(dyn tokio_postgres::types::ToSql + Sync),
+                            &eval.producer_pipeline as &(dyn tokio_postgres::types::ToSql + Sync),
+                            &eval.last_success_at as &(dyn tokio_postgres::types::ToSql + Sync),
+                        ],
+                    )
+                    .await
+                    .map_err(pg_err)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn latest_evaluations(
+        &self,
+    ) -> Result<Vec<flux_engine::SlaEvaluation>, flux_datafusion::error::RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let rows = client
+                .query(
+                    "SELECT fingerprint, evaluated_at, status, age, max_age, warn_at,
+                            producer_pipeline, last_success_at
+                     FROM sla_evaluations e1
+                     WHERE evaluated_at = (
+                         SELECT MAX(e2.evaluated_at)
+                         FROM sla_evaluations e2
+                         WHERE e2.fingerprint = e1.fingerprint
+                     )
+                     ORDER BY fingerprint",
+                    &[],
+                )
+                .await
+                .map_err(pg_err)?;
+            Ok(rows.iter().map(pg_row_to_sla_evaluation).collect())
+        })
+    }
+
+    fn latest_evaluation(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<flux_engine::SlaEvaluation>, flux_datafusion::error::RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let row = client
+                .query_opt(
+                    "SELECT fingerprint, evaluated_at, status, age, max_age, warn_at,
+                            producer_pipeline, last_success_at
+                     FROM sla_evaluations
+                     WHERE fingerprint = $1
+                     ORDER BY evaluated_at DESC
+                     LIMIT 1",
+                    &[&fingerprint],
+                )
+                .await
+                .map_err(pg_err)?;
+            Ok(row.as_ref().map(pg_row_to_sla_evaluation))
+        })
+    }
+
+    fn evaluation_history(
+        &self,
+        fingerprint: &str,
+        limit: u32,
+    ) -> Result<Vec<flux_engine::SlaEvaluation>, flux_datafusion::error::RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let rows = client
+                .query(
+                    "SELECT fingerprint, evaluated_at, status, age, max_age, warn_at,
+                            producer_pipeline, last_success_at
+                     FROM sla_evaluations
+                     WHERE fingerprint = $1
+                     ORDER BY evaluated_at DESC
+                     LIMIT $2",
+                    &[&fingerprint, &(limit as i64)],
+                )
+                .await
+                .map_err(pg_err)?;
+            Ok(rows.iter().map(pg_row_to_sla_evaluation).collect())
+        })
+    }
+}
+
+fn pg_row_to_sla_evaluation(row: &tokio_postgres::Row) -> flux_engine::SlaEvaluation {
+    let status_str: String = row.get(2);
+    let status = match status_str.as_str() {
+        "ok" => flux_engine::SlaStatus::Ok,
+        "warning" => flux_engine::SlaStatus::Warning,
+        "breach" => flux_engine::SlaStatus::Breach,
+        _ => flux_engine::SlaStatus::Unknown,
+    };
+    flux_engine::SlaEvaluation {
+        fingerprint: row.get(0),
+        evaluated_at: row.get(1),
+        status,
+        age: row.get(3),
+        max_age: row.get(4),
+        warn_at: row.get(5),
+        producer_pipeline: row.get(6),
+        last_success_at: row.get(7),
+    }
 }

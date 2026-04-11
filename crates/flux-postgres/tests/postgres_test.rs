@@ -393,7 +393,7 @@ async fn run_lifecycle() {
 
     // Pending → Running.
     let start = SystemTime::now();
-    store.set_running(&run.id, start).unwrap();
+    store.set_running(&run.id, start, None).unwrap();
     let running = store.get_run(&run.id).unwrap().unwrap();
     assert_eq!(running.status, RunStatus::Running);
     assert!(running.start_time.is_some());
@@ -434,7 +434,7 @@ async fn run_failed_with_error() {
     let store = PostgresRunStore::new(pool);
     let run = store.create_run("pipe", "dev").unwrap();
     let start = SystemTime::now();
-    store.set_running(&run.id, start).unwrap();
+    store.set_running(&run.id, start, None).unwrap();
 
     let end = start + Duration::from_millis(200);
     store
@@ -460,26 +460,26 @@ async fn run_list_and_filter() {
 
     // Create runs for different pipelines.
     let r1 = store.create_run("alpha", "dev").unwrap();
-    store.set_running(&r1.id, now).unwrap();
+    store.set_running(&r1.id, now, None).unwrap();
 
     let r2 = store.create_run("alpha", "prod").unwrap();
     store
-        .set_running(&r2.id, now + Duration::from_secs(1))
+        .set_running(&r2.id, now + Duration::from_secs(1), None)
         .unwrap();
 
     let _r3 = store.create_run("beta", "dev").unwrap();
 
     // Unfiltered: all 3.
-    let all = store.list_runs(None, 100).unwrap();
+    let all = store.list_runs(None, 100, 0).unwrap();
     assert_eq!(all.len(), 3);
 
     // Filtered by pipeline.
-    let alpha = store.list_runs(Some("alpha"), 100).unwrap();
+    let alpha = store.list_runs(Some("alpha"), 100, 0).unwrap();
     assert_eq!(alpha.len(), 2);
     // Most recent first.
     assert_eq!(alpha[0].id, r2.id);
 
-    let beta = store.list_runs(Some("beta"), 100).unwrap();
+    let beta = store.list_runs(Some("beta"), 100, 0).unwrap();
     assert_eq!(beta.len(), 1);
 
     teardown(&schema).await;
@@ -701,7 +701,7 @@ async fn full_pipeline_lifecycle() {
 
     // 5. Mark running.
     let start = SystemTime::now();
-    run_store.set_running(&run.id, start).unwrap();
+    run_store.set_running(&run.id, start, None).unwrap();
 
     // 6. Save node stats.
     run_store
@@ -748,7 +748,7 @@ async fn full_pipeline_lifecycle() {
     assert_eq!(completed_run.node_stats.len(), 2);
 
     // 10. List runs filtered by pipeline.
-    let runs = run_store.list_runs(Some("etl-job"), 100).unwrap();
+    let runs = run_store.list_runs(Some("etl-job"), 100, 0).unwrap();
     assert_eq!(runs.len(), 1);
 
     // 11. Verify pipeline metadata updated.

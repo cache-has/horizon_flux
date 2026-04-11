@@ -79,6 +79,22 @@ export interface DescribeRequest {
 
 const BASE = '/api/catalog';
 
+/** Fill in defaults for fields the backend omits via skip_serializing_if. */
+function normalizeCatalogEntry(raw: CatalogEntry): CatalogEntry {
+  return {
+    ...raw,
+    tags: raw.tags ?? [],
+    columns: raw.columns ?? [],
+    custom: raw.custom ?? {},
+    derived: {
+      ...raw.derived,
+      producers: raw.derived?.producers ?? [],
+      consumers: raw.derived?.consumers ?? [],
+      schema_columns: raw.derived?.schema_columns ?? [],
+    },
+  };
+}
+
 /** List catalog resources with optional filters and search. */
 export async function listResources(params?: {
   q?: string;
@@ -98,7 +114,9 @@ export async function listResources(params?: {
   if (!res.ok) {
     throw new Error(`Failed to list catalog resources: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  const body: { data: CatalogEntry[]; total: number } = await res.json();
+  body.data = body.data.map(normalizeCatalogEntry);
+  return body;
 }
 
 /** Get full detail for a single resource. */
@@ -112,7 +130,7 @@ export async function getResource(
   if (!res.ok) {
     throw new Error(`Failed to get resource: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  return normalizeCatalogEntry(await res.json());
 }
 
 /** Create or update annotation metadata for a resource. */
@@ -130,7 +148,7 @@ export async function updateMetadata(
     const err = await res.json().catch(() => null);
     throw new Error(err?.error ?? `Failed to update metadata: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  return normalizeCatalogEntry(await res.json());
 }
 
 /** Scaffold metadata files for resources. */

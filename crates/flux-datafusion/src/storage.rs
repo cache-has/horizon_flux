@@ -13,6 +13,7 @@ use crate::error::{
     BackfillStoreError, ColumnLineageStoreError, EnvironmentError, IncrementalStateError,
     LineageStoreError, RunStoreError,
 };
+use crate::failure_report::FailureReport;
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use flux_engine::backfill::{
@@ -34,8 +35,14 @@ pub trait RunStorage: Send + Sync {
         environment: &str,
     ) -> Result<PipelineRun, RunStoreError>;
 
-    /// Transition a run to `Running` and record the start time.
-    fn set_running(&self, run_id: &RunId, start_time: SystemTime) -> Result<(), RunStoreError>;
+    /// Transition a run to `Running` and record the start time and trigger
+    /// attribution.
+    fn set_running(
+        &self,
+        run_id: &RunId,
+        start_time: SystemTime,
+        triggered_by: Option<&str>,
+    ) -> Result<(), RunStoreError>;
 
     /// Mark a run as finished (success, failed, or cancelled).
     fn finish_run(
@@ -64,7 +71,32 @@ pub trait RunStorage: Send + Sync {
         &self,
         pipeline_name: Option<&str>,
         limit: u32,
+        offset: u32,
     ) -> Result<Vec<PipelineRun>, RunStoreError>;
+
+    /// Count runs, optionally filtered by pipeline name.
+    fn count_runs(&self, pipeline_name: Option<&str>) -> Result<u32, RunStoreError>;
+
+    /// List runs started after `since`, ordered by most recent first.
+    ///
+    /// Returns lightweight run metadata **without** per-node stats (the
+    /// `node_stats` vec is empty). Designed for aggregation queries like the
+    /// health dashboard where per-node detail is not needed.
+    fn list_runs_since(
+        &self,
+        since: SystemTime,
+        limit: u32,
+    ) -> Result<Vec<PipelineRun>, RunStoreError>;
+
+    /// Persist a failure report for a node within a run (planning doc 37).
+    fn save_failure_report(&self, report: &FailureReport) -> Result<(), RunStoreError>;
+
+    /// Load the failure report for a specific node within a run, if one exists.
+    fn get_failure_report(
+        &self,
+        run_id: &RunId,
+        node_id: &str,
+    ) -> Result<Option<FailureReport>, RunStoreError>;
 }
 
 /// Backend-agnostic storage interface for environment metadata and table
@@ -393,4 +425,39 @@ pub trait BackfillStorage: Send + Sync {
 
     /// Delete a backfill and its iterations.
     fn delete_backfill(&self, id: &BackfillId) -> Result<bool, BackfillStoreError>;
+}
+
+// ---------------------------------------------------------------------------
+// SlaStorage (planning doc 37, sub-feature 3)
+// ---------------------------------------------------------------------------
+
+/// Backend-agnostic storage interface for SLA evaluations.
+///
+/// Stores the result of periodic freshness checks so that the API can serve
+/// current and historical SLA status without re-evaluating on every request.
+///
+/// Implementations must be safe to share across threads (`Send + Sync`).
+pub trait SlaStorage: Send + Sync {
+    /// Persist a batch of SLA evaluations (one per resource evaluated).
+    fn save_evaluations(
+        &self,
+        evaluations: &[flux_engine::SlaEvaluation],
+    ) -> Result<(), RunStoreError>;
+
+    /// Load the most recent evaluation for each resource with an SLA.
+    /// Used by the compliance dashboard.
+    fn latest_evaluations(&self) -> Result<Vec<flux_engine::SlaEvaluation>, RunStoreError>;
+
+    /// Load the most recent evaluation for a specific resource.
+    fn latest_evaluation(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<flux_engine::SlaEvaluation>, RunStoreError>;
+
+    /// Load historical evaluations for a resource, ordered most-recent first.
+    fn evaluation_history(
+        &self,
+        fingerprint: &str,
+        limit: u32,
+    ) -> Result<Vec<flux_engine::SlaEvaluation>, RunStoreError>;
 }

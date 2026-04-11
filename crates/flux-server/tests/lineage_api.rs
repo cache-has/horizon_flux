@@ -56,6 +56,7 @@ fn test_state() -> AppState {
         column_lineage_store: Some(Arc::new(SqliteRunStore::open_in_memory().unwrap())),
         column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
         openlineage_client: None,
+        sla_store: None,
     }
 }
 

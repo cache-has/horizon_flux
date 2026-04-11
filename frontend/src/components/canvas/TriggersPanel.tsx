@@ -369,7 +369,7 @@ function TriggerEditor({ editing, pipelineId, environment, onSave, onCancel }: T
 // Trigger History Section (collapsible per-trigger)
 // ---------------------------------------------------------------------------
 
-function TriggerHistorySection({ triggerId }: { triggerId: string }) {
+function TriggerHistorySection({ triggerId, onViewRunDetail }: { triggerId: string; onViewRunDetail?: (runId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const history = useTriggerStore((s) => s.history.get(triggerId));
   const fetchHistory = useTriggerStore((s) => s.fetchHistory);
@@ -392,7 +392,7 @@ function TriggerHistorySection({ triggerId }: { triggerId: string }) {
             <li className="triggers-panel__history-entry">No firings yet</li>
           )}
           {history.map((h) => (
-            <HistoryRow key={h.id} entry={h} />
+            <HistoryRow key={h.id} entry={h} onViewRunDetail={onViewRunDetail} />
           ))}
         </ul>
       )}
@@ -400,7 +400,7 @@ function TriggerHistorySection({ triggerId }: { triggerId: string }) {
   );
 }
 
-function HistoryRow({ entry }: { entry: TriggerHistoryEntry }) {
+function HistoryRow({ entry, onViewRunDetail }: { entry: TriggerHistoryEntry; onViewRunDetail?: (runId: string) => void }) {
   const dt = new Date(entry.fired_at);
   const time = dt.toLocaleString(undefined, {
     month: 'short',
@@ -415,6 +415,15 @@ function HistoryRow({ entry }: { entry: TriggerHistoryEntry }) {
         {entry.outcome.replace('_', ' ')}
       </span>
       <span>{time}</span>
+      {entry.run_id && onViewRunDetail && (
+        <span
+          className="triggers-panel__history-run-link"
+          onClick={() => onViewRunDetail(entry.run_id!)}
+          title={`View run ${entry.run_id}`}
+        >
+          {entry.run_id.slice(0, 8)}
+        </span>
+      )}
       {entry.error && <span title={entry.error}>⚠</span>}
     </li>
   );
@@ -427,9 +436,11 @@ function HistoryRow({ entry }: { entry: TriggerHistoryEntry }) {
 function TriggerCard({
   trigger,
   onEdit,
+  onViewRunDetail,
 }: {
   trigger: TriggerResponse;
   onEdit: (t: TriggerResponse) => void;
+  onViewRunDetail?: (runId: string) => void;
 }) {
   const enableTrigger = useTriggerStore((s) => s.enableTrigger);
   const disableTrigger = useTriggerStore((s) => s.disableTrigger);
@@ -576,7 +587,7 @@ function TriggerCard({
         </button>
       </div>
 
-      <TriggerHistorySection triggerId={trigger.id} />
+      <TriggerHistorySection triggerId={trigger.id} onViewRunDetail={onViewRunDetail} />
     </li>
   );
 }
@@ -588,9 +599,10 @@ function TriggerCard({
 interface TriggersPanelProps {
   open: boolean;
   onClose: () => void;
+  onViewRunDetail?: (runId: string) => void;
 }
 
-export function TriggersPanel({ open, onClose }: TriggersPanelProps) {
+export function TriggersPanel({ open, onClose, onViewRunDetail }: TriggersPanelProps) {
   const pipelineId = usePipelineStore((s) => s.pipelineId);
   const activeEnvironment = useEnvironmentStore((s) => s.activeEnvironment);
   const triggers = useTriggerStore((s) => s.triggers);
@@ -666,7 +678,7 @@ export function TriggersPanel({ open, onClose }: TriggersPanelProps) {
 
           <ul className="triggers-panel__list">
             {triggers.map((t) => (
-              <TriggerCard key={t.id} trigger={t} onEdit={handleEdit} />
+              <TriggerCard key={t.id} trigger={t} onEdit={handleEdit} onViewRunDetail={onViewRunDetail} />
             ))}
           </ul>
         </div>

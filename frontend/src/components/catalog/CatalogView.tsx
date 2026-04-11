@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCatalogStore } from '../../stores/catalogStore';
+import { useEnvironmentStore } from '../../stores/environmentStore';
 import type { CatalogEntry, MergedColumn, MetadataUpdateRequest } from '../../api/catalog';
 import { ImpactAnalysisModal } from '../lineage/ImpactAnalysisModal';
 import { ColumnLineageGraph } from '../lineage/ColumnLineageGraph';
@@ -63,19 +64,20 @@ function ResourceList({ onBack, onNavigateToPipeline }: CatalogViewProps) {
   const setOwnerFilter = useCatalogStore((s) => s.setOwnerFilter);
   const selectEntry = useCatalogStore((s) => s.selectEntry);
   const scaffoldMetadata = useCatalogStore((s) => s.scaffoldMetadata);
+  const activeEnv = useEnvironmentStore((s) => s.activeEnvironment);
 
   const [scaffolding, setScaffolding] = useState(false);
   const [scaffoldResult, setScaffoldResult] = useState<string | null>(null);
 
   useEffect(() => {
-    void fetchEntries();
-    void fetchFilterOptions();
-  }, [fetchEntries, fetchFilterOptions]);
+    void fetchEntries(activeEnv);
+    void fetchFilterOptions(activeEnv);
+  }, [fetchEntries, fetchFilterOptions, activeEnv]);
 
   // Re-fetch when filters change.
   useEffect(() => {
-    void fetchEntries();
-  }, [searchQuery, tagFilter, ownerFilter, fetchEntries]);
+    void fetchEntries(activeEnv);
+  }, [searchQuery, tagFilter, ownerFilter, fetchEntries, activeEnv]);
 
   const [sortField, setSortField] = useState<'name' | 'type' | 'updated'>('name');
   const [sortAsc, setSortAsc] = useState(true);
@@ -112,7 +114,7 @@ function ResourceList({ onBack, onNavigateToPipeline }: CatalogViewProps) {
     setScaffolding(true);
     setScaffoldResult(null);
     try {
-      const created = await scaffoldMetadata();
+      const created = await scaffoldMetadata(undefined, activeEnv);
       setScaffoldResult(
         created.length > 0
           ? `Scaffolded ${created.length} metadata file(s).`
@@ -226,7 +228,7 @@ function ResourceList({ onBack, onNavigateToPipeline }: CatalogViewProps) {
                 <tr
                   key={entry.fingerprint}
                   className="catalog-view__row"
-                  onClick={() => selectEntry(entry.fingerprint)}
+                  onClick={() => selectEntry(entry.fingerprint, activeEnv)}
                 >
                   <td className="catalog-view__td catalog-view__td--name">
                     <div className="catalog-view__entry-name">{entry.name}</div>
@@ -306,6 +308,7 @@ function ResourceDetail({
   const [editing, setEditing] = useState(false);
   const [impactColumn, setImpactColumn] = useState<string | null>(null);
   const [lineageColumn, setLineageColumn] = useState<string | null>(null);
+  const activeEnv = useEnvironmentStore((s) => s.activeEnvironment);
 
   return (
     <div className="catalog-view">
@@ -346,6 +349,7 @@ function ResourceDetail({
                 <ColumnLineageGraph
                   fingerprint={entry.fingerprint}
                   column={lineageColumn}
+                  environment={activeEnv}
                   onClose={() => setLineageColumn(null)}
                   onNavigateToPipeline={onNavigateToPipeline}
                 />

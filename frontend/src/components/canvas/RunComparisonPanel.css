@@ -1,0 +1,213 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.run-compare-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 560px;
+  height: 100%;
+  background: var(--bg, #fff);
+  border-left: 1px solid var(--border, #e5e4e7);
+  box-shadow: var(--shadow);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateX(100%);
+  transition: transform 0.2s ease-out;
+}
+
+.run-compare-panel--open {
+  transform: translateX(0);
+}
+
+/* Header */
+.run-compare-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  flex-shrink: 0;
+}
+
+.run-compare-panel__title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h, #08060d);
+  min-width: 0;
+}
+
+.run-compare-panel__close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--text, #64748b);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.run-compare-panel__close:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+}
+
+/* Body */
+.run-compare-panel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.run-compare-panel__section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+}
+
+.run-compare-panel__section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text, #64748b);
+  margin-bottom: 8px;
+}
+
+.run-compare-panel__loading {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text, #64748b);
+  font-size: 13px;
+}
+
+.run-compare-panel__error-msg {
+  color: #ef4444;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+/* Run picker */
+.run-compare-panel__picker {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+}
+
+.run-compare-panel__picker-label {
+  font-size: 12px;
+  color: var(--text, #64748b);
+  margin-bottom: 6px;
+}
+
+.run-compare-panel__run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.run-compare-panel__run-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.run-compare-panel__run-item:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.06));
+}
+
+.run-compare-panel__run-item--selected {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.12));
+}
+
+/* Comparison table */
+.run-compare-panel__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.run-compare-panel__table th {
+  text-align: left;
+  padding: 4px 6px;
+  font-weight: 600;
+  color: var(--text, #64748b);
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  white-space: nowrap;
+}
+
+.run-compare-panel__table td {
+  padding: 4px 6px;
+  color: var(--text-h, #08060d);
+  border-bottom: 1px solid var(--border-light, #f1f1f4);
+}
+
+.run-compare-panel__delta--positive {
+  color: #ef4444;
+}
+
+.run-compare-panel__delta--negative {
+  color: #16a34a;
+}
+
+.run-compare-panel__delta--zero {
+  color: var(--text, #64748b);
+}
+
+/* Status badges */
+.run-compare-panel__status {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.run-compare-panel__status--success {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.run-compare-panel__status--failed {
+  background: #fef2f2;
+  color: #ef4444;
+}
+
+.run-compare-panel__status--running {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.run-compare-panel__status--pending {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.run-compare-panel__status--cancelled {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+/* Test comparison */
+.run-compare-panel__test-changed {
+  font-weight: 600;
+}
+
+.run-compare-panel__test-pass {
+  color: #16a34a;
+}
+
+.run-compare-panel__test-fail {
+  color: #ef4444;
+}

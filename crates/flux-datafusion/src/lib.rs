@@ -8,6 +8,7 @@ pub mod column_stats;
 pub mod environment;
 pub mod error;
 pub mod executor;
+pub mod failure_report;
 pub mod friendly_sql;
 pub mod incremental_coordinator;
 pub mod incremental_state;
@@ -40,6 +41,7 @@ pub use error::{
     BackfillStoreError, ColumnLineageStoreError, IncrementalStateError, LineageStoreError,
 };
 pub use executor::{ExecutionOptions, PipelineExecutor, SecretResolver};
+pub use failure_report::{FailureReport, PluginDiagnostics, ReproduceBundle};
 pub use friendly_sql::{PreprocessError, preprocess_sql};
 pub use incremental_state::{IncrementalSchemaRecord, IncrementalState};
 pub use output_cache::OutputCache;
@@ -62,7 +64,8 @@ pub use session::{SessionFactory, SessionFactoryConfig};
 pub use stats::NodeStats;
 pub use storage::{
     BackfillStorage, ColumnLineageStorage, EnvironmentStorage, IncrementalStateStorage,
-    LineageObservation, LineageStorage, RunStorage, StoredColumnEdge, StoredResourceBinding,
+    LineageObservation, LineageStorage, RunStorage, SlaStorage, StoredColumnEdge,
+    StoredResourceBinding,
 };
 pub use test_assertion::{AssertionResult, TestNodeResult};
 pub use udfs::{UdfDefinition, UdfError, UdfRegistry};

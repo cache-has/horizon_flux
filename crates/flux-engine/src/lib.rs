@@ -13,6 +13,7 @@ pub mod node;
 pub mod pipeline;
 pub mod pipeline_store;
 pub mod sample;
+pub mod sla;
 pub mod snapshot;
 pub mod snippet;
 pub mod storage;
@@ -55,6 +56,10 @@ pub use pipeline_store::{
     PipelineId, PipelineRecord, PipelineStoreError, PipelineVersion, SqlitePipelineStore,
 };
 pub use sample::SampleConfig;
+pub use sla::{
+    FreshnessConfig, SlaConfig, SlaEvaluation, SlaScope, SlaStatus, format_iso_duration,
+    parse_iso_duration,
+};
 pub use snapshot::{
     ClassifiedRow, CurrentTargetRow, FLUX_IS_CURRENT, FLUX_SCD_ID, FLUX_VALID_FROM, FLUX_VALID_TO,
     RowClassification, ScdColumnType, ScdMetadataColumn, SnapshotMergeStats, SnapshotPlan,

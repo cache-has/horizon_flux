@@ -259,6 +259,19 @@
   color: #fecaca;
 }
 
+.triggers-panel__history-run-link {
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  color: #818cf8;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.triggers-panel__history-run-link:hover {
+  color: #a5b4fc;
+}
+
 /* ---------- Editor modal overlay ---------- */
 .trigger-editor-overlay {
   position: fixed;

@@ -51,6 +51,7 @@ fn test_state() -> AppState {
         column_lineage_store: None,
         column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
         openlineage_client: None,
+        sla_store: None,
     }
 }
 
@@ -134,6 +135,7 @@ async fn list_connectors_empty_registry() {
         column_lineage_store: None,
         column_lineage_event_tx: AppState::new_column_lineage_event_channel(),
         openlineage_client: None,
+        sla_store: None,
     };
     let app = test_router(state);
     let resp = app

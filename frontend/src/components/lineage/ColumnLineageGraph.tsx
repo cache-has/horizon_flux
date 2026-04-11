@@ -39,6 +39,7 @@ interface ColumnLineageGraphProps {
   fingerprint: string;
   column: string;
   direction?: 'upstream' | 'downstream' | 'both';
+  environment?: string;
   onClose?: () => void;
   onNavigateToPipeline?: (pipelineId: string) => void;
 }
@@ -105,12 +106,13 @@ function buildGraph(
   const columnNodes = new Map<string, ColumnNode>();
   const flowEdges: Edge[] = [];
 
-  // Root node
+  // Root node — show short resource name instead of full fingerprint
   const rootId = `root:${rootFingerprint}:${rootColumn}`;
+  const rootLabel = rootFingerprint.split('/').filter(Boolean).pop() ?? rootFingerprint;
   columnNodes.set(rootId, {
     id: rootId,
     pipelineId: '',
-    nodeId: rootFingerprint,
+    nodeId: rootLabel,
     column: rootColumn,
     isRoot: true,
     depth: 0,
@@ -155,6 +157,8 @@ function buildGraph(
       id: `e-${upId}-${downId}-${edge.relationship}`,
       source: upId,
       target: downId,
+      type: 'default',
+      animated: true,
       label: RELATIONSHIP_LABELS[edge.relationship],
       style: {
         stroke: RELATIONSHIP_COLORS[edge.relationship],
@@ -163,6 +167,10 @@ function buildGraph(
       labelStyle: {
         fill: RELATIONSHIP_COLORS[edge.relationship],
         fontSize: 10,
+      },
+      labelBgStyle: {
+        fill: '#020617',
+        fillOpacity: 0.8,
       },
     });
   }
@@ -206,6 +214,8 @@ function buildGraph(
       id: `e-${upId}-${downId}-${edge.relationship}`,
       source: upId,
       target: downId,
+      type: 'default',
+      animated: true,
       label: RELATIONSHIP_LABELS[edge.relationship],
       style: {
         stroke: RELATIONSHIP_COLORS[edge.relationship],
@@ -214,6 +224,10 @@ function buildGraph(
       labelStyle: {
         fill: RELATIONSHIP_COLORS[edge.relationship],
         fontSize: 10,
+      },
+      labelBgStyle: {
+        fill: '#020617',
+        fillOpacity: 0.8,
       },
     });
   }
@@ -226,8 +240,8 @@ function buildGraph(
     byDepth.get(d)!.push(node);
   }
 
-  const COL_WIDTH = 220;
-  const ROW_HEIGHT = 70;
+  const COL_WIDTH = 300;
+  const ROW_HEIGHT = 80;
   const depths = [...byDepth.keys()].sort((a, b) => a - b);
   const minDepth = depths[0] ?? 0;
 
@@ -286,6 +300,7 @@ function ColumnLineageGraphInner({
   fingerprint,
   column,
   direction = 'both',
+  environment,
   onClose,
 }: ColumnLineageGraphProps) {
   const [upstreamEdges, setUpstreamEdges] = useState<TraceEdgeDto[]>([]);
@@ -303,9 +318,11 @@ function ColumnLineageGraphInner({
 
     const fetches: Promise<void>[] = [];
 
+    const traceOpts = environment ? { environment } : undefined;
+
     if (direction === 'upstream' || direction === 'both') {
       fetches.push(
-        fetchColumnUpstream(fingerprint, column).then((r) => {
+        fetchColumnUpstream(fingerprint, column, traceOpts).then((r) => {
           if (!cancelled) setUpstreamEdges(r.edges);
         }),
       );
@@ -313,7 +330,7 @@ function ColumnLineageGraphInner({
 
     if (direction === 'downstream' || direction === 'both') {
       fetches.push(
-        fetchColumnDownstream(fingerprint, column).then((r) => {
+        fetchColumnDownstream(fingerprint, column, traceOpts).then((r) => {
           if (!cancelled) setDownstreamEdges(r.edges);
         }),
       );
@@ -330,7 +347,7 @@ function ColumnLineageGraphInner({
     return () => {
       cancelled = true;
     };
-  }, [fingerprint, column, direction]);
+  }, [fingerprint, column, direction, environment]);
 
   const toggleRelationship = useCallback((kind: RelationshipKind) => {
     setActiveRelationships((prev) => {

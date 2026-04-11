@@ -8,6 +8,7 @@
 //! transform, or pipeline sink).
 
 use crate::error::{ExecutorError, NodeErrorKind};
+use crate::failure_report::FailureReport;
 use crate::incremental_coordinator::{IncrementalReadPlan, IncrementalSinkPlan, build_plans};
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
 use crate::provider::{
@@ -296,8 +297,13 @@ impl PipelineExecutor {
         // Mark running.
         run.status = RunStatus::Running;
         run.start_time = Some(run_start_wall);
+        run.triggered_by = options.triggered_by.clone();
         if let Some(store) = &options.run_store {
-            let _ = store.set_running(&run.id, run_start_wall);
+            let _ = store.set_running(
+                &run.id,
+                run_start_wall,
+                options.triggered_by.as_deref(),
+            );
         }
 
         emit(
@@ -434,6 +440,9 @@ impl PipelineExecutor {
             // Sink-only: column names and upstream node IDs captured before
             // the sink consumes the data, used for boundary column lineage.
             let mut sink_boundary_info: Option<(Vec<String>, Vec<NodeId>)> = None;
+            // Doc 37: Failure context — captured during execution for the
+            // failure report if this node errors.
+            let mut executed_sql: Option<String> = None;
 
             let result: Result<Vec<RecordBatch>, NodeErrorKind> = match &node.kind {
                 NodeKind::Source(src_cfg) => {
@@ -517,6 +526,8 @@ impl PipelineExecutor {
                                 match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
                                     Ok(data) => {
                                         let interpolated_sql = resolved_vars.interpolate(&code);
+                                        // Doc 37: capture for failure report.
+                                        executed_sql = Some(interpolated_sql.clone());
                                         // Annotation override (doc 35c): skip plan walk
                                         // when user annotations are present.
                                         let has_annotations = xform_cfg
@@ -1101,6 +1112,55 @@ impl PipelineExecutor {
                         let _ = store.save_node_stats(&run.id, &node_run_stats);
                     }
                     run.node_stats.push(node_run_stats);
+
+                    // Doc 37: build and persist failure report.
+                    if let Some(store) = &options.run_store {
+                        let upstream_ids = pipeline.upstream_of(node_id);
+                        let upstream_for_report: Vec<(NodeId, Vec<RecordBatch>)> = upstream_ids
+                            .iter()
+                            .filter_map(|uid| {
+                                outputs.get(*uid).map(|bs| ((*uid).clone(), bs.clone()))
+                            })
+                            .collect();
+                        let error_chain =
+                            FailureReport::build_error_chain(&kind as &dyn std::error::Error);
+                        let scrubbed_chain: Vec<String> = error_chain
+                            .iter()
+                            .map(|msg| flux_secrets::scrub_secrets(msg, &node_secret_values))
+                            .collect();
+                        let input_schemas =
+                            FailureReport::extract_input_schemas(&upstream_for_report);
+                        let (input_sample, input_total_rows) =
+                            FailureReport::sample_input_rows(
+                                &upstream_for_report,
+                                crate::failure_report::DEFAULT_SAMPLE_ROW_LIMIT,
+                            );
+                        let report = FailureReport {
+                            run_id: run.id.to_string(),
+                            node_id: node_id.to_string(),
+                            pipeline_name: pipeline.name.clone(),
+                            environment: options.environment.clone(),
+                            error_chain: scrubbed_chain,
+                            node_config: FailureReport::serialize_node_config(&node.kind),
+                            input_schemas,
+                            input_sample,
+                            input_total_rows,
+                            executed_sql: executed_sql.take(),
+                            plugin_diagnostics: None,
+                            source_query: None,
+                            captured_at_ms: SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as i64,
+                        };
+                        if let Err(e) = store.save_failure_report(&report) {
+                            warn!(
+                                node = %node_id,
+                                error = %e,
+                                "failed to persist failure report"
+                            );
+                        }
+                    }
 
                     emit(
                         &options.progress,

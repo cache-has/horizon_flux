@@ -60,7 +60,7 @@ pub struct EnvQuery {
 }
 
 fn default_env() -> String {
-    "default".into()
+    "dev".into()
 }
 
 /// Default observation window: 90 days in milliseconds.

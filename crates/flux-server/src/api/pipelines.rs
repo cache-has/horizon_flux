@@ -97,6 +97,14 @@ pub fn router() -> Router<AppState> {
             get(get_version).post(restore_version),
         )
         .route("/{id}/column-lineage", get(pipeline_column_lineage))
+        .route(
+            "/{id}/runs/{run_id}/nodes/{node_id}/failure-report",
+            get(get_failure_report),
+        )
+        .route(
+            "/{id}/runs/{run_id}/nodes/{node_id}/failure-report/reproduce",
+            get(get_failure_reproduce_bundle),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -533,6 +541,10 @@ async fn run_pipeline(
         }
     }
 
+    // Ensure static lineage bindings are up-to-date — covers pipelines
+    // imported before the binding code existed (best-effort).
+    refresh_lineage_bindings(&state, &pipeline_id, &record.pipeline);
+
     // Update run metadata (last_run_at, run_count) — best-effort.
     if let Err(e) = state.pipeline_store.record_run(&pipeline_id) {
         error!(pipeline = %record.pipeline.name, error = %e, "failed to record run metadata");
@@ -639,7 +651,7 @@ async fn list_runs(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(page): Query<Pagination>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+) -> Result<Json<PaginatedResponse<serde_json::Value>>, (StatusCode, Json<ApiError>)> {
     let pipeline_id = parse_pipeline_id(&id)?;
     let record = state
         .pipeline_store
@@ -647,12 +659,28 @@ async fn list_runs(
         .map_err(|e| ApiError::internal(e.to_string()))?
         .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
 
-    let runs = state
+    let pipeline_name = &record.pipeline.name;
+    let total = state
         .run_store
-        .list_runs(Some(&record.pipeline.name), page.limit)
+        .count_runs(Some(pipeline_name))
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    Ok(Json(serde_json::to_value(&runs).unwrap()))
+    let runs = state
+        .run_store
+        .list_runs(Some(pipeline_name), page.limit, page.offset)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let data: Vec<serde_json::Value> = runs
+        .iter()
+        .map(|r| serde_json::to_value(r).unwrap())
+        .collect();
+
+    Ok(Json(PaginatedResponse {
+        data,
+        total,
+        limit: page.limit,
+        offset: page.offset,
+    }))
 }
 
 /// `GET /api/pipelines/:id/runs/:run_id` — get detailed run results.
@@ -1183,6 +1211,94 @@ fn format_sample_method(config: &SampleConfig) -> String {
         SampleConfig::Random { count, .. } => format!("random {count}"),
         SampleConfig::Full => "full".to_string(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Failure report handler (planning doc 37)
+// ---------------------------------------------------------------------------
+
+async fn get_failure_report(
+    State(state): State<AppState>,
+    Path((id, run_id_str, node_id)): Path<(String, String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    // Validate pipeline exists.
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let _record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let run_uuid = uuid::Uuid::parse_str(&run_id_str)
+        .map_err(|_| ApiError::bad_request(format!("invalid run ID: {run_id_str}")))?;
+    let run_id = RunId(run_uuid);
+
+    let report = state
+        .run_store
+        .get_failure_report(&run_id, &node_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "failure report",
+                &format!("run={run_id_str}, node={node_id}"),
+            )
+        })?;
+
+    Ok(Json(serde_json::to_value(&report).unwrap()))
+}
+
+// ---------------------------------------------------------------------------
+// Reproduce-locally bundle (planning doc 37)
+// ---------------------------------------------------------------------------
+
+async fn get_failure_reproduce_bundle(
+    State(state): State<AppState>,
+    Path((id, run_id_str, node_id)): Path<(String, String, String)>,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let _record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let run_uuid = uuid::Uuid::parse_str(&run_id_str)
+        .map_err(|_| ApiError::bad_request(format!("invalid run ID: {run_id_str}")))?;
+    let run_id = RunId(run_uuid);
+
+    let report = state
+        .run_store
+        .get_failure_report(&run_id, &node_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "failure report",
+                &format!("run={run_id_str}, node={node_id}"),
+            )
+        })?;
+
+    let bundle = flux_datafusion::ReproduceBundle::from_failure_report(&report);
+    let json = serde_json::to_string_pretty(&bundle)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let filename = format!(
+        "reproduce-{}-{}.json",
+        sanitize_filename(&report.pipeline_name),
+        sanitize_filename(&node_id),
+    );
+
+    let headers = [
+        (
+            axum::http::header::CONTENT_TYPE,
+            "application/json".to_string(),
+        ),
+        (
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        ),
+    ];
+
+    Ok((StatusCode::OK, headers, json).into_response())
 }
 
 fn parse_pipeline_id(s: &str) -> Result<PipelineId, (StatusCode, Json<ApiError>)> {

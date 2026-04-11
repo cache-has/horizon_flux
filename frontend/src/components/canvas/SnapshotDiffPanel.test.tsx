@@ -26,10 +26,10 @@ const HAPPY_PAYLOAD = {
 describe('SnapshotDiffPanel', () => {
   let originalFetch: typeof fetch;
   beforeEach(() => {
-    originalFetch = global.fetch;
+    originalFetch = globalThis.fetch;
   });
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -48,7 +48,7 @@ describe('SnapshotDiffPanel', () => {
   });
 
   it('renders the four counts and sample after a successful preview', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => HAPPY_PAYLOAD,
     } as unknown as Response);
@@ -65,14 +65,14 @@ describe('SnapshotDiffPanel', () => {
     expect(screen.getAllByText('changed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('new').length).toBeGreaterThan(0);
     expect(screen.getAllByText('gone').length).toBeGreaterThan(0);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalThis.fetch).toHaveBeenCalledWith(
       '/api/pipelines/p1/nodes/sink/snapshot/diff',
       expect.objectContaining({ method: 'POST' }),
     );
   });
 
   it('shows the truncated banner when sample_truncated is true', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         ...HAPPY_PAYLOAD,
@@ -88,7 +88,7 @@ describe('SnapshotDiffPanel', () => {
   });
 
   it('surfaces server error messages inline', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 400,
       statusText: 'Bad Request',
@@ -104,7 +104,7 @@ describe('SnapshotDiffPanel', () => {
   });
 
   it('renders the empty-diff message when no rows would change', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         ...HAPPY_PAYLOAD,

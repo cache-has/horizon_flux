@@ -216,6 +216,7 @@ pub struct MetadataStores {
     pub trigger_store: Arc<dyn flux_scheduler::TriggerStorage>,
     pub backfill_store: Arc<dyn flux_datafusion::BackfillStorage>,
     pub column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>>,
+    pub sla_store: Option<Arc<dyn flux_datafusion::SlaStorage>>,
 }
 
 /// Open the metadata stores according to the resolved backend.
@@ -249,6 +250,8 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
         run_store_concrete.clone();
     let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete.clone();
+    let sla_store: Option<Arc<dyn flux_datafusion::SlaStorage>> =
+        Some(run_store_concrete.clone());
     let column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>> =
         Some(run_store_concrete);
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
@@ -272,6 +275,7 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
         trigger_store,
         backfill_store,
         column_lineage_store,
+        sla_store,
     })
 }
 
@@ -305,6 +309,8 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
         run_store_concrete.clone();
     let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete.clone();
+    let sla_store: Option<Arc<dyn flux_datafusion::SlaStorage>> =
+        Some(run_store_concrete.clone());
     let column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>> =
         Some(run_store_concrete);
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
@@ -334,6 +340,7 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
         trigger_store,
         backfill_store,
         column_lineage_store,
+        sla_store,
     })
 }
 

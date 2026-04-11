@@ -11,7 +11,6 @@ import { useCallback, useEffect, useState } from 'react';
 import type {
   ColumnImpactResponse,
   TraceEdgeDto,
-  ConfidenceLevel,
   RelationshipKind,
 } from '../../api/columnLineage';
 import { fetchColumnImpact } from '../../api/columnLineage';

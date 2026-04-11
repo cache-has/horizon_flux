@@ -19,6 +19,7 @@ import {
   type Node,
   type Edge,
   type NodeMouseHandler,
+  SelectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -49,6 +50,9 @@ import { TriggersPanel } from './TriggersPanel';
 import { BackfillsPanel } from './BackfillsPanel';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { CanvasToolbar } from './CanvasToolbar';
+import { FailureDetailPanel } from './FailureDetailPanel';
+import { RunDetailPanel } from './RunDetailPanel';
+import { RunComparisonPanel } from './RunComparisonPanel';
 import { useEnvironmentStore } from '../../stores/environmentStore';
 import { useResourceBindings } from '../../hooks/useResourceBindings';
 import { CatalogNavigationContext } from '../../contexts/CatalogNavigationContext';
@@ -72,10 +76,14 @@ const defaultEdgeOptions = {
 function PipelineCanvasInner({
   onLineageClick,
   onCatalogClick,
+  onSlaClick,
+  onHealthClick,
   onNavigateToPipeline,
 }: {
   onLineageClick?: () => void;
   onCatalogClick?: (fingerprint?: string) => void;
+  onSlaClick?: () => void;
+  onHealthClick?: () => void;
   onNavigateToPipeline?: (id: string) => void;
 }) {
   const rawNodes = usePipelineStore((s) => s.nodes);
@@ -114,6 +122,9 @@ function PipelineCanvasInner({
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
   const [triggersPanelOpen, setTriggersPanelOpen] = useState(false);
   const [backfillsPanelOpen, setBackfillsPanelOpen] = useState(false);
+  const [failureTarget, setFailureTarget] = useState<{ runId: string; nodeId: string } | null>(null);
+  const [runDetailTarget, setRunDetailTarget] = useState<string | null>(null);
+  const [compareTarget, setCompareTarget] = useState<string | null>(null);
 
   // Keyboard shortcuts: Escape to close side panel, Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo
   useEffect(() => {
@@ -167,6 +178,43 @@ function PipelineCanvasInner({
       onCatalogClick?.(fingerprint);
     },
     [onCatalogClick],
+  );
+
+  // Failure panel callbacks
+  const reactFlowInstance = useReactFlow();
+  const handleViewFailureReport = useCallback(
+    (runId: string, nodeId: string) => {
+      setFailureTarget({ runId, nodeId });
+    },
+    [],
+  );
+  const handleJumpToNode = useCallback(
+    (nodeId: string) => {
+      const node = reactFlowInstance.getNode(nodeId);
+      if (node) {
+        reactFlowInstance.setCenter(
+          node.position.x + (node.measured?.width ?? 150) / 2,
+          node.position.y + (node.measured?.height ?? 50) / 2,
+          { zoom: 1.2, duration: 300 },
+        );
+      }
+      setSelectedNodeId(nodeId);
+    },
+    [reactFlowInstance, setSelectedNodeId],
+  );
+
+  // Run detail panel callbacks
+  const handleViewRunDetail = useCallback(
+    (runId: string) => {
+      setRunDetailTarget(runId);
+    },
+    [],
+  );
+  const handleCompareRun = useCallback(
+    (runId: string) => {
+      setCompareTarget(runId);
+    },
+    [],
   );
 
   // Context menu state
@@ -625,7 +673,7 @@ function PipelineCanvasInner({
         selectionOnDrag
         panOnDrag={[1, 2]}
         selectNodesOnDrag={false}
-        selectionMode={1}
+        selectionMode={SelectionMode.Partial}
         deleteKeyCode="Delete"
         multiSelectionKeyCode="Shift"
       >
@@ -654,6 +702,8 @@ function PipelineCanvasInner({
           <CanvasToolbar
             onLineageClick={onLineageClick}
             onCatalogClick={onCatalogClick}
+            onSlaClick={onSlaClick}
+            onHealthClick={onHealthClick}
             onTriggersClick={() => {
               setTriggersPanelOpen((o) => !o);
               setSecretsPanelOpen(false);
@@ -737,7 +787,11 @@ function PipelineCanvasInner({
         onCancel={cancelDelete}
       />
 
-      <SidePanel onNavigateToPipeline={onNavigateToPipeline} />
+      <SidePanel
+        onNavigateToPipeline={onNavigateToPipeline}
+        onViewFailureReport={handleViewFailureReport}
+        onViewRunDetail={handleViewRunDetail}
+      />
       <EnvironmentManagementPanel />
       <SecretsPanel
         open={secretsPanelOpen}
@@ -754,6 +808,7 @@ function PipelineCanvasInner({
       <TriggersPanel
         open={triggersPanelOpen}
         onClose={() => setTriggersPanelOpen(false)}
+        onViewRunDetail={handleViewRunDetail}
       />
       <BackfillsPanel
         open={backfillsPanelOpen}
@@ -763,6 +818,35 @@ function PipelineCanvasInner({
         open={historyPanelOpen}
         onClose={() => setHistoryPanelOpen(false)}
       />
+      {failureTarget && (
+        <FailureDetailPanel
+          pipelineId={usePipelineStore.getState().pipelineId ?? ''}
+          runId={failureTarget.runId}
+          nodeId={failureTarget.nodeId}
+          open
+          onClose={() => setFailureTarget(null)}
+          onJumpToNode={handleJumpToNode}
+          onShowLineage={onLineageClick}
+        />
+      )}
+      {runDetailTarget && (
+        <RunDetailPanel
+          runId={runDetailTarget}
+          open
+          onClose={() => setRunDetailTarget(null)}
+          onJumpToNode={handleJumpToNode}
+          onViewFailureReport={handleViewFailureReport}
+          onCompare={handleCompareRun}
+          onShowLineage={onLineageClick}
+        />
+      )}
+      {compareTarget && (
+        <RunComparisonPanel
+          runId={compareTarget}
+          open
+          onClose={() => setCompareTarget(null)}
+        />
+      )}
       <NodeEditorModal />
     </div>
     </CatalogNavigationContext.Provider>
@@ -773,10 +857,14 @@ function PipelineCanvasInner({
 export function PipelineCanvas({
   onLineageClick,
   onCatalogClick,
+  onSlaClick,
+  onHealthClick,
   onNavigateToPipeline,
 }: {
   onLineageClick?: () => void;
   onCatalogClick?: (fingerprint?: string) => void;
+  onSlaClick?: () => void;
+  onHealthClick?: () => void;
   onNavigateToPipeline?: (id: string) => void;
 } = {}) {
   return (
@@ -784,6 +872,8 @@ export function PipelineCanvas({
       <PipelineCanvasInner
         onLineageClick={onLineageClick}
         onCatalogClick={onCatalogClick}
+        onSlaClick={onSlaClick}
+        onHealthClick={onHealthClick}
         onNavigateToPipeline={onNavigateToPipeline}
       />
     </ReactFlowProvider>

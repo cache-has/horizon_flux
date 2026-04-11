@@ -373,6 +373,30 @@ function CatalogButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function SlaButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="SLA compliance dashboard"
+    >
+      SLAs
+    </button>
+  );
+}
+
+function HealthButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-system-info"
+      onClick={onClick}
+      title="Cross-pipeline health dashboard"
+    >
+      Health
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Toolbar
 // ---------------------------------------------------------------------------
@@ -386,6 +410,8 @@ export function CanvasToolbar({
   onTriggersClick,
   onBackfillsClick,
   onCatalogClick,
+  onSlaClick,
+  onHealthClick,
 }: {
   onSecretsClick?: () => void;
   onSystemInfoClick?: () => void;
@@ -395,6 +421,8 @@ export function CanvasToolbar({
   onTriggersClick?: () => void;
   onBackfillsClick?: () => void;
   onCatalogClick?: () => void;
+  onSlaClick?: () => void;
+  onHealthClick?: () => void;
 }) {
   return (
     <div className="canvas-toolbar">
@@ -402,8 +430,10 @@ export function CanvasToolbar({
       <div className="canvas-toolbar__separator" />
       <EnvironmentSelector />
       <div className="canvas-toolbar__spacer" />
+      {onHealthClick && <HealthButton onClick={onHealthClick} />}
       {onLineageClick && <LineageButton onClick={onLineageClick} />}
       {onCatalogClick && <CatalogButton onClick={onCatalogClick} />}
+      {onSlaClick && <SlaButton onClick={onSlaClick} />}
       {onTriggersClick && <TriggersButton onClick={onTriggersClick} />}
       {onBackfillsClick && <BackfillsButton onClick={onBackfillsClick} />}
       {onHistoryClick && <HistoryButton onClick={onHistoryClick} />}

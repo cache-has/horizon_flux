@@ -15,10 +15,10 @@ const POLICY: MaterializationPolicy = {
 describe('SnapshotHistoryPanel', () => {
   let originalFetch: typeof fetch;
   beforeEach(() => {
-    originalFetch = global.fetch;
+    originalFetch = globalThis.fetch;
   });
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -44,7 +44,7 @@ describe('SnapshotHistoryPanel', () => {
   });
 
   it('renders the timeline returned by the server', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         node_id: 'sink',
@@ -83,14 +83,14 @@ describe('SnapshotHistoryPanel', () => {
     expect(screen.getByText('old@example.com')).toBeInTheDocument();
     expect(screen.getByText('current')).toBeInTheDocument();
     expect(screen.getByText('closed')).toBeInTheDocument();
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalThis.fetch).toHaveBeenCalledWith(
       '/api/pipelines/p1/nodes/sink/snapshot/history',
       expect.objectContaining({ method: 'POST' }),
     );
   });
 
   it('surfaces server error messages inline', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 400,
       statusText: 'Bad Request',
@@ -109,7 +109,7 @@ describe('SnapshotHistoryPanel', () => {
   });
 
   it('shows empty state when no versions match', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         node_id: 'sink',

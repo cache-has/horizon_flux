@@ -13,6 +13,7 @@ pub mod error;
 pub mod lockfile;
 pub mod port;
 pub mod shutdown;
+pub mod sla_evaluator;
 pub mod state;
 pub mod static_files;
 pub mod ws;
@@ -73,7 +74,10 @@ fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
         .nest("/lineage", api::lineage::router())
         .nest("/triggers", api::triggers::router())
         .nest("/backfills", api::backfills::router())
-        .nest("/catalog", api::catalog::router());
+        .nest("/catalog", api::catalog::router())
+        .nest("/runs", api::runs::router())
+        .nest("/sla", api::sla::router())
+        .nest("/health", api::health::router());
 
     // Webhook trigger endpoints live outside /api — they're called by
     // external systems, not the frontend.

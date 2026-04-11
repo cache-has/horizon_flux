@@ -17,7 +17,7 @@ use axum::routing::{get, post, put};
 use flux_datafusion::{PipelineRun, RunStatus};
 use flux_engine::catalog::{
     self, AnnotationFile, AnnotationOwner, AnnotationResource, Catalog, CatalogEntry,
-    ColumnAnnotation, DiscoveredResource, ResourceAnnotation,
+    ColumnAnnotation, DiscoveredResource, ResourceAnnotation, SchemaColumn,
 };
 use flux_engine::lineage::{LineageGraph, ResourceBinding, ResourceFingerprint};
 use flux_engine::pipeline_store::PipelineId;
@@ -55,13 +55,13 @@ struct ResourceListQuery {
     /// Filter by environment.
     #[serde(default)]
     environment: Option<String>,
-    /// Environment for lineage graph (defaults to "default").
+    /// Environment for lineage graph (defaults to "dev").
     #[serde(default = "default_env")]
     env: String,
 }
 
 fn default_env() -> String {
-    "default".into()
+    "dev".into()
 }
 
 #[derive(Debug, Serialize)]
@@ -134,7 +134,9 @@ struct DescribeResponse {
 
 /// Build a [`Catalog`] from the current lineage state and metadata directory,
 /// then enrich entries with freshness data from the run store.
-fn build_catalog(
+///
+/// Exposed as `pub(crate)` so the SLA module can reuse it.
+pub(crate) fn build_catalog_public(
     state: &AppState,
     environment: &str,
 ) -> Result<Catalog, (StatusCode, Json<ApiError>)> {
@@ -147,6 +149,7 @@ fn build_catalog(
 
     let mut catalog = Catalog::build(&graph, metadata_dir);
     enrich_from_runs(state, &mut catalog);
+    enrich_schema_from_column_lineage(state, environment, &mut catalog);
     Ok(catalog)
 }
 
@@ -179,7 +182,7 @@ fn enrich_from_runs(state: &AppState, catalog: &mut Catalog) {
         if name_to_latest.contains_key(name) {
             continue;
         }
-        if let Ok(runs) = state.run_store.list_runs(Some(name), 10) {
+        if let Ok(runs) = state.run_store.list_runs(Some(name), 10, 0) {
             if let Some(run) = runs.into_iter().find(|r| r.status == RunStatus::Success) {
                 name_to_latest.insert(name.clone(), run);
             }
@@ -232,6 +235,75 @@ fn enrich_from_runs(state: &AppState, catalog: &mut Catalog) {
     }
 }
 
+/// Populate `schema_columns` (and re-merge `columns`) on catalog entries from
+/// column lineage boundary edges. For each resource fingerprint that appears as
+/// an upstream or downstream boundary in the column lineage store, we collect
+/// the set of column names and inject them as schema columns.
+fn enrich_schema_from_column_lineage(state: &AppState, environment: &str, catalog: &mut Catalog) {
+    let col_store = match &state.column_lineage_store {
+        Some(s) => s,
+        None => return,
+    };
+    let edges = match col_store.all_column_edges(environment) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    // Collect unique column names per resource fingerprint.
+    let mut fp_columns: HashMap<ResourceFingerprint, BTreeMap<String, ()>> = HashMap::new();
+    for stored in &edges {
+        if let Some(ref fp) = stored.edge.downstream_resource {
+            fp_columns
+                .entry(fp.clone())
+                .or_default()
+                .insert(stored.edge.downstream_column.clone(), ());
+        }
+        if let Some(ref fp) = stored.edge.upstream_resource {
+            fp_columns
+                .entry(fp.clone())
+                .or_default()
+                .insert(stored.edge.upstream_column.clone(), ());
+        }
+    }
+
+    if fp_columns.is_empty() {
+        return;
+    }
+
+    for entry in &mut catalog.entries {
+        if let Some(cols) = fp_columns.get(&entry.fingerprint) {
+            let schema_cols: Vec<SchemaColumn> = cols
+                .keys()
+                .map(|name| SchemaColumn {
+                    name: name.clone(),
+                    data_type: "unknown".into(),
+                    nullable: true,
+                })
+                .collect();
+
+            // Update derived schema_columns.
+            entry.derived.schema_columns = schema_cols.clone();
+
+            // Re-merge with any user annotations to populate the columns field.
+            let annotations: BTreeMap<String, ColumnAnnotation> = entry
+                .columns
+                .iter()
+                .filter(|c| c.description.is_some() || c.accepted_values.is_some())
+                .map(|c| {
+                    (
+                        c.name.clone(),
+                        ColumnAnnotation {
+                            description: c.description.clone(),
+                            accepted_values: c.accepted_values.clone(),
+                        },
+                    )
+                })
+                .collect();
+            entry.columns = catalog::merge_columns(&schema_cols, &annotations);
+        }
+    }
+}
+
 /// Format epoch milliseconds as an ISO 8601 UTC timestamp string.
 fn format_epoch_ms(ms: i64) -> String {
     let secs = ms / 1000;
@@ -241,6 +313,10 @@ fn format_epoch_ms(ms: i64) -> String {
 }
 
 /// Build a [`LineageGraph`] from stored bindings for the given environment.
+///
+/// Merges static bindings (written on create/update) with runtime observations
+/// (written on execution) so that pipelines imported before the static binding
+/// code existed still appear in the catalog after being run.
 fn build_lineage_graph(
     state: &AppState,
     environment: &str,
@@ -250,10 +326,12 @@ fn build_lineage_graph(
         .all_bindings(environment)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    let bindings: Vec<ResourceBinding> = stored
+    let mut seen = std::collections::HashSet::new();
+    let mut bindings: Vec<ResourceBinding> = stored
         .into_iter()
         .filter_map(|sb| {
             let pipeline_id = sb.pipeline_id.parse::<PipelineId>().ok()?;
+            seen.insert((pipeline_id.clone(), sb.node_id.clone()));
             Some(ResourceBinding {
                 pipeline_id,
                 node_id: sb.node_id,
@@ -262,6 +340,23 @@ fn build_lineage_graph(
             })
         })
         .collect();
+
+    // Supplement with runtime observations for any pipeline/node pairs not
+    // already covered by static bindings.
+    if let Ok(observations) = state.lineage_store.query_observations(environment, 0) {
+        for obs in observations {
+            if let Ok(pipeline_id) = obs.pipeline_id.parse::<PipelineId>() {
+                if seen.insert((pipeline_id.clone(), obs.node_id.clone())) {
+                    bindings.push(ResourceBinding {
+                        pipeline_id,
+                        node_id: obs.node_id,
+                        direction: obs.direction,
+                        fingerprint: obs.resource_fingerprint,
+                    });
+                }
+            }
+        }
+    }
 
     Ok(LineageGraph {
         edges: Vec::new(),
@@ -286,7 +381,7 @@ async fn list_resources(
     State(state): State<AppState>,
     Query(q): Query<ResourceListQuery>,
 ) -> Result<Json<ResourceListResponse>, (StatusCode, Json<ApiError>)> {
-    let catalog = build_catalog(&state, &q.env)?;
+    let catalog = build_catalog_public(&state, &q.env)?;
 
     let entries: Vec<CatalogEntry> = if let Some(query) = &q.q {
         // Full-text search first, then apply filters.
@@ -335,7 +430,7 @@ async fn get_resource(
     State(state): State<AppState>,
     Query(q): Query<ResourceDetailQuery>,
 ) -> Result<Json<CatalogEntry>, (StatusCode, Json<ApiError>)> {
-    let catalog = build_catalog(&state, &q.env)?;
+    let catalog = build_catalog_public(&state, &q.env)?;
     let fp = ResourceFingerprint::new(&q.fingerprint);
 
     catalog
@@ -420,7 +515,7 @@ async fn update_metadata(
     });
 
     // Rebuild the catalog to return the updated entry.
-    let catalog = build_catalog(&state, "default")?;
+    let catalog = build_catalog_public(&state, &default_env())?;
     let entry = catalog.get(&fp).cloned().unwrap_or_else(|| {
         // Resource not in lineage — create a standalone entry from the annotation.
         let discovered = HashMap::new();
@@ -457,6 +552,7 @@ fn build_annotation_from_request(
         tags: Vec::new(),
         columns: BTreeMap::new(),
         custom: BTreeMap::new(),
+        sla: None,
     };
 
     let base = existing.unwrap_or(&default_ann);
@@ -518,6 +614,7 @@ fn build_annotation_from_request(
         tags: body.tags.clone().unwrap_or_else(|| base.tags.clone()),
         columns,
         custom,
+        sla: base.sla.clone(),
     }
 }
 
@@ -593,7 +690,7 @@ async fn list_tags(
     State(state): State<AppState>,
     Query(q): Query<EnvQuery>,
 ) -> Result<Json<TagsResponse>, (StatusCode, Json<ApiError>)> {
-    let catalog = build_catalog(&state, &q.env)?;
+    let catalog = build_catalog_public(&state, &q.env)?;
     Ok(Json(TagsResponse {
         tags: catalog.all_tags(),
     }))
@@ -604,7 +701,7 @@ async fn list_owners(
     State(state): State<AppState>,
     Query(q): Query<EnvQuery>,
 ) -> Result<Json<OwnersResponse>, (StatusCode, Json<ApiError>)> {
-    let catalog = build_catalog(&state, &q.env)?;
+    let catalog = build_catalog_public(&state, &q.env)?;
     Ok(Json(OwnersResponse {
         owners: catalog.all_owners(),
     }))
