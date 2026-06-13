@@ -213,9 +213,17 @@ mod tests {
 
     #[test]
     fn file_absolute_path() {
+        // `/data/orders.csv` is absolute on Unix but drive-relative on Windows
+        // (where it resolves against the current drive, e.g. `D:/data/...`), so
+        // assert the stable shape rather than a platform-specific string.
         let config = json!({"path": "/data/orders.csv", "format": "csv"});
         let fp = fingerprint("file", &config).unwrap();
-        assert_eq!(fp.0, "file:///data/orders.csv");
+        assert!(fp.0.starts_with("file://"), "got {}", fp.0);
+        assert!(
+            fp.0.replace('\\', "/").ends_with("/data/orders.csv"),
+            "got {}",
+            fp.0
+        );
     }
 
     #[test]

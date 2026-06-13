@@ -53,7 +53,9 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        # --no-fail-fast so a failure in one crate doesn't mask failures in
+        # later crates (important for surfacing all platform-specific issues).
+        run: cargo test --workspace --no-fail-fast
 
   frontend:
     name: Frontend
