@@ -15,6 +15,27 @@ cargo run         # starts server at http://localhost:8080, opens browser
 cargo run -- start --headless --port 9090
 ```
 
+## Docker
+
+Prebuilt images are published on each release to Docker Hub and the GitHub Container Registry:
+
+```bash
+# Docker Hub
+docker pull cachehorizon/flux:1.0.0        # or :latest
+
+# GitHub Container Registry
+docker pull ghcr.io/cache-has/flux:1.0.0   # or :latest
+```
+
+Run the server (headless, listening on port 8080) with a persistent data volume:
+
+```bash
+docker run -p 8080:8080 -v flux-data:/data cachehorizon/flux:latest
+```
+
+Then open http://localhost:8080. Pipelines, secrets, and run history persist in the
+`flux-data` volume, mounted at `/data` inside the container.
+
 ## Architecture
 
 ```

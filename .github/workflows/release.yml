@@ -184,9 +184,9 @@ jobs:
           context: .
           push: true
           tags: |
-            horizonanalytic/flux:latest
-            horizonanalytic/flux:${{ steps.version.outputs.version }}
-            ghcr.io/horizonanalytic/flux:latest
-            ghcr.io/horizonanalytic/flux:${{ steps.version.outputs.version }}
+            cachehorizon/flux:latest
+            cachehorizon/flux:${{ steps.version.outputs.version }}
+            ghcr.io/cache-has/flux:latest
+            ghcr.io/cache-has/flux:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
