@@ -291,7 +291,7 @@ async fn overview(
             last_error: info.last_error,
         })
         .collect();
-    top_failing.sort_by(|a, b| b.failure_count.cmp(&a.failure_count));
+    top_failing.sort_by_key(|b| std::cmp::Reverse(b.failure_count));
     top_failing.truncate(TOP_N);
 
     // Build slowest list.
@@ -304,7 +304,7 @@ async fn overview(
             run_count: info.count,
         })
         .collect();
-    slowest.sort_by(|a, b| b.avg_duration_ms.cmp(&a.avg_duration_ms));
+    slowest.sort_by_key(|b| std::cmp::Reverse(b.avg_duration_ms));
     slowest.truncate(TOP_N);
 
     // --- Trigger health ---
@@ -424,7 +424,7 @@ fn build_trigger_health(state: &AppState) -> TriggerHealth {
         }
     }
 
-    consecutive_failures.sort_by(|a, b| b.consecutive_errors.cmp(&a.consecutive_errors));
+    consecutive_failures.sort_by_key(|b| std::cmp::Reverse(b.consecutive_errors));
 
     let healthy = total - consecutive_failures.len() as u32;
 

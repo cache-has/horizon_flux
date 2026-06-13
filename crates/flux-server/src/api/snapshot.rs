@@ -131,7 +131,7 @@ async fn snapshot_history(
                 .comparison_columns
                 .iter()
                 .cloned()
-                .zip(r.comparison_values.into_iter())
+                .zip(r.comparison_values)
                 .collect(),
         })
         .collect::<Vec<_>>();
