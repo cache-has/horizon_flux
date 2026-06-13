@@ -22,13 +22,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: aarch64-apple-darwin
+          # Single macOS universal (x86_64 + arm64) build on Apple Silicon,
+          # avoiding the retiring Intel macos-13 runner.
+          - target: universal-apple-darwin
             runner: macos-latest
-            os: macos
-            archive: tar.gz
-            cargo_flags: "--features tray"
-          - target: x86_64-apple-darwin
-            runner: macos-13
             os: macos
             archive: tar.gz
             cargo_flags: "--features tray"
@@ -54,7 +51,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.96.0"
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.os == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -88,13 +85,32 @@ jobs:
           npm run build --workspace=frontend
 
       - name: Run tests
+        # Skip on packaging-only targets: musl (`--workspace` builds flux-tray's
+        # GTK/glib, which can't cross-compile to musl) and macOS (the universal
+        # target isn't a real rustc target). CI runs the full suite on every
+        # platform on each push, so this release-time re-test is redundant there.
+        if: matrix.os != 'linux-musl' && matrix.os != 'macos'
         run: cargo test --workspace --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
 
       - name: Build release binary
+        if: matrix.os != 'macos'
         run: >
           cargo build --release --bin horizon-flux
           --target ${{ matrix.target }}
           ${{ matrix.cargo_flags }}
+
+      # macOS: build both arch slices and lipo them into a universal binary at
+      # target/universal-apple-darwin/release/ so the packaging step is unchanged.
+      - name: Build release binary (macOS universal)
+        if: matrix.os == 'macos'
+        run: |
+          cargo build --release --bin horizon-flux --target aarch64-apple-darwin ${{ matrix.cargo_flags }}
+          cargo build --release --bin horizon-flux --target x86_64-apple-darwin ${{ matrix.cargo_flags }}
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/horizon-flux \
+            target/aarch64-apple-darwin/release/horizon-flux \
+            target/x86_64-apple-darwin/release/horizon-flux
+          lipo -info target/universal-apple-darwin/release/horizon-flux
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
