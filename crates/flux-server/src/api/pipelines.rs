@@ -762,7 +762,7 @@ async fn reset_incremental_state(
         .map_err(|e| ApiError::internal(e.to_string()))?
         .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
 
-    let env = q.env.as_deref().unwrap_or("default");
+    let env = q.env.as_deref().unwrap_or("dev");
     let removed = state
         .incremental_state_store
         .reset_state(&pipeline_id.to_string(), &node_id, env)
@@ -1139,7 +1139,11 @@ pub struct PipelineColumnLineageQuery {
 }
 
 fn default_pipeline_env() -> String {
-    "default".to_string()
+    // Must match the canonical default environment ("dev") used by pipeline
+    // execution (`Pipeline::default_environment`) and the `/api/lineage`
+    // endpoints. Defaulting to "default" here returned empty column lineage
+    // for the common case, since edges are persisted under the run's env.
+    "dev".to_string()
 }
 
 /// Response for per-pipeline column lineage edges.
@@ -1278,8 +1282,8 @@ async fn get_failure_reproduce_bundle(
         })?;
 
     let bundle = flux_datafusion::ReproduceBundle::from_failure_report(&report);
-    let json = serde_json::to_string_pretty(&bundle)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(&bundle).map_err(|e| ApiError::internal(e.to_string()))?;
 
     let filename = format!(
         "reproduce-{}-{}.json",

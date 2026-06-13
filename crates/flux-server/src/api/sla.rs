@@ -39,13 +39,13 @@ struct StatusListQuery {
     /// Filter by owner team on the resource.
     #[serde(default)]
     owner: Option<String>,
-    /// Environment for catalog resolution (defaults to "default").
+    /// Environment for catalog resolution (defaults to "dev").
     #[serde(default = "default_env")]
     env: String,
 }
 
 fn default_env() -> String {
-    "default".into()
+    "dev".into()
 }
 
 #[derive(Debug, Serialize)]
@@ -92,9 +92,10 @@ async fn list_status(
     State(state): State<AppState>,
     Query(q): Query<StatusListQuery>,
 ) -> Result<Json<SlaStatusResponse>, (StatusCode, Json<ApiError>)> {
-    let sla_store = state.sla_store.as_ref().ok_or_else(|| {
-        ApiError::internal("SLA storage not configured")
-    })?;
+    let sla_store = state
+        .sla_store
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("SLA storage not configured"))?;
 
     let evaluations = sla_store
         .latest_evaluations()
@@ -111,9 +112,7 @@ async fn list_status(
             let name = catalog_entry
                 .map(|e| e.name.clone())
                 .unwrap_or_else(|| eval.fingerprint.clone());
-            let tags = catalog_entry
-                .map(|e| e.tags.clone())
-                .unwrap_or_default();
+            let tags = catalog_entry.map(|e| e.tags.clone()).unwrap_or_default();
             let owner = catalog_entry
                 .and_then(|e| e.owner.as_ref())
                 .and_then(|o| o.team.clone());
@@ -140,7 +139,10 @@ async fn list_status(
     }
 
     let total = entries.len();
-    Ok(Json(SlaStatusResponse { data: entries, total }))
+    Ok(Json(SlaStatusResponse {
+        data: entries,
+        total,
+    }))
 }
 
 /// `GET /api/sla/status/:fingerprint` — current SLA status + recent history for a resource.
@@ -148,9 +150,10 @@ async fn get_status(
     State(state): State<AppState>,
     Path(fingerprint): Path<String>,
 ) -> Result<Json<SlaDetailResponse>, (StatusCode, Json<ApiError>)> {
-    let sla_store = state.sla_store.as_ref().ok_or_else(|| {
-        ApiError::internal("SLA storage not configured")
-    })?;
+    let sla_store = state
+        .sla_store
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("SLA storage not configured"))?;
 
     // Axum's Path extractor already URL-decodes the parameter.
 
@@ -163,7 +166,10 @@ async fn get_status(
         .evaluation_history(&fingerprint, 20)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    Ok(Json(SlaDetailResponse { evaluation, history }))
+    Ok(Json(SlaDetailResponse {
+        evaluation,
+        history,
+    }))
 }
 
 /// `GET /api/sla/history/:fingerprint` — historical evaluations for a resource.
@@ -172,9 +178,10 @@ async fn get_history(
     Path(fingerprint): Path<String>,
     Query(q): Query<HistoryQuery>,
 ) -> Result<Json<Vec<SlaEvaluation>>, (StatusCode, Json<ApiError>)> {
-    let sla_store = state.sla_store.as_ref().ok_or_else(|| {
-        ApiError::internal("SLA storage not configured")
-    })?;
+    let sla_store = state
+        .sla_store
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("SLA storage not configured"))?;
 
     let history = sla_store
         .evaluation_history(&fingerprint, q.limit)

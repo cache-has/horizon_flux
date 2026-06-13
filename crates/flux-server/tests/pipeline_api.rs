@@ -9,7 +9,6 @@ use axum::http::{Request, StatusCode};
 use flux_connectors::ConnectorRegistry;
 use flux_datafusion::{SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore};
 use flux_engine::SqlitePipelineStore;
-use flux_scheduler;
 use flux_server::AppState;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -730,7 +729,7 @@ async fn incremental_state_endpoints_roundtrip() {
     let row = IncrementalState {
         pipeline_id: pid.clone(),
         node_id: "sink_a".to_string(),
-        environment: "default".to_string(),
+        environment: "dev".to_string(),
         watermark_column: "updated_at".to_string(),
         watermark_value: "2026-04-08T00:00:00Z".to_string(),
         watermark_type: "timestamp".to_string(),

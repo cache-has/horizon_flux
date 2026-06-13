@@ -10,7 +10,6 @@ use flux_datafusion::{
     ExecutionEvent, RunId, SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore,
 };
 use flux_engine::SqlitePipelineStore;
-use flux_scheduler;
 use flux_server::AppState;
 use serde_json::Value;
 use std::sync::Arc;

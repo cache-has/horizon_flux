@@ -70,11 +70,22 @@ function RunPicker({ currentRunId, onSelect }: RunPickerProps) {
 
   useEffect(() => {
     if (!pipelineId) return;
-    setLoading(true);
-    fetchPipelineRuns(pipelineId, 20, 0)
-      .then((r) => setRuns(r.filter((run) => run.id !== currentRunId)))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const r = await fetchPipelineRuns(pipelineId, 20, 0);
+        if (!cancelled) setRuns(r.filter((run) => run.id !== currentRunId));
+      } catch {
+        // ignore fetch errors; the comparison list simply stays empty
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [pipelineId, currentRunId]);
 
   if (loading) {
@@ -261,6 +272,10 @@ export function RunComparisonPanel({
   const [comparison, setComparison] = useState<ApiRunComparison | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Track open/run transitions so the panel's selection can be reset during
+  // render (React's recommended alternative to a reset-on-prop-change effect).
+  const [prevOpen, setPrevOpen] = useState(false);
+  const [prevRunId, setPrevRunId] = useState(runId);
 
   const apiPipeline = usePipelineStore((s) => s.apiPipeline);
   const apiNodeNames = new Map<string, string>();
@@ -268,24 +283,35 @@ export function RunComparisonPanel({
     apiNodeNames.set(n.id, n.name);
   }
 
-  // Reset state when panel opens with a new run
-  useEffect(() => {
-    if (!open) return;
+  // Reset comparison selection when the panel opens or switches to a new run.
+  if (open && (!prevOpen || runId !== prevRunId)) {
     setOtherRunId(null);
     setComparison(null);
     setError(null);
-  }, [runId, open]);
+  }
+  if (open !== prevOpen) setPrevOpen(open);
+  if (runId !== prevRunId) setPrevRunId(runId);
 
   // Fetch comparison when other run is selected
   useEffect(() => {
     if (!open || !otherRunId) return;
-    setLoading(true);
-    setError(null);
-
-    compareRuns(runId, otherRunId)
-      .then((c) => setComparison(c))
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const c = await compareRuns(runId, otherRunId);
+        if (!cancelled) setComparison(c);
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [runId, otherRunId, open]);
 
   const handleSelectOther = useCallback((id: string) => {

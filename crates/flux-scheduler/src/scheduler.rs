@@ -821,7 +821,7 @@ mod tests {
 
         fn advance(&self, duration: chrono::Duration) {
             let mut now = self.now.lock().unwrap();
-            *now = *now + duration;
+            *now += duration;
         }
 
         fn set(&self, time: DateTime<Utc>) {

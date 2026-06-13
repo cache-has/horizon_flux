@@ -14,7 +14,6 @@ use flux_datafusion::{
 };
 use flux_engine::SqlitePipelineStore;
 use flux_engine::lineage::{BindingDirection, ResourceFingerprint};
-use flux_scheduler;
 use flux_server::AppState;
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -76,7 +75,7 @@ fn seed_linear_chain(state: &AppState) -> (String, String, String) {
     let id_a = "00000000-0000-0000-0000-000000000001";
     let id_b = "00000000-0000-0000-0000-000000000002";
     let id_c = "00000000-0000-0000-0000-000000000003";
-    let env = "default";
+    let env = "dev";
     let now = 1000i64;
 
     state
@@ -191,7 +190,7 @@ async fn upstream_of_middle() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/lineage/pipelines/{id_b}/upstream"))
+                .uri(format!("/api/lineage/pipelines/{id_b}/upstream"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -213,7 +212,7 @@ async fn downstream_of_first() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/lineage/pipelines/{id_a}/downstream"))
+                .uri(format!("/api/lineage/pipelines/{id_a}/downstream"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -237,7 +236,7 @@ async fn impact_analysis() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/lineage/pipelines/{id_a}/impact"))
+                .uri(format!("/api/lineage/pipelines/{id_a}/impact"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -273,7 +272,7 @@ async fn no_cycles_in_linear_chain() {
 #[tokio::test]
 async fn orphans_detected() {
     let state = test_state();
-    let env = "default";
+    let env = "dev";
     let now = 1000i64;
     // Pipeline with a sink nobody reads from.
     state
@@ -348,7 +347,7 @@ async fn runtime_observation_creates_edge() {
     let state = test_state();
     let id_a = "00000000-0000-0000-0000-000000000020";
     let id_b = "00000000-0000-0000-0000-000000000021";
-    let env = "default";
+    let env = "dev";
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -424,7 +423,7 @@ use flux_engine::column_lineage::{ColumnEdge, Confidence, RelationshipKind};
 /// full_name is derived from name, and sink writes (id, full_name) to a resource.
 fn seed_column_lineage(state: &AppState) {
     let pipeline_id = "00000000-0000-0000-0000-000000000001";
-    let env = "default";
+    let env = "dev";
     let now = chrono::Utc::now().to_rfc3339();
     let fp = ResourceFingerprint::new("postgres://db/public.users");
 
@@ -704,7 +703,7 @@ async fn pipeline_column_lineage_returns_edges() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/pipelines/{pipeline_id}/column-lineage"))
+                .uri(format!("/api/pipelines/{pipeline_id}/column-lineage"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -721,7 +720,7 @@ async fn pipeline_column_lineage_returns_edges() {
         edges.len()
     );
     assert_eq!(body["pipeline_id"], pipeline_id);
-    assert_eq!(body["environment"], "default");
+    assert_eq!(body["environment"], "dev");
 
     // Verify edge structure.
     let first = &edges[0];

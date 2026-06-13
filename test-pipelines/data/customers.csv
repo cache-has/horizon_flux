@@ -1,0 +1,11 @@
+customer_name,email,signup_date,tier,lifetime_value
+Alice Chen,alice@example.com,2024-03-15,Gold,4250.00
+Bob Martinez,bob@example.com,2024-06-22,Silver,1890.00
+Carol Johnson,carol@example.com,2024-01-10,Gold,5120.00
+Dave Kim,dave@example.com,2024-09-01,Bronze,780.00
+Eve Patel,eve@example.com,2024-04-18,Silver,2340.00
+Frank Liu,frank@example.com,2024-07-30,Gold,3890.00
+Grace Ng,grace@example.com,2024-02-14,Bronze,620.00
+Hank Brown,hank@example.com,2024-11-05,Silver,1450.00
+Iris Wang,iris@example.com,2024-05-28,Gold,6780.00
+Jack Davis,jack@example.com,2024-08-12,Bronze,890.00

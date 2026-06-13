@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchFailureReport,
   downloadReproduceBundle,
@@ -88,9 +88,10 @@ function InputSampleTable({
   const [copyFormat, setCopyFormat] = useState<'json' | 'csv'>('json');
   const [copied, setCopied] = useState(false);
 
-  if (sample.length === 0) return null;
-
-  const columns = Object.keys(sample[0]);
+  // `columns` must be computed and the hook below must run unconditionally:
+  // hooks cannot follow an early return (rules-of-hooks). Memoized so it is a
+  // stable dependency for the `handleCopy` callback below.
+  const columns = useMemo(() => (sample.length > 0 ? Object.keys(sample[0]) : []), [sample]);
 
   const handleCopy = useCallback(() => {
     let text: string;
@@ -114,6 +115,8 @@ function InputSampleTable({
       setTimeout(() => setCopied(false), 1200);
     });
   }, [sample, columns, copyFormat]);
+
+  if (sample.length === 0) return null;
 
   return (
     <div>

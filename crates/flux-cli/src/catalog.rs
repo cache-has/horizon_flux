@@ -681,6 +681,100 @@ fn describe_all(
     Ok(())
 }
 
+fn validate(env: Option<&str>, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
+    let environment = resolve_env(env);
+    let stores = open_stores(metadata_url)?;
+    let catalog = build_catalog(&*stores.lineage_store, &environment)?;
+
+    let has_errors = !catalog.errors.is_empty();
+    let has_warnings = !catalog.warnings.is_empty();
+
+    match format {
+        OutputFormat::Human => {
+            if !has_errors && !has_warnings {
+                println!("Catalog valid: {} resource(s), no issues.", catalog.len());
+                return Ok(());
+            }
+
+            if !catalog.errors.is_empty() {
+                println!(
+                    "{} error(s):\n",
+                    crate::color::red(&catalog.errors.len().to_string())
+                );
+                for err in &catalog.errors {
+                    println!("  {} {err}", crate::color::red("error:"));
+                }
+                println!();
+            }
+
+            if !catalog.warnings.is_empty() {
+                println!(
+                    "{} warning(s):\n",
+                    crate::color::yellow(&catalog.warnings.len().to_string())
+                );
+                for w in &catalog.warnings {
+                    match w {
+                        CatalogWarning::DanglingAnnotation { fingerprint, path } => {
+                            println!(
+                                "  {} dangling annotation for `{}` at {}",
+                                crate::color::yellow("warn:"),
+                                fingerprint,
+                                path.display(),
+                            );
+                        }
+                        CatalogWarning::DuplicateAnnotation { fingerprint, paths } => {
+                            println!(
+                                "  {} duplicate annotations for `{}`:",
+                                crate::color::yellow("warn:"),
+                                fingerprint,
+                            );
+                            for p in paths {
+                                println!("    - {}", p.display());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        OutputFormat::Json => {
+            let errors: Vec<String> = catalog.errors.iter().map(|e| e.to_string()).collect();
+            let warnings: Vec<serde_json::Value> = catalog
+                .warnings
+                .iter()
+                .map(|w| match w {
+                    CatalogWarning::DanglingAnnotation { fingerprint, path } => {
+                        serde_json::json!({
+                            "type": "dangling_annotation",
+                            "fingerprint": fingerprint.to_string(),
+                            "path": path.display().to_string(),
+                        })
+                    }
+                    CatalogWarning::DuplicateAnnotation { fingerprint, paths } => {
+                        serde_json::json!({
+                            "type": "duplicate_annotation",
+                            "fingerprint": fingerprint.to_string(),
+                            "paths": paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                        })
+                    }
+                })
+                .collect();
+            let out = serde_json::json!({
+                "environment": environment,
+                "resource_count": catalog.len(),
+                "valid": !has_errors && !has_warnings,
+                "errors": errors,
+                "warnings": warnings,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+    }
+
+    if has_errors {
+        anyhow::bail!("catalog validation failed with errors");
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // validate
 // ---------------------------------------------------------------------------
@@ -795,98 +889,4 @@ mod tests {
             "a.csv should have been skipped (existing in map)"
         );
     }
-}
-
-fn validate(env: Option<&str>, format: OutputFormat, metadata_url: Option<&str>) -> Result<()> {
-    let environment = resolve_env(env);
-    let stores = open_stores(metadata_url)?;
-    let catalog = build_catalog(&*stores.lineage_store, &environment)?;
-
-    let has_errors = !catalog.errors.is_empty();
-    let has_warnings = !catalog.warnings.is_empty();
-
-    match format {
-        OutputFormat::Human => {
-            if !has_errors && !has_warnings {
-                println!("Catalog valid: {} resource(s), no issues.", catalog.len());
-                return Ok(());
-            }
-
-            if !catalog.errors.is_empty() {
-                println!(
-                    "{} error(s):\n",
-                    crate::color::red(&catalog.errors.len().to_string())
-                );
-                for err in &catalog.errors {
-                    println!("  {} {err}", crate::color::red("error:"));
-                }
-                println!();
-            }
-
-            if !catalog.warnings.is_empty() {
-                println!(
-                    "{} warning(s):\n",
-                    crate::color::yellow(&catalog.warnings.len().to_string())
-                );
-                for w in &catalog.warnings {
-                    match w {
-                        CatalogWarning::DanglingAnnotation { fingerprint, path } => {
-                            println!(
-                                "  {} dangling annotation for `{}` at {}",
-                                crate::color::yellow("warn:"),
-                                fingerprint,
-                                path.display(),
-                            );
-                        }
-                        CatalogWarning::DuplicateAnnotation { fingerprint, paths } => {
-                            println!(
-                                "  {} duplicate annotations for `{}`:",
-                                crate::color::yellow("warn:"),
-                                fingerprint,
-                            );
-                            for p in paths {
-                                println!("    - {}", p.display());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        OutputFormat::Json => {
-            let errors: Vec<String> = catalog.errors.iter().map(|e| e.to_string()).collect();
-            let warnings: Vec<serde_json::Value> = catalog
-                .warnings
-                .iter()
-                .map(|w| match w {
-                    CatalogWarning::DanglingAnnotation { fingerprint, path } => {
-                        serde_json::json!({
-                            "type": "dangling_annotation",
-                            "fingerprint": fingerprint.to_string(),
-                            "path": path.display().to_string(),
-                        })
-                    }
-                    CatalogWarning::DuplicateAnnotation { fingerprint, paths } => {
-                        serde_json::json!({
-                            "type": "duplicate_annotation",
-                            "fingerprint": fingerprint.to_string(),
-                            "paths": paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
-                        })
-                    }
-                })
-                .collect();
-            let out = serde_json::json!({
-                "environment": environment,
-                "resource_count": catalog.len(),
-                "valid": !has_errors && !has_warnings,
-                "errors": errors,
-                "warnings": warnings,
-            });
-            println!("{}", serde_json::to_string_pretty(&out)?);
-        }
-    }
-
-    if has_errors {
-        anyhow::bail!("catalog validation failed with errors");
-    }
-    Ok(())
 }

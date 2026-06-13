@@ -267,14 +267,13 @@ async fn overview(
         if run.status == RunStatus::Success {
             pipeline_had_success.insert(run.pipeline_name.clone(), true);
             if let Some(dur) = run.duration_ms() {
-                let entry =
-                    durations
-                        .entry(run.pipeline_name.clone())
-                        .or_insert(PipelineDurInfo {
-                            total_ms: 0,
-                            max_ms: 0,
-                            count: 0,
-                        });
+                let entry = durations
+                    .entry(run.pipeline_name.clone())
+                    .or_insert(PipelineDurInfo {
+                        total_ms: 0,
+                        max_ms: 0,
+                        count: 0,
+                    });
                 entry.total_ms += dur;
                 entry.max_ms = entry.max_ms.max(dur);
                 entry.count += 1;
@@ -484,9 +483,7 @@ fn build_sla_summary(state: &AppState) -> SlaSummary {
 }
 
 fn format_time(t: SystemTime) -> String {
-    let dur = t
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
+    let dur = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     // ISO 8601 UTC timestamp.
     let secs = dur.as_secs();
     let (days_since_epoch, time_of_day) = (secs / 86400, secs % 86400);
@@ -495,9 +492,7 @@ fn format_time(t: SystemTime) -> String {
 
     // Simplified date from days since epoch.
     let (year, month, day) = days_to_ymd(days_since_epoch);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
 /// Convert days since Unix epoch to (year, month, day).

@@ -52,7 +52,7 @@ pub fn router() -> Router<AppState> {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Optional environment query parameter (defaults to "default").
+/// Optional environment query parameter (defaults to "dev").
 #[derive(Debug, Deserialize)]
 pub struct EnvQuery {
     #[serde(default = "default_env")]

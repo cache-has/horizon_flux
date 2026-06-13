@@ -3,7 +3,6 @@
 
 //! Integration tests for the plugins API.
 
-use flux_scheduler;
 use std::fs;
 use std::sync::Arc;
 

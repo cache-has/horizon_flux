@@ -236,8 +236,7 @@ impl SqliteRunStore {
         }
 
         // Idempotent migration: add triggered_by column (doc 37, run detail view).
-        let alter3 =
-            conn.execute("ALTER TABLE pipeline_runs ADD COLUMN triggered_by TEXT", []);
+        let alter3 = conn.execute("ALTER TABLE pipeline_runs ADD COLUMN triggered_by TEXT", []);
         if let Err(rusqlite::Error::SqliteFailure(_, Some(msg))) = &alter3 {
             if !msg.contains("duplicate column") {
                 alter3.map(|_| ())?;
@@ -518,11 +517,7 @@ impl RunStorage for SqliteRunStore {
                 params![name],
                 |row| row.get(0),
             )?,
-            None => conn.query_row(
-                "SELECT COUNT(*) FROM pipeline_runs",
-                [],
-                |row| row.get(0),
-            )?,
+            None => conn.query_row("SELECT COUNT(*) FROM pipeline_runs", [], |row| row.get(0))?,
         };
         Ok(count)
     }
@@ -555,8 +550,9 @@ impl RunStorage for SqliteRunStore {
         report: &crate::failure_report::FailureReport,
     ) -> Result<(), RunStoreError> {
         let conn = self.conn.lock().unwrap();
-        let json = serde_json::to_string(report)
-            .map_err(|e| RunStoreError::Database(format!("failed to serialize failure report: {e}")))?;
+        let json = serde_json::to_string(report).map_err(|e| {
+            RunStoreError::Database(format!("failed to serialize failure report: {e}"))
+        })?;
         conn.execute(
             "INSERT OR REPLACE INTO failure_reports (run_id, node_id, report_json, captured_at)
              VALUES (?1, ?2, ?3, ?4)",
@@ -578,8 +574,8 @@ impl RunStorage for SqliteRunStore {
         match rows.next()? {
             Some(row) => {
                 let json: String = row.get(0)?;
-                let report: crate::failure_report::FailureReport =
-                    serde_json::from_str(&json).map_err(|e| {
+                let report: crate::failure_report::FailureReport = serde_json::from_str(&json)
+                    .map_err(|e| {
                         RunStoreError::Database(format!(
                             "failed to deserialize failure report: {e}"
                         ))
@@ -1875,7 +1871,9 @@ mod tests {
             RelationshipKind::Direct,
             Confidence::Exact,
         );
-        store.save_column_edges("p1", "dev", &[e1.clone()]).unwrap();
+        store
+            .save_column_edges("p1", "dev", std::slice::from_ref(&e1))
+            .unwrap();
         store.save_column_edges("p1", "prod", &[e1]).unwrap();
 
         // Delete removes all environments.
@@ -2011,16 +2009,17 @@ mod tests {
             .expect("report should exist");
         assert_eq!(loaded.pipeline_name, "pipe-a");
         assert_eq!(loaded.error_chain.len(), 2);
-        assert_eq!(loaded.executed_sql.as_deref(), Some("SELECT id, name FROM __upstream_source_1"));
+        assert_eq!(
+            loaded.executed_sql.as_deref(),
+            Some("SELECT id, name FROM __upstream_source_1")
+        );
         assert_eq!(loaded.input_sample.len(), 1);
         assert_eq!(loaded.input_total_rows, 100);
         assert_eq!(loaded.input_schemas.len(), 1);
         assert_eq!(loaded.input_schemas[0].fields[0].name, "id");
 
         // Missing report returns None.
-        let missing = store
-            .get_failure_report(&run.id, "no_such_node")
-            .unwrap();
+        let missing = store.get_failure_report(&run.id, "no_such_node").unwrap();
         assert!(missing.is_none());
     }
 

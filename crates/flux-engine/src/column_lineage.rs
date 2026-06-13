@@ -1208,10 +1208,12 @@ mod tests {
     #[test]
     fn relationship_filter_excludes_filter_edges() {
         let graph = linear_chain_graph();
-        let mut opts = TraceOptions::default();
-        opts.relationship_filter = [RelationshipKind::Direct, RelationshipKind::Derived]
-            .into_iter()
-            .collect();
+        let opts = TraceOptions {
+            relationship_filter: [RelationshipKind::Direct, RelationshipKind::Derived]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
 
         // Upstream from B.id: should get A.id (Direct) but NOT A.status (Filter)
         let result = graph.upstream_trace(&key(1, "B", "id"), &opts);
@@ -1250,8 +1252,10 @@ mod tests {
 
         let graph = ColumnLineageGraph::new(&[(pid(1), edges.as_slice())], &[]);
 
-        let mut opts = TraceOptions::default();
-        opts.confidence_filter = [Confidence::Exact].into_iter().collect();
+        let opts = TraceOptions {
+            confidence_filter: [Confidence::Exact].into_iter().collect(),
+            ..Default::default()
+        };
 
         let result = graph.upstream_trace(&key(1, "B", "y"), &opts);
         assert_eq!(result.edges.len(), 1);

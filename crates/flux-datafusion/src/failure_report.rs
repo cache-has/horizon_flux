@@ -13,8 +13,8 @@
 use arrow::datatypes::Schema;
 use arrow::json::LineDelimitedWriter;
 use arrow::record_batch::RecordBatch;
-use flux_engine::node::NodeKind;
 use flux_engine::NodeId;
+use flux_engine::node::NodeKind;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -162,7 +162,8 @@ impl ReproduceBundle {
                 report.node_id, report.pipeline_name, report.environment
             ),
             format!("Run ID: {}", report.run_id),
-            "The 'input_sample' field contains the rows the node was processing when it failed.".into(),
+            "The 'input_sample' field contains the rows the node was processing when it failed."
+                .into(),
         ];
 
         if report.executed_sql.is_some() {
@@ -218,9 +219,7 @@ impl FailureReport {
     }
 
     /// Extract input schemas from upstream `RecordBatch` outputs.
-    pub fn extract_input_schemas(
-        upstream: &[(NodeId, Vec<RecordBatch>)],
-    ) -> Vec<InputSchema> {
+    pub fn extract_input_schemas(upstream: &[(NodeId, Vec<RecordBatch>)]) -> Vec<InputSchema> {
         upstream
             .iter()
             .filter_map(|(nid, batches)| {
@@ -319,11 +318,7 @@ mod tests {
             schema,
             vec![
                 Arc::new(Int32Array::from(vec![1, 2, 3])),
-                Arc::new(StringArray::from(vec![
-                    Some("alice"),
-                    Some("bob"),
-                    None,
-                ])),
+                Arc::new(StringArray::from(vec![Some("alice"), Some("bob"), None])),
             ],
         )
         .unwrap()
@@ -355,8 +350,7 @@ mod tests {
     #[test]
     fn error_chain_walks_sources() {
         let inner = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
-        let outer: Box<dyn std::error::Error> =
-            format!("failed to read config: {inner}").into();
+        let outer: Box<dyn std::error::Error> = format!("failed to read config: {inner}").into();
         // Simple string errors have no source, so chain is length 1.
         let chain = FailureReport::build_error_chain(outer.as_ref());
         assert!(!chain.is_empty());
@@ -417,12 +411,20 @@ mod tests {
         assert_eq!(bundle.context.environment, "prod");
         assert_eq!(bundle.input_sample.len(), 2);
         assert_eq!(bundle.input_total_rows, 1000);
-        assert_eq!(bundle.executed_sql.as_deref(), Some("SELECT revenue FROM input"));
+        assert_eq!(
+            bundle.executed_sql.as_deref(),
+            Some("SELECT revenue FROM input")
+        );
         assert_eq!(bundle.error_chain.len(), 2);
         assert!(bundle.node_config.is_some());
         assert_eq!(bundle.input_schemas.len(), 1);
         // Instructions mention executed_sql when present.
-        assert!(bundle.instructions.iter().any(|i| i.contains("executed_sql")));
+        assert!(
+            bundle
+                .instructions
+                .iter()
+                .any(|i| i.contains("executed_sql"))
+        );
     }
 
     #[test]

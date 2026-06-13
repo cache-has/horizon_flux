@@ -9,7 +9,6 @@ use axum::http::{Request, StatusCode};
 use flux_connectors::ConnectorRegistry;
 use flux_datafusion::{SqliteBackfillStore, SqliteEnvironmentStore, SqliteRunStore};
 use flux_engine::SqlitePipelineStore;
-use flux_scheduler;
 use flux_secrets::SecretStore;
 use flux_server::AppState;
 use flux_server::state::SecretSession;

@@ -329,15 +329,20 @@ function PluginSinkForm({
 
   useEffect(() => {
     const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    setSchema(null);
-    getPluginSinkSchema(pluginName, sinkType, ctrl.signal)
-      .then((s) => setSchema(s))
-      .catch((e) => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      setSchema(null);
+      try {
+        const s = await getPluginSinkSchema(pluginName, sinkType, ctrl.signal);
+        setSchema(s);
+      } catch (e) {
         if ((e as Error).name !== 'AbortError') setError((e as Error).message);
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        if (!ctrl.signal.aborted) setLoading(false);
+      }
+    };
+    void load();
     return () => ctrl.abort();
   }, [pluginName, sinkType]);
 

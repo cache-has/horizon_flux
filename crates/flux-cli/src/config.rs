@@ -250,8 +250,7 @@ fn open_sqlite_stores(data_dir: &Path) -> Result<MetadataStores> {
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
         run_store_concrete.clone();
     let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete.clone();
-    let sla_store: Option<Arc<dyn flux_datafusion::SlaStorage>> =
-        Some(run_store_concrete.clone());
+    let sla_store: Option<Arc<dyn flux_datafusion::SlaStorage>> = Some(run_store_concrete.clone());
     let column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>> =
         Some(run_store_concrete);
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
@@ -309,8 +308,7 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
     let incremental_state_store: Arc<dyn flux_datafusion::IncrementalStateStorage> =
         run_store_concrete.clone();
     let lineage_store: Arc<dyn flux_datafusion::LineageStorage> = run_store_concrete.clone();
-    let sla_store: Option<Arc<dyn flux_datafusion::SlaStorage>> =
-        Some(run_store_concrete.clone());
+    let sla_store: Option<Arc<dyn flux_datafusion::SlaStorage>> = Some(run_store_concrete.clone());
     let column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>> =
         Some(run_store_concrete);
     let environment_store: Arc<dyn flux_datafusion::EnvironmentStorage> = Arc::new(
@@ -348,8 +346,16 @@ fn open_postgres_stores(connection_string: &str) -> Result<MetadataStores> {
 mod tests {
     use super::*;
 
+    /// Serializes tests that mutate the process-global `METADATA_URL_ENV`.
+    /// Without this, parallel tests race on `set_var`/`remove_var` and one
+    /// test's clear can wipe another's value between set and `resolve()`.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn resolve_defaults_to_sqlite() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         // Clear any env var that might be set.
         unsafe { std::env::remove_var(METADATA_URL_ENV) };
@@ -359,6 +365,9 @@ mod tests {
 
     #[test]
     fn resolve_cli_flag_wins() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         let backend =
             MetadataBackend::resolve(Some("postgresql://localhost/test"), tmp.path()).unwrap();
@@ -372,6 +381,9 @@ mod tests {
 
     #[test]
     fn resolve_env_var() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var(METADATA_URL_ENV, "postgresql://envhost/db") };
         let backend = MetadataBackend::resolve(None, tmp.path()).unwrap();
@@ -386,6 +398,9 @@ mod tests {
 
     #[test]
     fn resolve_config_file_sqlite() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::remove_var(METADATA_URL_ENV) };
         std::fs::write(
@@ -402,6 +417,9 @@ backend = "sqlite"
 
     #[test]
     fn resolve_config_file_postgres() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::remove_var(METADATA_URL_ENV) };
         std::fs::write(
@@ -424,6 +442,9 @@ connection_string = "postgresql://confighost/db"
 
     #[test]
     fn resolve_config_file_postgres_missing_connection_string() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::remove_var(METADATA_URL_ENV) };
         std::fs::write(
@@ -446,6 +467,9 @@ backend = "postgresql"
 
     #[test]
     fn resolve_unknown_backend_rejected() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::remove_var(METADATA_URL_ENV) };
         std::fs::write(
@@ -463,6 +487,9 @@ backend = "mysql"
 
     #[test]
     fn cli_flag_overrides_env_var() {
+        let _env = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var(METADATA_URL_ENV, "postgresql://envhost/db") };
         let backend =

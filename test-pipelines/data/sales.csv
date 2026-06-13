@@ -1,0 +1,26 @@
+order_id,customer_name,product,category,quantity,unit_price,order_date,region
+1001,Alice Chen,Widget Pro,Electronics,2,49.99,2026-01-15,West
+1002,Bob Martinez,Gizmo Max,Electronics,1,129.99,2026-01-16,East
+1003,Carol Johnson,Widget Pro,Electronics,3,49.99,2026-01-17,West
+1004,Dave Kim,Office Chair,Furniture,1,299.99,2026-01-18,Central
+1005,Eve Patel,Desk Lamp,Furniture,2,34.99,2026-01-19,East
+1006,Frank Liu,Gizmo Max,Electronics,2,129.99,2026-01-20,West
+1007,Grace Ng,Notebook Set,Office,5,12.99,2026-01-21,East
+1008,Hank Brown,Widget Pro,Electronics,1,49.99,2026-01-22,Central
+1009,Iris Wang,Office Chair,Furniture,2,299.99,2026-01-23,West
+1010,Jack Davis,Desk Lamp,Furniture,1,34.99,2026-01-24,East
+1011,Alice Chen,Notebook Set,Office,10,12.99,2026-01-25,West
+1012,Bob Martinez,Widget Pro,Electronics,4,49.99,2026-01-26,East
+1013,Carol Johnson,Gizmo Max,Electronics,1,129.99,2026-01-27,West
+1014,Dave Kim,Notebook Set,Office,3,12.99,2026-01-28,Central
+1015,Eve Patel,Widget Pro,Electronics,2,49.99,2026-01-29,East
+1016,Frank Liu,Office Chair,Furniture,1,299.99,2026-01-30,West
+1017,Grace Ng,Desk Lamp,Furniture,3,34.99,2026-01-31,East
+1018,Hank Brown,Gizmo Max,Electronics,1,129.99,2026-02-01,Central
+1019,Iris Wang,Widget Pro,Electronics,5,49.99,2026-02-02,West
+1020,Jack Davis,Notebook Set,Office,2,12.99,2026-02-03,East
+1021,Alice Chen,Office Chair,Furniture,1,299.99,2026-02-04,West
+1022,Bob Martinez,Desk Lamp,Furniture,2,34.99,2026-02-05,East
+1023,Carol Johnson,Widget Pro,Electronics,3,49.99,2026-02-06,West
+1024,Dave Kim,Gizmo Max,Electronics,2,129.99,2026-02-07,Central
+1025,Eve Patel,Notebook Set,Office,4,12.99,2026-02-08,East

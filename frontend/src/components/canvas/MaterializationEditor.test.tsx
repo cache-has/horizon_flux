@@ -3,7 +3,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MaterializationEditor, validatePolicy } from './MaterializationEditor';
+import { MaterializationEditor } from './MaterializationEditor';
+import { validatePolicy } from './materializationPolicy';
 import type { MaterializationPolicy } from '../../api/pipelines';
 
 describe('validatePolicy', () => {

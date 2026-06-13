@@ -67,7 +67,7 @@ struct CreateBackfillRequest {
 }
 
 fn default_environment() -> String {
-    "default".to_string()
+    "dev".to_string()
 }
 fn default_concurrency() -> u32 {
     1

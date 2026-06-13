@@ -76,21 +76,23 @@ export function ImpactAnalysisModal({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchColumnImpact(fingerprint, column)
-      .then((resp) => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const resp = await fetchColumnImpact(fingerprint, column);
         if (!cancelled) {
           setData(resp);
           setLoading(false);
         }
-      })
-      .catch((e) => {
+      } catch (e) {
         if (!cancelled) {
           setError((e as Error).message);
           setLoading(false);
         }
-      });
+      }
+    };
+    void load();
     return () => {
       cancelled = true;
     };

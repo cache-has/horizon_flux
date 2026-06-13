@@ -56,8 +56,7 @@ pub(crate) struct Stores {
     pub(crate) connector_registry: flux_connectors::ConnectorRegistry,
     pub(crate) output_cache: flux_datafusion::OutputCache,
     pub(crate) column_lineage_store: Option<Arc<dyn flux_datafusion::ColumnLineageStorage>>,
-    pub(crate) openlineage_client:
-        Option<Arc<flux_observability::openlineage::OpenLineageClient>>,
+    pub(crate) openlineage_client: Option<Arc<flux_observability::openlineage::OpenLineageClient>>,
 }
 
 pub(crate) fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {

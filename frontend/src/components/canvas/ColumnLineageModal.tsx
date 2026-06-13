@@ -167,22 +167,21 @@ export function ColumnLineageModal({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setEdges([]);
-    setExpandedColumn(null);
-
-    fetchPipelineColumnLineage(pipelineId, environment)
-      .then((res) => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      setEdges([]);
+      setExpandedColumn(null);
+      try {
+        const res = await fetchPipelineColumnLineage(pipelineId, environment);
         if (!cancelled) setEdges(res.edges);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!cancelled) setError((err as Error).message);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
-
+      }
+    };
+    void load();
     return () => {
       cancelled = true;
     };

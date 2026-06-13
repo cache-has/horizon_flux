@@ -63,7 +63,7 @@ struct CreateTriggerRequest {
 }
 
 fn default_environment() -> String {
-    "default".to_string()
+    "dev".to_string()
 }
 fn default_enabled() -> bool {
     true

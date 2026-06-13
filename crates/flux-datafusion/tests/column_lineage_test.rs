@@ -1367,7 +1367,7 @@ fn perf_large_graph_depth_limit() {
     );
     assert_eq!(
         result.edges.len(),
-        opts.max_depth as usize,
+        opts.max_depth,
         "should return exactly max_depth edges"
     );
 

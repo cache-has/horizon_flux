@@ -208,33 +208,29 @@ impl RunStorage for PostgresRunStore {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
 
             let rows = match pipeline_name {
-                Some(name) => {
-                    client
-                        .query(
-                            "SELECT id, pipeline_name, environment, status, start_time_ms,
+                Some(name) => client
+                    .query(
+                        "SELECT id, pipeline_name, environment, status, start_time_ms,
                                     end_time_ms, error, test_results, triggered_by
                              FROM pipeline_runs
                              WHERE pipeline_name = $1
                              ORDER BY start_time_ms DESC NULLS LAST
                              LIMIT $2 OFFSET $3",
-                            &[&name, &(limit as i64), &(offset as i64)],
-                        )
-                        .await
-                        .map_err(pg_err)?
-                }
-                None => {
-                    client
-                        .query(
-                            "SELECT id, pipeline_name, environment, status, start_time_ms,
+                        &[&name, &(limit as i64), &(offset as i64)],
+                    )
+                    .await
+                    .map_err(pg_err)?,
+                None => client
+                    .query(
+                        "SELECT id, pipeline_name, environment, status, start_time_ms,
                                     end_time_ms, error, test_results, triggered_by
                              FROM pipeline_runs
                              ORDER BY start_time_ms DESC NULLS LAST
                              LIMIT $1 OFFSET $2",
-                            &[&(limit as i64), &(offset as i64)],
-                        )
-                        .await
-                        .map_err(pg_err)?
-                }
+                        &[&(limit as i64), &(offset as i64)],
+                    )
+                    .await
+                    .map_err(pg_err)?,
             };
 
             let mut runs = Vec::with_capacity(rows.len());
@@ -252,24 +248,17 @@ impl RunStorage for PostgresRunStore {
         block_on(async {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
             let row = match pipeline_name {
-                Some(name) => {
-                    client
-                        .query_one(
-                            "SELECT COUNT(*)::int4 FROM pipeline_runs WHERE pipeline_name = $1",
-                            &[&name],
-                        )
-                        .await
-                        .map_err(pg_err)?
-                }
-                None => {
-                    client
-                        .query_one(
-                            "SELECT COUNT(*)::int4 FROM pipeline_runs",
-                            &[],
-                        )
-                        .await
-                        .map_err(pg_err)?
-                }
+                Some(name) => client
+                    .query_one(
+                        "SELECT COUNT(*)::int4 FROM pipeline_runs WHERE pipeline_name = $1",
+                        &[&name],
+                    )
+                    .await
+                    .map_err(pg_err)?,
+                None => client
+                    .query_one("SELECT COUNT(*)::int4 FROM pipeline_runs", &[])
+                    .await
+                    .map_err(pg_err)?,
             };
             let count: i32 = row.get(0);
             Ok(count as u32)
@@ -322,7 +311,12 @@ impl RunStorage for PostgresRunStore {
                      ON CONFLICT (run_id, node_id) DO UPDATE SET
                         report_json = EXCLUDED.report_json,
                         captured_at = EXCLUDED.captured_at",
-                    &[&report.run_id, &report.node_id, &json, &report.captured_at_ms],
+                    &[
+                        &report.run_id,
+                        &report.node_id,
+                        &json,
+                        &report.captured_at_ms,
+                    ],
                 )
                 .await
                 .map_err(pg_err)?;

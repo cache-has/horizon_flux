@@ -78,7 +78,8 @@ export function JsonSchemaForm({ schema, value, onChange }: JsonSchemaFormProps)
 
   const set = (key: string, v: unknown) => {
     if (v === undefined || v === '') {
-      const { [key]: _omit, ...rest } = value;
+      const rest = { ...value };
+      delete rest[key];
       onChange(rest);
     } else {
       onChange({ ...value, [key]: v });

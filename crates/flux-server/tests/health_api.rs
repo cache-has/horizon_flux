@@ -112,12 +112,7 @@ async fn overview_with_runs() {
         .set_running(&run2.id, now, Some("cron:1h"))
         .unwrap();
     run_store
-        .finish_run(
-            &run2.id,
-            RunStatus::Failed,
-            now,
-            Some("connection refused"),
-        )
+        .finish_run(&run2.id, RunStatus::Failed, now, Some("connection refused"))
         .unwrap();
 
     let run3 = run_store.create_run("etl_users", "staging").unwrap();
@@ -145,10 +140,7 @@ async fn overview_with_runs() {
 
     // Check environment breakdown.
     assert_eq!(body["run_summary"]["by_environment"]["prod"]["total"], 2);
-    assert_eq!(
-        body["run_summary"]["by_environment"]["staging"]["total"],
-        1
-    );
+    assert_eq!(body["run_summary"]["by_environment"]["staging"]["total"], 1);
 
     // Top failing pipeline should be etl_orders.
     let top_failing = body["top_failing_pipelines"].as_array().unwrap();

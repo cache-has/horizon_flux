@@ -313,37 +313,38 @@ function ColumnLineageGraphInner({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    const load = async () => {
+      setLoading(true);
+      setError(null);
 
-    const fetches: Promise<void>[] = [];
+      const fetches: Promise<void>[] = [];
+      const traceOpts = environment ? { environment } : undefined;
 
-    const traceOpts = environment ? { environment } : undefined;
+      if (direction === 'upstream' || direction === 'both') {
+        fetches.push(
+          fetchColumnUpstream(fingerprint, column, traceOpts).then((r) => {
+            if (!cancelled) setUpstreamEdges(r.edges);
+          }),
+        );
+      }
 
-    if (direction === 'upstream' || direction === 'both') {
-      fetches.push(
-        fetchColumnUpstream(fingerprint, column, traceOpts).then((r) => {
-          if (!cancelled) setUpstreamEdges(r.edges);
-        }),
-      );
-    }
+      if (direction === 'downstream' || direction === 'both') {
+        fetches.push(
+          fetchColumnDownstream(fingerprint, column, traceOpts).then((r) => {
+            if (!cancelled) setDownstreamEdges(r.edges);
+          }),
+        );
+      }
 
-    if (direction === 'downstream' || direction === 'both') {
-      fetches.push(
-        fetchColumnDownstream(fingerprint, column, traceOpts).then((r) => {
-          if (!cancelled) setDownstreamEdges(r.edges);
-        }),
-      );
-    }
-
-    Promise.all(fetches)
-      .catch((e) => {
+      try {
+        await Promise.all(fetches);
+      } catch (e) {
         if (!cancelled) setError((e as Error).message);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
-
+      }
+    };
+    void load();
     return () => {
       cancelled = true;
     };

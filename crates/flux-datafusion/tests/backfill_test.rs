@@ -485,7 +485,7 @@ async fn cancellation_stops_new_iterations() {
     // Cancel immediately — the coordinator should not start (many) iterations.
     cancel.store(true, Ordering::Relaxed);
 
-    let (_, progress) = flux_datafusion::backfill::start_backfill(backfill, opts)
+    let (_, _progress) = flux_datafusion::backfill::start_backfill(backfill, opts)
         .await
         .unwrap();
 

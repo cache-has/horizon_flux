@@ -299,11 +299,7 @@ impl PipelineExecutor {
         run.start_time = Some(run_start_wall);
         run.triggered_by = options.triggered_by.clone();
         if let Some(store) = &options.run_store {
-            let _ = store.set_running(
-                &run.id,
-                run_start_wall,
-                options.triggered_by.as_deref(),
-            );
+            let _ = store.set_running(&run.id, run_start_wall, options.triggered_by.as_deref());
         }
 
         emit(
@@ -1130,11 +1126,10 @@ impl PipelineExecutor {
                             .collect();
                         let input_schemas =
                             FailureReport::extract_input_schemas(&upstream_for_report);
-                        let (input_sample, input_total_rows) =
-                            FailureReport::sample_input_rows(
-                                &upstream_for_report,
-                                crate::failure_report::DEFAULT_SAMPLE_ROW_LIMIT,
-                            );
+                        let (input_sample, input_total_rows) = FailureReport::sample_input_rows(
+                            &upstream_for_report,
+                            crate::failure_report::DEFAULT_SAMPLE_ROW_LIMIT,
+                        );
                         let report = FailureReport {
                             run_id: run.id.to_string(),
                             node_id: node_id.to_string(),
@@ -1262,14 +1257,7 @@ impl PipelineExecutor {
                         );
                         tokio::spawn(async move {
                             client
-                                .emit_fail(
-                                    &pid,
-                                    &env,
-                                    &rid,
-                                    &err_msg,
-                                    ol_inputs,
-                                    ol_outputs,
-                                )
+                                .emit_fail(&pid, &env, &rid, &err_msg, ol_inputs, ol_outputs)
                                 .await;
                         });
                     }
@@ -1350,12 +1338,8 @@ impl PipelineExecutor {
             let pid = pipeline.name.clone();
             let env = options.environment.clone();
             let rid = run.id.to_string();
-            let ol_inputs = collect_ol_inputs(
-                pipeline,
-                &order,
-                &outputs,
-                options.fingerprint_fn.as_ref(),
-            );
+            let ol_inputs =
+                collect_ol_inputs(pipeline, &order, &outputs, options.fingerprint_fn.as_ref());
             let ol_outputs = collect_ol_outputs(
                 pipeline,
                 &order,
@@ -1908,13 +1892,8 @@ fn collect_ol_inputs(
         if let Some(node) = pipeline.node(node_id) {
             if let NodeKind::Source(src) = &node.kind {
                 if let Some(fp) = fp_fn(&src.connector, &src.config) {
-                    let schema_fields = outputs
-                        .get(node_id)
-                        .map(|b| extract_schema_fields(b));
-                    inputs.push(ol::input_dataset(
-                        &fp.to_string(),
-                        schema_fields.as_deref(),
-                    ));
+                    let schema_fields = outputs.get(node_id).map(|b| extract_schema_fields(b));
+                    inputs.push(ol::input_dataset(&fp.to_string(), schema_fields.as_deref()));
                 }
             }
         }

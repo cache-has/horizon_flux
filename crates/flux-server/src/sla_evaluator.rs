@@ -195,9 +195,7 @@ pub fn evaluate_slas(state: &AppState) -> usize {
 }
 
 /// Build a catalog for SLA evaluation using the same approach as the catalog API.
-fn build_catalog_for_sla(
-    state: &AppState,
-) -> Result<Catalog, String> {
+fn build_catalog_for_sla(state: &AppState) -> Result<Catalog, String> {
     let environment = "default";
 
     let stored = state
@@ -239,10 +237,7 @@ pub async fn run_sla_evaluator_loop(
     interval: std::time::Duration,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
-    info!(
-        "SLA evaluator started (interval: {}s)",
-        interval.as_secs()
-    );
+    info!("SLA evaluator started (interval: {}s)", interval.as_secs());
     let mut ticker = tokio::time::interval(interval);
 
     loop {

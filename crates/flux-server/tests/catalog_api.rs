@@ -84,7 +84,7 @@ async fn body_json(body: Body) -> Value {
 fn seed_resources(state: &AppState) {
     let id_a = "00000000-0000-0000-0000-000000000001";
     let id_b = "00000000-0000-0000-0000-000000000002";
-    let env = "default";
+    let env = "dev";
     let now = 1000i64;
 
     state
@@ -455,7 +455,7 @@ async fn auto_derived_freshness_from_run_history() {
         .lineage_store
         .save_bindings(
             &pid,
-            "default",
+            "dev",
             &[StoredResourceBinding {
                 pipeline_id: pid.clone(),
                 node_id: "sink1".to_string(),
@@ -463,7 +463,7 @@ async fn auto_derived_freshness_from_run_history() {
                 resource_fingerprint: ResourceFingerprint::new(
                     "postgres://db:5432/analytics/public.orders",
                 ),
-                environment: "default".to_string(),
+                environment: "dev".to_string(),
                 updated_at_ms: 1000,
             }],
         )
@@ -472,9 +472,12 @@ async fn auto_derived_freshness_from_run_history() {
     // Create a successful run for this pipeline with node stats.
     let end_time = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
     let start_time = end_time - Duration::from_secs(60);
-    let run = state.run_store.create_run("etl-orders", "default").unwrap();
+    let run = state.run_store.create_run("etl-orders", "dev").unwrap();
     let run_id = run.id.clone();
-    state.run_store.set_running(&run_id, start_time, None).unwrap();
+    state
+        .run_store
+        .set_running(&run_id, start_time, None)
+        .unwrap();
     state
         .run_store
         .save_node_stats(

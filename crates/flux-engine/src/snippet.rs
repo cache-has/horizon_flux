@@ -616,7 +616,7 @@ mod tests {
         assert!(ids.contains(&"ingest.raw"));
         assert!(ids.contains(&"ingest.cleansed"));
         assert!(ids.contains(&"sink"));
-        assert!(!ids.iter().any(|i| *i == "ingest"));
+        assert!(!ids.contains(&"ingest"));
         // Edge `ingest.cleansed -> sink` preserved.
         assert!(
             p.edges

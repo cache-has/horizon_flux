@@ -278,21 +278,30 @@ export function RunDetailPanel({
 
   useEffect(() => {
     if (!open || !runId) return;
-    setLoading(true);
-    setError(null);
-    setSelectedNodeId(null);
-
-    fetchRun(runId)
-      .then((r) => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      setSelectedNodeId(null);
+      try {
+        const r = await fetchRun(runId);
+        if (cancelled) return;
         setRun(r);
         // Auto-select the first failed node if the run failed
         if (r.status === 'failed') {
           const failedNode = r.node_stats.find((s) => s.error);
           if (failedNode) setSelectedNodeId(failedNode.node_id);
         }
-      })
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setLoading(false));
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [runId, open]);
 
   const handleSelectNode = useCallback((nodeId: string) => {

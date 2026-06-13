@@ -10,8 +10,8 @@
 use crate::config::TracingConfig;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::{SdkTracerProvider, Sampler};
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::registry::LookupSpan;
 
@@ -87,10 +87,7 @@ fn try_build_provider(
         Sampler::TraceIdRatioBased(config.sampling_ratio)
     };
 
-    let mut resource_attrs = vec![KeyValue::new(
-        "service.name",
-        config.service_name.clone(),
-    )];
+    let mut resource_attrs = vec![KeyValue::new("service.name", config.service_name.clone())];
     if let Some(ref ns) = config.service_namespace {
         resource_attrs.push(KeyValue::new("service.namespace", ns.clone()));
     }

@@ -160,14 +160,11 @@ pub struct InputFieldRef {
 // ---------------------------------------------------------------------------
 
 const PRODUCER: &str = "https://github.com/horizon-analytic/horizon-flux";
-const SCHEMA_URL: &str =
-    "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent";
+const SCHEMA_URL: &str = "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent";
 const SCHEMA_FACET_URL: &str =
     "https://openlineage.io/spec/facets/1-1-1/SchemaDatasetFacet.json#/$defs/SchemaDatasetFacet";
-const COLUMN_LINEAGE_FACET_URL: &str =
-    "https://openlineage.io/spec/facets/1-0-2/ColumnLineageDatasetFacet.json#/$defs/ColumnLineageDatasetFacet";
-const ERROR_MESSAGE_FACET_URL: &str =
-    "https://openlineage.io/spec/facets/1-0-0/ErrorMessageRunFacet.json#/$defs/ErrorMessageRunFacet";
+const COLUMN_LINEAGE_FACET_URL: &str = "https://openlineage.io/spec/facets/1-0-2/ColumnLineageDatasetFacet.json#/$defs/ColumnLineageDatasetFacet";
+const ERROR_MESSAGE_FACET_URL: &str = "https://openlineage.io/spec/facets/1-0-0/ErrorMessageRunFacet.json#/$defs/ErrorMessageRunFacet";
 
 // ---------------------------------------------------------------------------
 // Fingerprint → Dataset mapping
@@ -290,9 +287,7 @@ pub struct ColumnEdgeSimple {
 ///
 /// The `default_namespace` is used for datasets whose fingerprint doesn't
 /// parse to a known scheme.
-pub fn build_column_lineage_facet(
-    edges: &[ColumnEdgeSimple],
-) -> ColumnLineageDatasetFacet {
+pub fn build_column_lineage_facet(edges: &[ColumnEdgeSimple]) -> ColumnLineageDatasetFacet {
     let mut fields: HashMap<String, Vec<InputFieldRef>> = HashMap::new();
 
     for edge in edges {
@@ -312,9 +307,7 @@ pub fn build_column_lineage_facet(
         schema_url: COLUMN_LINEAGE_FACET_URL.to_string(),
         fields: fields
             .into_iter()
-            .map(|(col, input_fields)| {
-                (col, ColumnLineageField { input_fields })
-            })
+            .map(|(col, input_fields)| (col, ColumnLineageField { input_fields }))
             .collect(),
     }
 }
@@ -453,12 +446,7 @@ impl OpenLineageClient {
     }
 
     /// Emit an ABORT event for a pipeline run.
-    pub async fn emit_abort(
-        &self,
-        pipeline_id: &str,
-        environment: &str,
-        run_id: &str,
-    ) {
+    pub async fn emit_abort(&self, pipeline_id: &str, environment: &str, run_id: &str) {
         let event = RunEvent {
             event_time: now_iso8601(),
             event_type: EventType::Abort,
