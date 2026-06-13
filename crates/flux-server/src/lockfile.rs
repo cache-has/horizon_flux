@@ -58,7 +58,8 @@ pub fn remove(path: &Path) {
 /// Check if a process with the given PID is alive.
 ///
 /// On Unix, sends signal 0 (existence check, no actual signal delivered).
-/// On non-Unix, conservatively returns false (treat as dead).
+/// On Windows, opens the process and polls its handle for liveness.
+/// On other platforms, conservatively returns false (treat as dead).
 pub fn is_pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -66,7 +67,28 @@ pub fn is_pid_alive(pid: u32) -> bool {
         // whether the process exists and we have permission to signal it.
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        // SAFETY: we open a handle solely to poll the process's liveness and
+        // then close it. `OpenProcess` returns NULL when the pid has no live
+        // process (or we lack access), which we treat as "not alive".
+        unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                return false;
+            }
+            // A running process leaves its handle un-signaled (WAIT_TIMEOUT);
+            // an exited process signals it (WAIT_OBJECT_0).
+            let alive = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
+            CloseHandle(handle);
+            alive
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         false
