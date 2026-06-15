@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # armillary-plugin-protocol
 
 Wire-protocol types, constants, and framing for the
-[Armillary](https://github.com/horizon-analytic/armillary) plugin
+[Armillary](https://github.com/cache-has/armillary) plugin
 system. Shared between the host (`armillary-plugin-host`) and the Rust SDK
 (`armillary-plugin-sdk`).
 

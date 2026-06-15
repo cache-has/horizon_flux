@@ -103,7 +103,7 @@ The following are **not** breaking and ship in the same protocol version:
 
 If you hit a handshake failure or a protocol mismatch you believe is a bug
 in armillary (rather than your plugin), open an issue at
-<https://github.com/horizon-analytic/armillary/issues> with:
+<https://github.com/cache-has/armillary/issues> with:
 
 - The output of `armillary --version`
 - Your `plugin.toml`

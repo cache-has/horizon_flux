@@ -164,9 +164,14 @@ jobs:
           mv ../checksums-sha256.txt .
           cat checksums-sha256.txt
 
+      - name: Resolve release version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: Armillary ${{ steps.version.outputs.version }}
           generate_release_notes: true
           draft: false
           files: |

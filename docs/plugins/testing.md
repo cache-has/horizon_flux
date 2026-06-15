@@ -90,7 +90,7 @@ The dev-dependencies you need:
 
 ```toml
 [dev-dependencies]
-armillary-plugin-protocol = { git = "https://github.com/horizon-analytic/armillary", branch = "main" }
+armillary-plugin-protocol = { git = "https://github.com/cache-has/armillary", branch = "main" }
 serde_json = "1"
 arrow = "55"
 ```
@@ -137,7 +137,7 @@ The minimal `Cargo.toml` additions:
 
 ```toml
 [dev-dependencies]
-armillary-plugin-host = { git = "https://github.com/horizon-analytic/armillary", branch = "main" }
+armillary-plugin-host = { git = "https://github.com/cache-has/armillary", branch = "main" }
 tempfile = "3"
 ```
 

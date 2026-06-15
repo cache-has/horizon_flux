@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Your First Plugin (Rust SDK)
 
-This is a hands-on walkthrough for writing a Armillary **sink plugin** in
+This is a hands-on walkthrough for writing an Armillary **sink plugin** in
 Rust using [`armillary-plugin-sdk`](../../crates/armillary-plugin-sdk). At the end you
 will have a plugin built, installed, discovered by `armillary plugin list`,
 visible in the canvas, and writing data to disk.
@@ -14,12 +14,12 @@ visible in the canvas, and writing data to disk.
 > See [your-first-plugin-direct.md](./your-first-plugin-direct.md). Looking
 > for the wire protocol reference? See [protocol-v1.md](./protocol-v1.md).
 
-> **In a hurry?** The [`armillary-plugin-template`](https://github.com/horizon-analytic/armillary-plugin-template)
+> **In a hurry?** The [`armillary-plugin-template`](https://github.com/cache-has/armillary-plugin-template)
 > repo is a complete, working JSON Lines sink plugin built on this SDK,
 > with cross-platform CI already wired up. Clone it and skip steps 1–3:
 >
 > ```bash
-> gh repo create my-armillary-sink --template horizon-analytic/armillary-plugin-template --public --clone
+> gh repo create my-armillary-sink --template cache-has/armillary-plugin-template --public --clone
 > cd my-armillary-sink && cargo build --release
 > ```
 >
@@ -54,7 +54,7 @@ edition = "2024"
 
 [dependencies]
 arrow = "55"
-armillary-plugin-sdk = { git = "https://github.com/horizon-analytic/armillary", branch = "main" }
+armillary-plugin-sdk = { git = "https://github.com/cache-has/armillary", branch = "main" }
 serde = { version = "1", features = ["derive"] }
 
 [[bin]]

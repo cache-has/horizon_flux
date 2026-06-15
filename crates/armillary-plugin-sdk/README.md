@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # armillary-plugin-sdk
 
-Rust SDK for writing [Armillary](https://github.com/horizon-analytic/armillary)
+Rust SDK for writing [Armillary](https://github.com/cache-has/armillary)
 sink plugins. Implement one trait, call one function, done.
 
 ```rust,ignore
@@ -32,10 +32,10 @@ their own typed config and `arrow::record_batch::RecordBatch`.
 ## Getting started
 
 The fastest path is the [plugin template
-repo](https://github.com/horizon-analytic/armillary-plugin-template):
+repo](https://github.com/cache-has/armillary-plugin-template):
 
 ```bash
-gh repo create my-armillary-sink --template horizon-analytic/armillary-plugin-template --public --clone
+gh repo create my-armillary-sink --template cache-has/armillary-plugin-template --public --clone
 cd my-armillary-sink
 cargo build --release
 ```
