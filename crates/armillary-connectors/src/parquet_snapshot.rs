@@ -167,7 +167,7 @@ pub(crate) async fn write_parquet_snapshot(
             let is_current_idx = target.schema().index_of(FLUX_IS_CURRENT).map_err(|_| {
                 format!(
                     "existing target '{}' has no `{FLUX_IS_CURRENT}` column; \
-                         it does not look like a armillary snapshot table",
+                         it does not look like an Armillary snapshot table",
                     path.display()
                 )
             })?;

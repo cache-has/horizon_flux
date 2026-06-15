@@ -16,7 +16,7 @@
 //! The fingerprint is xxhash64 over a deterministic JSON serialization of the
 //! schema's column names + Arrow type Display strings — Arrow's own
 //! `Schema::serialize`/IPC bytes are not guaranteed stable across versions
-//! and would produce false-positive schema changes on a armillary upgrade.
+//! and would produce false-positive schema changes on an Armillary upgrade.
 
 use crate::provider::{SchemaDiff, SchemaField, SchemaTypeChange};
 use armillary_engine::materialization::OnSchemaChange;

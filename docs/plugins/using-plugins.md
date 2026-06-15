@@ -115,14 +115,14 @@ repo.
 ### Starting your own plugin
 
 The fastest way to get a working sink plugin in armillary is the
-[`armillary-plugin-template`](https://github.com/horizon-analytic/armillary-plugin-template)
+[`armillary-plugin-template`](https://github.com/cache-has/armillary-plugin-template)
 repo — a pre-wired Rust scaffold (using `armillary-plugin-sdk`) that ships a
 JSON Lines sink, cross-platform CI, and the manifest and config-schema
 boilerplate. Clone it as a GitHub template, change a few lines, and you have
 a working plugin installed in armillary:
 
 ```bash
-gh repo create my-armillary-sink --template horizon-analytic/armillary-plugin-template --public --clone
+gh repo create my-armillary-sink --template cache-has/armillary-plugin-template --public --clone
 cd my-armillary-sink
 cargo build --release
 ```

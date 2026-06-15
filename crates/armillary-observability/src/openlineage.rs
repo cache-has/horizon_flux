@@ -159,7 +159,7 @@ pub struct InputFieldRef {
 // Constants
 // ---------------------------------------------------------------------------
 
-const PRODUCER: &str = "https://github.com/horizon-analytic/armillary";
+const PRODUCER: &str = "https://github.com/cache-has/armillary";
 const SCHEMA_URL: &str = "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent";
 const SCHEMA_FACET_URL: &str =
     "https://openlineage.io/spec/facets/1-1-1/SchemaDatasetFacet.json#/$defs/SchemaDatasetFacet";
@@ -517,7 +517,7 @@ fn now_iso8601() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-/// Convert a armillary run ID to a UUID string.
+/// Convert an Armillary run ID to a UUID string.
 ///
 /// Armillary run IDs are UUIDs but stored as plain strings. If the string is
 /// already a valid UUID, use it directly. Otherwise generate a deterministic
