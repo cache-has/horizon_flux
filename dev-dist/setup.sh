@@ -2,9 +2,9 @@
 # Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Horizon Flux — Dev Preview Setup Script for macOS
+# Armillary — Dev Preview Setup Script for macOS
 #
-# This script installs all dependencies, builds Horizon Flux from source,
+# This script installs all dependencies, builds Armillary from source,
 # sets up a local PostgreSQL environment with sample databases, and launches
 # the application. It is idempotent — safe to run multiple times.
 #
@@ -41,7 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-header "Horizon Flux — Dev Preview Setup"
+header "Armillary — Dev Preview Setup"
 echo "Project directory: $PROJECT_DIR"
 echo ""
 
@@ -127,15 +127,15 @@ else
 fi
 
 # Create managed Python venv for transforms
-PYTHON_ENV="$HOME/.horizon-flux/python"
-if [[ -f "$PYTHON_ENV/.horizon-flux-ready" ]]; then
+PYTHON_ENV="$HOME/.armillary/python"
+if [[ -f "$PYTHON_ENV/.armillary-ready" ]]; then
   ok "Python environment already set up"
 else
   info "Setting up Python 3.12 environment with required packages..."
   uv venv --python 3.12 "$PYTHON_ENV"
   uv pip install --python "$PYTHON_ENV/bin/python" \
     "polars>=1.39.3" numpy scipy requests httpx
-  touch "$PYTHON_ENV/.horizon-flux-ready"
+  touch "$PYTHON_ENV/.armillary-ready"
   ok "Python environment ready at $PYTHON_ENV"
 fi
 
@@ -189,7 +189,7 @@ else
 fi
 
 # Create databases if they don't exist
-for db in pagila openboard_examples horizon_flux_output; do
+for db in pagila openboard_examples armillary_output; do
   if psql -lqt 2>/dev/null | cut -d '|' -f 1 | grep -qw "$db"; then
     ok "Database '$db' exists"
   else
@@ -228,7 +228,7 @@ else
   fi
 fi
 
-# ── Step 6: Build Horizon Flux ──────────────────────────────────────
+# ── Step 6: Build Armillary ──────────────────────────────────────
 header "Step 6/7: Build"
 
 info "Installing frontend dependencies..."
@@ -240,12 +240,12 @@ info "Building frontend..."
 npm run build --silent
 ok "Frontend built"
 
-info "Building Horizon Flux (this takes 5-10 minutes on first run)..."
+info "Building Armillary (this takes 5-10 minutes on first run)..."
 cd "$PROJECT_DIR"
-cargo build --release --bin horizon-flux 2>&1 | tail -1
-ok "Horizon Flux built successfully"
+cargo build --release --bin armillary 2>&1 | tail -1
+ok "Armillary built successfully"
 
-BINARY="$PROJECT_DIR/target/release/horizon-flux"
+BINARY="$PROJECT_DIR/target/release/armillary"
 BINARY_SIZE=$(ls -lh "$BINARY" | awk '{print $5}')
 info "Binary: $BINARY ($BINARY_SIZE)"
 
@@ -271,7 +271,7 @@ done
 # ── Done ────────────────────────────────────────────────────────────
 header "Setup Complete!"
 
-echo -e "${GREEN}Horizon Flux is ready to run.${NC}"
+echo -e "${GREEN}Armillary is ready to run.${NC}"
 echo ""
 echo "To start the application:"
 echo ""
@@ -279,7 +279,7 @@ echo -e "  ${BOLD}$BINARY${NC}"
 echo ""
 echo "Or from the project directory:"
 echo ""
-echo -e "  ${BOLD}cargo run --release --bin horizon-flux${NC}"
+echo -e "  ${BOLD}cargo run --release --bin armillary${NC}"
 echo ""
 echo "The app will open in your browser at http://localhost:8080"
 echo ""
@@ -297,10 +297,10 @@ echo "────────────────────────�
 echo ""
 
 # Ask if they want to launch now
-read -p "Launch Horizon Flux now? [Y/n] " -n 1 -r
+read -p "Launch Armillary now? [Y/n] " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
   echo ""
-  info "Starting Horizon Flux..."
+  info "Starting Armillary..."
   exec "$BINARY"
 fi

@@ -1,13 +1,13 @@
 name = "parquet"
 version = "0.1.0"
 author = "Horizon Analytic Studios, LLC"
-description = "Reference Horizon Flux plugin: writes pipeline output to a Parquet file"
+description = "Reference Armillary plugin: writes pipeline output to a Parquet file"
 license = "MIT OR Apache-2.0"
 
-flux_plugin_protocol = 1
-flux_min_version = "0.1.0"
+armillary_plugin_protocol = 1
+armillary_min_version = "0.1.0"
 
-executable = "flux-parquet-plugin"
+executable = "armillary-parquet-plugin"
 
 [[sinks]]
 type = "parquet_plugin"

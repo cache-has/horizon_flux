@@ -1,23 +1,23 @@
 [package]
-name = "flux-parquet-plugin"
+name = "armillary-parquet-plugin"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
-description = "Reference plugin for Horizon Flux: writes incoming record batches to a Parquet file."
+description = "Reference plugin for Armillary: writes incoming record batches to a Parquet file."
 
 [[bin]]
-name = "flux-parquet-plugin"
+name = "armillary-parquet-plugin"
 path = "src/main.rs"
 
 [dependencies]
 arrow = { workspace = true }
 parquet = { version = "58", features = ["arrow"] }
-flux-plugin-sdk = { workspace = true }
+armillary-plugin-sdk = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
-flux-plugin-host = { workspace = true }
+armillary-plugin-host = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

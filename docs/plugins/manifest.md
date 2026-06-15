@@ -5,9 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Plugin Manifest (`plugin.toml`)
 
-Every Horizon Flux plugin directory contains a `plugin.toml` file at its
+Every Armillary plugin directory contains a `plugin.toml` file at its
 root. The manifest declares the plugin's identity, the protocol version it
-targets, how to spawn it, and what connectors it provides. Flux refuses to
+targets, how to spawn it, and what connectors it provides. Armillary refuses to
 load a plugin whose manifest is missing, malformed, or fails JSON Schema
 validation against `plugin.schema.json` (next to this document).
 
@@ -23,8 +23,8 @@ license = "MIT OR Apache-2.0"
 homepage = "https://github.com/horizon-analytic/openboard"
 
 # Protocol compatibility
-flux_plugin_protocol = 1
-flux_min_version = "0.5.0"
+armillary_plugin_protocol = 1
+armillary_min_version = "0.5.0"
 
 # Execution
 executable = "openboard-plugin"
@@ -56,8 +56,8 @@ schema_validation = true
 | `description` | string | no | |
 | `license` | string | no | SPDX expression. |
 | `homepage` | string | no | URL. |
-| `flux_plugin_protocol` | integer | yes | Protocol major version. v1 plugins must set `1`. |
-| `flux_min_version` | string | yes | Minimum flux version, SemVer. Flux refuses to load a plugin if its own version is lower. |
+| `armillary_plugin_protocol` | integer | yes | Protocol major version. v1 plugins must set `1`. |
+| `armillary_min_version` | string | yes | Minimum armillary version, SemVer. Armillary refuses to load a plugin if its own version is lower. |
 | `executable` | string | yes | Path relative to the plugin directory. On Windows, `.exe` is appended automatically if missing. |
 | `args` | string[] | no | Static args prepended to every spawn. |
 | `env` | table\<string,string\> | no | Environment variables set on every spawn. Inherited environment is preserved. |
@@ -83,12 +83,12 @@ schema_validation = true
 
 ## Validation
 
-Flux validates `plugin.toml` against `plugin.schema.json` at discovery time.
+Armillary validates `plugin.toml` against `plugin.schema.json` at discovery time.
 Validation failures are surfaced via:
 
-- `flux plugin list` — the plugin appears with an `invalid` status and the
+- `armillary plugin list` — the plugin appears with an `invalid` status and the
   validation error message.
-- `flux plugin check <name>` — exits non-zero with the validation error.
+- `armillary plugin check <name>` — exits non-zero with the validation error.
 - The `/api/plugins` HTTP endpoint — `status: "invalid"` plus the error.
 
 Unknown fields are **rejected** at the top level and inside `[[sinks]]` so

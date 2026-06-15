@@ -1,6 +1,6 @@
 # Pipeline JSON Format Reference
 
-Complete reference for the Horizon Flux pipeline definition format. Pipelines are JSON files that describe a DAG of source, transform, and sink nodes.
+Complete reference for the Armillary pipeline definition format. Pipelines are JSON files that describe a DAG of source, transform, and sink nodes.
 
 ## Top-Level Fields
 
@@ -510,15 +510,15 @@ Controls how data is sampled during preview execution.
 
 ```bash
 # Import a pipeline
-horizon-flux import pipeline.json
+armillary import pipeline.json
 
 # Import with conflict handling
-horizon-flux import pipeline.json --on-conflict rename    # auto-rename if name exists
-horizon-flux import pipeline.json --on-conflict overwrite # replace existing
+armillary import pipeline.json --on-conflict rename    # auto-rename if name exists
+armillary import pipeline.json --on-conflict overwrite # replace existing
 
 # Export (code_path references are resolved to inline code)
-horizon-flux export "My Pipeline" -o pipeline.json
-horizon-flux export --all -o ./pipelines/
+armillary export "My Pipeline" -o pipeline.json
+armillary export --all -o ./pipelines/
 ```
 
 Exported pipelines are self-contained — all `code_path` references are resolved to inline `code` and `code_dir` is removed.

@@ -4,7 +4,7 @@
 /**
  * API client for trigger endpoints.
  *
- * Types mirror the Rust `flux-scheduler` types serialized via serde.
+ * Types mirror the Rust `armillary-scheduler` types serialized via serde.
  */
 
 // ---------------------------------------------------------------------------

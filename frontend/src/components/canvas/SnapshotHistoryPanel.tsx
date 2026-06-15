@@ -3,7 +3,7 @@
 
 //! Snapshot SCD2 history viewer (planning doc 28).
 //!
-//! Sibling to the `flux snapshot history` CLI: given a business key, query
+//! Sibling to the `armillary snapshot history` CLI: given a business key, query
 //! every historical version of that row from the snapshot target and render
 //! a timeline showing valid_from / valid_to / is_current and the tracked
 //! comparison-column values per version. Lets engineers tired of the
@@ -136,21 +136,21 @@ function SnapshotHistoryTimeline({ result }: { result: SnapshotHistoryResponse }
       <ol>
         {result.versions.map((v) => (
           <li
-            key={v.flux_scd_id}
-            className={v.flux_is_current ? 'version current' : 'version closed'}
+            key={v.armillary_scd_id}
+            className={v.armillary_is_current ? 'version current' : 'version closed'}
           >
             <div className="version-header">
               <span className="version-badge">
-                {v.flux_is_current ? 'current' : 'closed'}
+                {v.armillary_is_current ? 'current' : 'closed'}
               </span>
-              <code className="version-scd-id">{v.flux_scd_id}</code>
+              <code className="version-scd-id">{v.armillary_scd_id}</code>
             </div>
             <div className="version-validity">
               <span>
-                <strong>from</strong> {v.flux_valid_from}
+                <strong>from</strong> {v.armillary_valid_from}
               </span>
               <span>
-                <strong>to</strong> {v.flux_valid_to ?? '—'}
+                <strong>to</strong> {v.armillary_valid_to ?? '—'}
               </span>
             </div>
             {result.comparison_columns.length > 0 && (

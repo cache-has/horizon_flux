@@ -3,7 +3,7 @@
 
 /**
  * Project-level view showing the resource catalog — a searchable, browseable
- * view of tables, files, and other resources that flux pipelines produce and
+ * view of tables, files, and other resources that armillary pipelines produce and
  * consume (planning doc 34).
  */
 

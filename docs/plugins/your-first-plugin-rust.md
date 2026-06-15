@@ -5,25 +5,25 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Your First Plugin (Rust SDK)
 
-This is a hands-on walkthrough for writing a Horizon Flux **sink plugin** in
-Rust using [`flux-plugin-sdk`](../../crates/flux-plugin-sdk). At the end you
-will have a plugin built, installed, discovered by `horizon-flux plugin list`,
+This is a hands-on walkthrough for writing a Armillary **sink plugin** in
+Rust using [`armillary-plugin-sdk`](../../crates/armillary-plugin-sdk). At the end you
+will have a plugin built, installed, discovered by `armillary plugin list`,
 visible in the canvas, and writing data to disk.
 
 > Looking to do this without the SDK, in another language?
 > See [your-first-plugin-direct.md](./your-first-plugin-direct.md). Looking
 > for the wire protocol reference? See [protocol-v1.md](./protocol-v1.md).
 
-> **In a hurry?** The [`flux-plugin-template`](https://github.com/horizon-analytic/flux-plugin-template)
+> **In a hurry?** The [`armillary-plugin-template`](https://github.com/horizon-analytic/armillary-plugin-template)
 > repo is a complete, working JSON Lines sink plugin built on this SDK,
 > with cross-platform CI already wired up. Clone it and skip steps 1–3:
 >
 > ```bash
-> gh repo create my-flux-sink --template horizon-analytic/flux-plugin-template --public --clone
-> cd my-flux-sink && cargo build --release
+> gh repo create my-armillary-sink --template horizon-analytic/armillary-plugin-template --public --clone
+> cd my-armillary-sink && cargo build --release
 > ```
 >
-> Then jump to step 4 ("Install into flux") below. The walkthrough that
+> Then jump to step 4 ("Install into armillary") below. The walkthrough that
 > follows builds the same plugin from scratch so you understand each piece.
 
 ## What you are building
@@ -35,7 +35,7 @@ will have the same shape.
 
 ## 1. Scaffold the crate
 
-Create a new binary crate **outside the flux workspace**:
+Create a new binary crate **outside the armillary workspace**:
 
 ```bash
 cargo new --bin csv-line-count
@@ -43,8 +43,8 @@ cd csv-line-count
 ```
 
 Add the SDK and its required runtime dependencies to `Cargo.toml`. Until
-`flux-plugin-sdk` ships on crates.io, point at the in-tree path or a git
-revision of `horizon-flux`:
+`armillary-plugin-sdk` ships on crates.io, point at the in-tree path or a git
+revision of `armillary`:
 
 ```toml
 [package]
@@ -54,23 +54,23 @@ edition = "2024"
 
 [dependencies]
 arrow = "55"
-flux-plugin-sdk = { git = "https://github.com/horizon-analytic/horizon-flux", branch = "main" }
+armillary-plugin-sdk = { git = "https://github.com/horizon-analytic/armillary", branch = "main" }
 serde = { version = "1", features = ["derive"] }
 
 [[bin]]
-name = "flux-csv-line-count"   # the executable name your manifest references
+name = "armillary-csv-line-count"   # the executable name your manifest references
 path = "src/main.rs"
 ```
 
-The binary name (`flux-csv-line-count`) is what `plugin.toml` will look for —
-it does not have to match the crate name, and the `flux-` prefix is just a
+The binary name (`armillary-csv-line-count`) is what `plugin.toml` will look for —
+it does not have to match the crate name, and the `armillary-` prefix is just a
 convention so the plugin is recognizable on `PATH` if a user installs it
 there.
 
 ## 2. Implement `Sink`
 
 The whole plugin is one `impl Sink` block plus a `main` that calls
-[`run`](https://docs.rs/flux-plugin-sdk). Replace `src/main.rs`:
+[`run`](https://docs.rs/armillary-plugin-sdk). Replace `src/main.rs`:
 
 ```rust
 use std::fs::OpenOptions;
@@ -83,7 +83,7 @@ use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use serde::Deserialize;
 
-use flux_plugin_sdk::{PluginInfo, Sink, SinkError, WriteStats, log, run};
+use armillary_plugin_sdk::{PluginInfo, Sink, SinkError, WriteStats, log, run};
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -178,7 +178,7 @@ frame and the host fails the pipeline node — no panicking required.
 
 ## 3. Write the manifest and config schema
 
-Flux loads a plugin from a directory containing a `plugin.toml`, the binary,
+Armillary loads a plugin from a directory containing a `plugin.toml`, the binary,
 and (optionally) a JSON Schema for the config form rendered in the canvas.
 See [manifest.md](./manifest.md) for the full reference.
 
@@ -190,10 +190,10 @@ version = "0.1.0"
 description = "Counts rows from a pipeline and appends a summary line."
 license = "MIT OR Apache-2.0"
 
-flux_plugin_protocol = 1
-flux_min_version = "0.1.0"
+armillary_plugin_protocol = 1
+armillary_min_version = "0.1.0"
 
-executable = "flux-csv-line-count"
+executable = "armillary-csv-line-count"
 
 [[sinks]]
 type = "csv_line_count"
@@ -234,48 +234,48 @@ exactly — that is the only contract between the canvas form and your code.
 cargo build --release
 ```
 
-Stage the directory flux will load:
+Stage the directory armillary will load:
 
 ```bash
 mkdir -p ./csv-line-count
 cp plugin.toml config_schema.json ./csv-line-count/
-cp target/release/flux-csv-line-count ./csv-line-count/
+cp target/release/armillary-csv-line-count ./csv-line-count/
 ```
 
-Copy it into the user-global plugin directory. `horizon-flux plugin path`
-prints the directories flux scans, in priority order:
+Copy it into the user-global plugin directory. `armillary plugin path`
+prints the directories armillary scans, in priority order:
 
 ```bash
-PLUGIN_DIR="$(horizon-flux plugin path | head -1)"
+PLUGIN_DIR="$(armillary plugin path | head -1)"
 mkdir -p "$PLUGIN_DIR"
 cp -r ./csv-line-count "$PLUGIN_DIR/csv-line-count"
 ```
 
 (See [discovery.md](./discovery.md) for the full scan order, including the
-`HORIZON_FLUX_PLUGIN_PATH` env var and the workspace-local `./plugins/`
+`ARMILLARY_PLUGIN_PATH` env var and the workspace-local `./plugins/`
 escape hatch — the latter is the most convenient way to iterate during
 development.)
 
 ## 5. Verify it loads
 
 ```bash
-horizon-flux plugin list
+armillary plugin list
 # → csv-line-count 0.1.0 (sinks: csv_line_count)
 
-horizon-flux plugin check csv-line-count
+armillary plugin check csv-line-count
 # Spawns the binary, runs the v1 handshake, exits 0 on success.
 ```
 
 A non-zero exit from `plugin check` means the plugin is broken — read its
-stderr (forwarded into flux's logs) for the failure.
+stderr (forwarded into armillary's logs) for the failure.
 
 ## 6. Use it in the canvas
 
-1. Start flux (`just dev-backend` for development, or your installed binary).
+1. Start armillary (`just dev-backend` for development, or your installed binary).
 2. Open a pipeline. Drag any source onto the canvas, then drag the
    **CSV Line Count** sink from the **Plugins** section of the node palette
    (it has a "plugin" badge and an indigo border).
-3. Click the sink to open its editor. Flux fetches `config_schema.json` and
+3. Click the sink to open its editor. Armillary fetches `config_schema.json` and
    renders a form with the `output` field.
 4. Connect the source to the sink, fill in `output`, and run the pipeline.
 

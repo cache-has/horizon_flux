@@ -78,8 +78,8 @@ the external alias already matches the namespaced ID.
 ## Inspecting snippets from the CLI
 
 ```
-flux snippet list path/to/pipeline.json
-flux snippet expand path/to/pipeline.json
+armillary snippet list path/to/pipeline.json
+armillary snippet expand path/to/pipeline.json
 ```
 
 `expand` prints the fully materialized pipeline JSON — useful for

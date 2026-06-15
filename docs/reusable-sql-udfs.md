@@ -1,6 +1,6 @@
 # Reusable SQL UDFs
 
-Flux lets you define scalar SQL functions once in a `.sql` file and call
+Armillary lets you define scalar SQL functions once in a `.sql` file and call
 them from any SQL transform in a pipeline. This is Layer 1 of the reuse
 story described in `planning/29-reusable-transforms.md`: pure, scalar,
 row-level logic that gets inlined into transform SQL at execution time.
@@ -26,7 +26,7 @@ Rules:
 - Function names must be **single-segment** (no `schema.func`).
 - All parameters must be **named**.
 - `OR REPLACE`, `LANGUAGE SQL`, and `IMMUTABLE`/`STABLE`/`VOLATILE` are
-  parsed but ignored — flux treats every UDF as immutable.
+  parsed but ignored — armillary treats every UDF as immutable.
 
 ## Wiring a UDF directory into a pipeline
 
@@ -77,7 +77,7 @@ templating** — everything happens on the parsed expression tree.
 ## CLI
 
 ```sh
-flux udf list path/to/pipeline.json
+armillary udf list path/to/pipeline.json
 ```
 
 Lists every UDF discovered in the pipeline's `udfs_dir`, with its

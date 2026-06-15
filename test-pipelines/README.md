@@ -1,6 +1,6 @@
 # Test Pipelines
 
-Example pipelines for testing and demonstrating Horizon Flux. Each pipeline uses real data from PostgreSQL databases, REST APIs, and CSV files.
+Example pipelines for testing and demonstrating Armillary. Each pipeline uses real data from PostgreSQL databases, REST APIs, and CSV files.
 
 ## Prerequisites
 
@@ -21,15 +21,15 @@ Example pipelines for testing and demonstrating Horizon Flux. Each pipeline uses
 2. Import the pipelines:
 
    ```bash
-   horizon-flux import test-pipelines/pagila-revenue-by-category.json
-   horizon-flux import test-pipelines/openboard-order-summary.json
-   horizon-flux import test-pipelines/cross-source-analytics.json
+   armillary import test-pipelines/pagila-revenue-by-category.json
+   armillary import test-pipelines/openboard-order-summary.json
+   armillary import test-pipelines/cross-source-analytics.json
    ```
 
 3. Run a pipeline:
 
    ```bash
-   horizon-flux run "Pagila: Revenue by Category"
+   armillary run "Pagila: Revenue by Category"
    ```
 
 ## Environment Variables
@@ -40,7 +40,7 @@ Connection strings are parameterized using `{{ env:VAR_NAME }}` syntax. Set thes
 |----------|-------------|---------|
 | `PAGILA_CONNECTION` | Pagila database connection string | `postgresql://localhost:5432/pagila` |
 | `OPENBOARD_CONNECTION` | Openboard database connection string | `postgresql://localhost:5432/openboard_examples` |
-| `OUTPUT_CONNECTION` | Output database for sink tables | `postgresql://localhost:5432/horizon_flux_output` |
+| `OUTPUT_CONNECTION` | Output database for sink tables | `postgresql://localhost:5432/armillary_output` |
 
 ## Pipelines
 
@@ -84,17 +84,17 @@ transforms/
 Override variables at runtime with the `-V` flag:
 
 ```bash
-horizon-flux run "Pagila: Revenue by Category" -V "pagila_connection=postgresql://user:pass@remote:5432/pagila"
+armillary run "Pagila: Revenue by Category" -V "pagila_connection=postgresql://user:pass@remote:5432/pagila"
 ```
 
 Or set them as environment variables in your `.env` file.
 
 ## Output Database
 
-The cross-source pipeline writes intermediate results to PostgreSQL tables in the `horizon_flux_output` database. Create it before running:
+The cross-source pipeline writes intermediate results to PostgreSQL tables in the `armillary_output` database. Create it before running:
 
 ```bash
-createdb horizon_flux_output
+createdb armillary_output
 ```
 
 Tables created automatically: `customer_profiles`, `enriched_customers`, `earthquake_country_matches`, `customer_rfm_scores` (with indexes).

@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p frontend/dist/assets
-          printf '<!doctype html><title>Horizon Flux</title>' > frontend/dist/index.html
+          printf '<!doctype html><title>Armillary</title>' > frontend/dist/index.html
           printf '// stub asset' > frontend/dist/assets/index-stub.js
 
       - name: Check formatting

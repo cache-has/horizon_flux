@@ -3,7 +3,7 @@
 
 //! Snapshot SCD2 diff preview panel (planning doc 28).
 //!
-//! Sibling to the `flux snapshot diff` CLI and the `SnapshotHistoryPanel`.
+//! Sibling to the `armillary snapshot diff` CLI and the `SnapshotHistoryPanel`.
 //! Runs the upstream pipeline as a dry-run on the server, classifies every
 //! staged row against the snapshot target's current versions, and shows the
 //! four counts (unchanged / changed / new / gone) plus a sample of affected
@@ -116,7 +116,7 @@ function SnapshotDiffResult({ result }: { result: SnapshotDiffResponse }) {
         <div className="snapshot-diff-truncated" role="note">
           Diff computed against the first {result.staged_row_count.toLocaleString()} staged rows
           (cap is {result.staged_row_cap.toLocaleString()}). Use{' '}
-          <code>flux snapshot diff</code> from the CLI for a full run.
+          <code>armillary snapshot diff</code> from the CLI for a full run.
         </div>
       )}
 

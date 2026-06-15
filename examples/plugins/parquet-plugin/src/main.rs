@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Reference Horizon Flux sink plugin: writes incoming Arrow record batches
+//! Reference Armillary sink plugin: writes incoming Arrow record batches
 //! to a Parquet file.
 //!
 //! This is the **canonical example for plugin authors using the Rust SDK.**
-//! It depends only on `arrow`, `parquet`, and `flux-plugin-sdk` — no flux
+//! It depends only on `arrow`, `parquet`, and `armillary-plugin-sdk` — no armillary
 //! internal crates. The entire v1 wire protocol (handshake, configure,
-//! stream, commit/abort, shutdown) is handled by `flux_plugin_sdk::run`;
+//! stream, commit/abort, shutdown) is handled by `armillary_plugin_sdk::run`;
 //! this plugin only implements the [`Sink`] trait.
 
 use std::fs::File;
@@ -22,7 +22,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::Deserialize;
 
-use flux_plugin_sdk::{PluginInfo, Sink, SinkError, WriteStats, log, run};
+use armillary_plugin_sdk::{PluginInfo, Sink, SinkError, WriteStats, log, run};
 
 const PLUGIN_NAME: &str = "parquet";
 const PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");

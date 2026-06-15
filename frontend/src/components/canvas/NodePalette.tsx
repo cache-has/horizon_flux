@@ -59,7 +59,7 @@ const SECTIONS: { role: NodeRole; label: string; icon: ReactNode }[] = [
 // ---------------------------------------------------------------------------
 
 /** The MIME type key used in dataTransfer for palette drag-and-drop. */
-export const PALETTE_DRAG_TYPE = 'application/horizon-flux-palette-item';
+export const PALETTE_DRAG_TYPE = 'application/armillary-palette-item';
 
 // ---------------------------------------------------------------------------
 // Component

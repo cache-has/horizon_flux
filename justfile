@@ -1,8 +1,8 @@
-# Development commands for Horizon Flux
+# Development commands for Armillary
 
 # Start backend in development mode
 dev-backend:
-    cargo run --bin horizon-flux
+    cargo run --bin armillary
 
 # Start frontend dev server with hot reload
 dev-frontend:
@@ -35,11 +35,11 @@ coverage-package PKG:
 # Build optimized release binary with embedded frontend
 release:
     cd frontend && npm run build
-    cargo build --release --bin horizon-flux
+    cargo build --release --bin armillary
 
 # Report release binary size
 release-size: release
-    ls -lh target/release/horizon-flux
+    ls -lh target/release/armillary
 
 # Package a release archive for the current platform
 release-dist: release
@@ -47,9 +47,9 @@ release-dist: release
     set -euo pipefail
     VERSION=$(cargo metadata --format-version=1 --no-deps | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")
     TARGET=$(rustc -vV | awk '/^host:/ { print $2 }')
-    BINARY="target/release/horizon-flux"
-    ARCHIVE="horizon-flux-v${VERSION}-${TARGET}.tar.gz"
-    tar -czf "$ARCHIVE" -C target/release horizon-flux
+    BINARY="target/release/armillary"
+    ARCHIVE="armillary-v${VERSION}-${TARGET}.tar.gz"
+    tar -czf "$ARCHIVE" -C target/release armillary
     shasum -a 256 "$ARCHIVE"
     echo "Created $ARCHIVE"
     ls -lh "$ARCHIVE"

@@ -85,7 +85,7 @@ jobs:
           npm run build --workspace=frontend
 
       - name: Run tests
-        # Skip on packaging-only targets: musl (`--workspace` builds flux-tray's
+        # Skip on packaging-only targets: musl (`--workspace` builds armillary-tray's
         # GTK/glib, which can't cross-compile to musl) and macOS (the universal
         # target isn't a real rustc target). CI runs the full suite on every
         # platform on each push, so this release-time re-test is redundant there.
@@ -95,7 +95,7 @@ jobs:
       - name: Build release binary
         if: matrix.os != 'macos'
         run: >
-          cargo build --release --bin horizon-flux
+          cargo build --release --bin armillary
           --target ${{ matrix.target }}
           ${{ matrix.cargo_flags }}
 
@@ -104,19 +104,19 @@ jobs:
       - name: Build release binary (macOS universal)
         if: matrix.os == 'macos'
         run: |
-          cargo build --release --bin horizon-flux --target aarch64-apple-darwin ${{ matrix.cargo_flags }}
-          cargo build --release --bin horizon-flux --target x86_64-apple-darwin ${{ matrix.cargo_flags }}
+          cargo build --release --bin armillary --target aarch64-apple-darwin ${{ matrix.cargo_flags }}
+          cargo build --release --bin armillary --target x86_64-apple-darwin ${{ matrix.cargo_flags }}
           mkdir -p target/universal-apple-darwin/release
-          lipo -create -output target/universal-apple-darwin/release/horizon-flux \
-            target/aarch64-apple-darwin/release/horizon-flux \
-            target/x86_64-apple-darwin/release/horizon-flux
-          lipo -info target/universal-apple-darwin/release/horizon-flux
+          lipo -create -output target/universal-apple-darwin/release/armillary \
+            target/aarch64-apple-darwin/release/armillary \
+            target/x86_64-apple-darwin/release/armillary
+          lipo -info target/universal-apple-darwin/release/armillary
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         run: |
-          BINARY="target/${{ matrix.target }}/release/horizon-flux"
-          ARCHIVE="horizon-flux-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+          BINARY="target/${{ matrix.target }}/release/armillary"
+          ARCHIVE="armillary-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
           tar -czf "$ARCHIVE" -C "$(dirname "$BINARY")" "$(basename "$BINARY")"
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           echo "BINARY_SIZE=$(wc -c < "$BINARY" | tr -d ' ')" >> "$GITHUB_ENV"
@@ -125,8 +125,8 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $binary = "target/${{ matrix.target }}/release/horizon-flux.exe"
-          $archive = "horizon-flux-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          $binary = "target/${{ matrix.target }}/release/armillary.exe"
+          $archive = "armillary-${{ github.ref_name }}-${{ matrix.target }}.zip"
           Compress-Archive -Path $binary -DestinationPath $archive
           "ARCHIVE=$archive" | Out-File -Append $env:GITHUB_ENV
           $size = (Get-Item $binary).Length
@@ -160,7 +160,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum horizon-flux-* > ../checksums-sha256.txt
+          sha256sum armillary-* > ../checksums-sha256.txt
           mv ../checksums-sha256.txt .
           cat checksums-sha256.txt
 
@@ -170,7 +170,7 @@ jobs:
           generate_release_notes: true
           draft: false
           files: |
-            artifacts/horizon-flux-*
+            artifacts/armillary-*
             artifacts/checksums-sha256.txt
 
   docker:
@@ -204,9 +204,9 @@ jobs:
           context: .
           push: true
           tags: |
-            cachehorizon/flux:latest
-            cachehorizon/flux:${{ steps.version.outputs.version }}
-            ghcr.io/cache-has/flux:latest
-            ghcr.io/cache-has/flux:${{ steps.version.outputs.version }}
+            cachehorizon/armillary:latest
+            cachehorizon/armillary:${{ steps.version.outputs.version }}
+            ghcr.io/cache-has/armillary:latest
+            ghcr.io/cache-has/armillary:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

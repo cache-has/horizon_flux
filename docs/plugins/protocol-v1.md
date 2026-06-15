@@ -3,20 +3,20 @@ Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# Horizon Flux Plugin Protocol — v1
+# Armillary Plugin Protocol — v1
 
 This document is the normative reference for the wire protocol spoken between
-the `flux` host process and a plugin subprocess. It is the contract plugin
+the `armillary` host process and a plugin subprocess. It is the contract plugin
 authors build against.
 
-> **Stability:** Protocol version `1` is **unstable until flux 1.0**. Breaking
-> changes between flux minor versions are allowed and will bump the protocol
+> **Stability:** Protocol version `1` is **unstable until armillary 1.0**. Breaking
+> changes between armillary minor versions are allowed and will bump the protocol
 > version. After 1.0, version N is supported for at least one major cycle
 > after N+1 ships. See `planning/24-plugin-system.md` for the rationale.
 
 ## 1. Transport
 
-A plugin is an executable launched by `flux` as a child process. The host
+A plugin is an executable launched by `armillary` as a child process. The host
 communicates with the plugin over the child's `stdin` (host → plugin) and
 `stdout` (plugin → host). The plugin's `stderr` is captured and forwarded into
 the host's `tracing` infrastructure as plugin diagnostics; it is **not** part
@@ -58,7 +58,7 @@ trivial in every language: no `protoc`, no codegen step, no `prost`/`prost-build
 build dependency, and natural additive evolution. Arrow IPC is still used for
 RecordBatch payloads, so zero-copy semantics are unaffected.
 
-This decision is revisited at flux 1.0. If schema evolution proves painful,
+This decision is revisited at armillary 1.0. If schema evolution proves painful,
 control messages can be migrated to a binary format under a new protocol
 version without disturbing the framing layer.
 
@@ -107,7 +107,7 @@ are `snake_case`.
 ```json
 {
   "protocol": 1,
-  "flux_version": "0.5.0"
+  "armillary_version": "0.5.0"
 }
 ```
 
@@ -227,7 +227,7 @@ runtime-observed lineage.
 
 The fingerprint must follow the same canonicalization rules as built-in
 connectors: absolute paths, lowercased hostnames, no credentials. See
-`crates/flux-connectors/src/fingerprint.rs` for examples.
+`crates/armillary-connectors/src/fingerprint.rs` for examples.
 
 ## 4. Data Payloads (Arrow IPC)
 

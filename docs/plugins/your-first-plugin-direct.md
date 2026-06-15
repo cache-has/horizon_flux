@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Your First Plugin (No SDK)
 
 This is the parallel version of [your-first-plugin-rust.md](./your-first-plugin-rust.md)
-for any language that **isn't** Rust. The flux plugin protocol is designed
+for any language that **isn't** Rust. The armillary plugin protocol is designed
 so that any language with an Arrow IPC library and the standard library can
 implement a plugin in a single file.
 
@@ -57,7 +57,7 @@ Requires Python 3.10+ and `pyarrow`.
 pip install pyarrow   # or: uv pip install pyarrow
 ```
 
-`flux_csv_line_count.py`:
+`armillary_csv_line_count.py`:
 
 ```python
 #!/usr/bin/env python3
@@ -194,12 +194,12 @@ if __name__ == "__main__":
 ```toml
 name = "csv-line-count"
 version = "0.1.0"
-flux_plugin_protocol = 1
-flux_min_version = "0.1.0"
+armillary_plugin_protocol = 1
+armillary_min_version = "0.1.0"
 
 # The executable can be the script itself if it has a shebang and is +x;
 # otherwise wrap it in a tiny launcher (`#!/usr/bin/env bash` → `python3 …`).
-executable = "flux-csv-line-count"
+executable = "armillary-csv-line-count"
 
 [[sinks]]
 type = "csv_line_count"
@@ -214,13 +214,13 @@ Make the script executable, then install it the same way as the Rust
 tutorial:
 
 ```bash
-chmod +x flux_csv_line_count.py
+chmod +x armillary_csv_line_count.py
 mkdir -p csv-line-count
-cp plugin.toml config_schema.json flux_csv_line_count.py csv-line-count/
-mv csv-line-count/flux_csv_line_count.py csv-line-count/flux-csv-line-count
-PLUGIN_DIR="$(horizon-flux plugin path | head -1)"
+cp plugin.toml config_schema.json armillary_csv_line_count.py csv-line-count/
+mv csv-line-count/armillary_csv_line_count.py csv-line-count/armillary-csv-line-count
+PLUGIN_DIR="$(armillary plugin path | head -1)"
 cp -r csv-line-count "$PLUGIN_DIR/"
-horizon-flux plugin check csv-line-count
+armillary plugin check csv-line-count
 ```
 
 (`config_schema.json` is identical to the one in the Rust tutorial.)
@@ -229,21 +229,21 @@ horizon-flux plugin check csv-line-count
 
 ## TypeScript
 
-The OpenBoard plugin in `openboard/plugins/flux/` is a complete, real-world
+The OpenBoard plugin in `openboard/plugins/armillary/` is a complete, real-world
 TypeScript implementation of the v1 wire protocol. Rather than reproduce the
 whole thing here, the canonical files to read and copy from are:
 
-- [`openboard/plugins/flux/src/protocol.ts`](https://github.com/horizon-analytic/openboard/blob/main/plugins/flux/src/protocol.ts)
+- [`openboard/plugins/armillary/src/protocol.ts`](https://github.com/horizon-analytic/openboard/blob/main/plugins/armillary/src/protocol.ts)
   — framing, message kind enum, JSON payload type definitions, and a
   `readFrame` / `writeFrame` pair against `node:stream` `Readable`/`Writable`.
   Drop this file into a new TypeScript project as-is and you have the
   protocol layer for free.
-- [`openboard/plugins/flux/src/sink.ts`](https://github.com/horizon-analytic/openboard/blob/main/plugins/flux/src/sink.ts)
+- [`openboard/plugins/armillary/src/sink.ts`](https://github.com/horizon-analytic/openboard/blob/main/plugins/armillary/src/sink.ts)
   — the lifecycle loop (`runPluginLoop`) that consumes frames from
   `process.stdin`, dispatches on `MessageKind`, and writes acks back to
   `process.stdout`. Strip out the DuckDB-specific logic and you have a
   ~100-line skeleton you can adapt to your sink.
-- [`openboard/plugins/flux/src/arrow_types.ts`](https://github.com/horizon-analytic/openboard/blob/main/plugins/flux/src/arrow_types.ts)
+- [`openboard/plugins/armillary/src/arrow_types.ts`](https://github.com/horizon-analytic/openboard/blob/main/plugins/armillary/src/arrow_types.ts)
   — how the OpenBoard plugin parses base64-encoded Arrow IPC schema bytes
   and `RecordBatch` payloads using `apache-arrow`.
 
@@ -251,7 +251,7 @@ The same protocol shapes from the Python example apply: framed messages
 with a 5-byte header, JSON for control payloads, Arrow IPC stream bytes for
 `RecordBatch`. The `protocol.ts` file already encodes every detail you need.
 
-To run a TypeScript plugin under flux it must be a launchable executable.
+To run a TypeScript plugin under armillary it must be a launchable executable.
 The OpenBoard plugin's `scripts/bundle.mjs` is the canonical pattern: it
 bundles `src/index.ts` with `tsup`, marks the output `+x` with a
 `#!/usr/bin/env node` shebang, and assembles a directory containing
@@ -280,7 +280,7 @@ them yourself.
    not exit immediately — the host has not yet noticed your commit.
 6. **`stderr` is for human diagnostics, never for protocol frames.** The
    host captures it as `tracing` events; anything you print there shows up
-   in flux's logs tagged with your plugin name.
+   in armillary's logs tagged with your plugin name.
 7. **Schema is base64-encoded inside the JSON `ConfigureSink`.** Decode it
    as Arrow IPC stream bytes, not file format.
 8. **`RecordBatch` payload is Arrow IPC stream format with exactly one
@@ -289,12 +289,12 @@ them yourself.
 
 ## Verifying
 
-Whichever language you used, verify with the same flux CLI commands as the
+Whichever language you used, verify with the same armillary CLI commands as the
 Rust tutorial:
 
 ```bash
-horizon-flux plugin list                    # see it appear
-horizon-flux plugin check csv-line-count    # spawn + handshake
+armillary plugin list                    # see it appear
+armillary plugin check csv-line-count    # spawn + handshake
 ```
 
 Then drop it onto the canvas, connect a source, and run the pipeline.
@@ -305,7 +305,7 @@ Then drop it onto the canvas, connect a source, and run the pipeline.
   framed bytes into your plugin's stdin from a test harness in your
   language of choice.
 - [`debugging.md`](./debugging.md) — how to enable protocol tracing on the
-  flux side and replay a captured input stream offline.
+  armillary side and replay a captured input stream offline.
 - [`protocol-v1.md`](./protocol-v1.md) — the full normative reference. If
   you got this far, this should now feel like a checklist rather than a
   spec.

@@ -8,7 +8,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/' || echo "0.1.0")
-DIST_NAME="horizon-flux-dev-v${VERSION}"
+DIST_NAME="armillary-dev-v${VERSION}"
 DIST_DIR="/tmp/$DIST_NAME"
 
 echo "Creating dev distribution: $DIST_NAME"

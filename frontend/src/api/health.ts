@@ -4,7 +4,7 @@
 /**
  * API client for the cross-pipeline health dashboard (planning doc 37/38).
  *
- * Types mirror the Rust `flux-server::api::health` response types.
+ * Types mirror the Rust `armillary-server::api::health` response types.
  */
 
 // ---------------------------------------------------------------------------

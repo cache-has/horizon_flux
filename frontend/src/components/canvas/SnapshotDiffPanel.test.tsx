@@ -84,7 +84,7 @@ describe('SnapshotDiffPanel', () => {
     render(<SnapshotDiffPanel pipelineId="p1" nodeId="sink" environment="dev" />);
     fireEvent.click(screen.getByRole('button', { name: /Preview diff against dev/i }));
     await waitFor(() => expect(screen.getByRole('note')).toBeInTheDocument());
-    expect(screen.getByRole('note').textContent).toMatch(/flux snapshot diff/);
+    expect(screen.getByRole('note').textContent).toMatch(/armillary snapshot diff/);
   });
 
   it('surfaces server error messages inline', async () => {
@@ -93,7 +93,7 @@ describe('SnapshotDiffPanel', () => {
       status: 400,
       statusText: 'Bad Request',
       json: async () => ({
-        error: '`flux snapshot` v1 supports the `postgresql` sink only',
+        error: '`armillary snapshot` v1 supports the `postgresql` sink only',
       }),
     } as unknown as Response);
 

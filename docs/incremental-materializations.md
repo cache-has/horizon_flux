@@ -1,6 +1,6 @@
 # Incremental Materializations
 
-Horizon Flux supports **incremental sink materializations**: a sink declares how rows should land at the destination, and (optionally) how much of the upstream should be read on each run. This document is the user-facing guide. For the design rationale and internals, see `planning/27-incremental-materializations.md`.
+Armillary supports **incremental sink materializations**: a sink declares how rows should land at the destination, and (optionally) how much of the upstream should be read on each run. This document is the user-facing guide. For the design rationale and internals, see `planning/27-incremental-materializations.md`.
 
 ## 1. The Mental Model
 
@@ -38,7 +38,7 @@ Upgrading to incremental is four added lines and **zero changes to transform cod
 }
 ```
 
-Flux pushes the watermark filter down to the source connector automatically — your SQL/Python is identical in `full` and `incremental` modes.
+Armillary pushes the watermark filter down to the source connector automatically — your SQL/Python is identical in `full` and `incremental` modes.
 
 ## 2. Strategy Reference & Decision Tree
 
@@ -74,7 +74,7 @@ Does the target need deduplication?
 | `insert_overwrite` | Yes (per partition)   | `partition_column` | Date-partitioned warehouse tables |
 | `truncate_insert`  | Yes                   | —               | Small dimension tables, full reload  |
 
-> **Idempotency matters.** Flux is at-least-once across the sink-commit ↔ state-save boundary. A crash mid-run can replay rows on the next attempt. `merge` and `delete_insert` are safe under replay; `append` will produce duplicates. Pick accordingly.
+> **Idempotency matters.** Armillary is at-least-once across the sink-commit ↔ state-save boundary. A crash mid-run can replay rows on the next attempt. `merge` and `delete_insert` are safe under replay; `append` will produce duplicates. Pick accordingly.
 
 ## 3. Field Reference & Validation Rules
 
@@ -122,7 +122,7 @@ Run the pipeline once with this config under `read_mode: full`. The target shoul
 
 A good watermark column is:
 1. **Monotonic** — never decreases for new rows
-2. **`NOT NULL`** — flux warns on nulls but they will be silently skipped on the next run
+2. **`NOT NULL`** — armillary warns on nulls but they will be silently skipped on the next run
 3. **Indexed at the source** — otherwise the pushed-down filter is a full scan
 
 Common picks:
@@ -144,10 +144,10 @@ Common picks:
 ### Step 4 — preview with `incremental plan`
 
 ```bash
-horizon-flux incremental plan <pipeline>
+armillary incremental plan <pipeline>
 ```
 
-This is a dry run: it prints the resolved read mode, write strategy, watermark column, stored value, projected source filter expression, and the source-side pushdown targets — without touching the sink. Use it to verify the filter you expect is the filter flux will inject.
+This is a dry run: it prints the resolved read mode, write strategy, watermark column, stored value, projected source filter expression, and the source-side pushdown targets — without touching the sink. Use it to verify the filter you expect is the filter armillary will inject.
 
 ### Step 5 — first run
 
@@ -162,7 +162,7 @@ If you'd rather force a deliberate bootstrap step in production:
 …then trigger the bootstrap explicitly:
 
 ```bash
-horizon-flux run <pipeline> --bootstrap-incremental
+armillary run <pipeline> --bootstrap-incremental
 ```
 
 ### Step 6 — add `lookback` if your data is mildly out-of-order
@@ -181,7 +181,7 @@ This subtracts one hour from the stored watermark before filtering, so rows that
 To force the next run to be a fresh bootstrap:
 
 ```bash
-horizon-flux incremental reset <pipeline> <node_id> [--env <env>]
+armillary incremental reset <pipeline> <node_id> [--env <env>]
 ```
 
 Or use the **Reset incremental state** button in the sink node editor (asks for confirmation).
@@ -189,7 +189,7 @@ Or use the **Reset incremental state** button in the sink node editor (asks for 
 To run a one-off full rebuild without changing config:
 
 ```bash
-horizon-flux run <pipeline> --full-refresh
+armillary run <pipeline> --full-refresh
 ```
 
 `--full-refresh` skips watermark filter injection but still advances state at the end (re-baseline).
@@ -198,13 +198,13 @@ horizon-flux run <pipeline> --full-refresh
 
 ### "My incremental run processed zero rows but I know there's new data"
 
-- Run `horizon-flux incremental status <pipeline>` and check the stored watermark value.
-- Run `horizon-flux incremental plan <pipeline>` and read the projected source filter.
+- Run `armillary incremental status <pipeline>` and check the stored watermark value.
+- Run `armillary incremental plan <pipeline>` and read the projected source filter.
 - The most common cause is a non-monotonic watermark column: the stored value is from a row whose `updated_at` is *higher* than newer rows because someone updated an old row out-of-order. Switch to `updated_at` if you were using `created_at`, or vice versa.
 
 ### "I'm seeing duplicate rows after a crash"
 
-You're using `write_strategy: append`. Append is not idempotent on replay; flux is at-least-once. Switch to `merge` (or `delete_insert`) and re-run with `--full-refresh` to clean up, or `incremental reset` and rebuild.
+You're using `write_strategy: append`. Append is not idempotent on replay; armillary is at-least-once. Switch to `merge` (or `delete_insert`) and re-run with `--full-refresh` to clean up, or `incremental reset` and rebuild.
 
 ### "Schema change aborted my run"
 
@@ -214,12 +214,12 @@ You have `on_schema_change: fail`. The error message contains the diff. Either:
 
 ### "The watermark column doesn't exist on the source"
 
-Flux validates watermark columns against the source's actual `TableProvider` schema *before* any I/O. If you renamed a column upstream, update the `watermark.column` field. If the column is computed by a transform, the filter cannot be pushed down — flux will fall back to filtering at the executor (still correct, but slower).
+Armillary validates watermark columns against the source's actual `TableProvider` schema *before* any I/O. If you renamed a column upstream, update the `watermark.column` field. If the column is computed by a transform, the filter cannot be pushed down — armillary will fall back to filtering at the executor (still correct, but slower).
 
 ### "I get `WatermarkTypeMismatch`"
 
 The Arrow type of the watermark column on the incoming batch doesn't match the declared `watermark.type`. Either:
-- Fix the declared type to match the actual column type (e.g. declare `int64` for an `Int32` column — flux widens), or
+- Fix the declared type to match the actual column type (e.g. declare `int64` for an `Int32` column — armillary widens), or
 - Cast the column upstream so the type matches.
 
 ### "Plugin sink rejects `merge`"
@@ -244,7 +244,7 @@ The next run is a full rebuild — loud and expensive, but not data-corrupting. 
 
 - **First run is a bootstrap.** It reads everything. Plan capacity for it. After that, runs scale with the *new-row* slice, not the table size.
 - **Pushdown is the win.** When the source connector supports filter pushdown on the watermark column (Postgres does, Parquet does via DataFusion, REST depends on the API), the source read scans only the relevant slice. Verify with `incremental plan` and your warehouse's query log.
-- **Pushdown can be blocked by transforms.** A Python node that doesn't preserve the watermark column blocks pushdown — flux falls back to filtering after the source read, which is correct but reads the full source. If performance matters, keep the watermark column intact through every transform between source and sink.
+- **Pushdown can be blocked by transforms.** A Python node that doesn't preserve the watermark column blocks pushdown — armillary falls back to filtering after the source read, which is correct but reads the full source. If performance matters, keep the watermark column intact through every transform between source and sink.
 - **Multiple incremental sinks fanning into one source share a watermark.** The coordinator merges to the *minimum* stored watermark across the fan-out so neither sink is shorted. Splitting the source into two pipelines avoids this if the sinks have wildly different cadences.
 
 ### When to schedule full refreshes
@@ -258,7 +258,7 @@ For drift-prone tables, schedule a periodic `--full-refresh` externally (cron, G
 
 ### Width and merge cost
 
-Postgres `INSERT ... ON CONFLICT DO UPDATE SET ...` with hundreds of columns generates a lot of SQL. The flux generator is efficient but the warehouse still has to plan it. For very wide tables, consider:
+Postgres `INSERT ... ON CONFLICT DO UPDATE SET ...` with hundreds of columns generates a lot of SQL. The armillary generator is efficient but the warehouse still has to plan it. For very wide tables, consider:
 - `delete_insert` instead of `merge` — sometimes faster on wide rows
 - Pre-projecting to only the columns the sink actually needs, upstream of the sink
 
@@ -267,7 +267,7 @@ Postgres `INSERT ... ON CONFLICT DO UPDATE SET ...` with hundreds of columns gen
 Every successful sink write returns a `MaterializationReceipt` with rows scanned, rows filtered by watermark, rows inserted/updated/deleted, watermark before/after, schema diff, and duration. The receipt is:
 - Persisted in run history
 - Emitted on the WebSocket so the canvas badge updates live
-- Surfaced in `horizon-flux incremental status` / `incremental plan`
+- Surfaced in `armillary incremental status` / `incremental plan`
 - Returned in API responses (`GET /api/pipelines/:id/runs/:run_id/incremental-stats`)
 
 You should never need to scrape logs or query the warehouse to answer "did my incremental run do what I expected?" — read the receipt.

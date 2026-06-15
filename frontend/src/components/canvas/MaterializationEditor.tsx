@@ -4,7 +4,7 @@
 //! Sink materialization policy editor.
 //!
 //! Mirrors the orthogonal `read_mode` × `write_strategy` model and the field
-//! rules enforced by `flux-engine::materialization::validate_policy`. Surfaces
+//! rules enforced by `armillary-engine::materialization::validate_policy`. Surfaces
 //! validation errors inline so the user sees the same diagnostics the backend
 //! would emit on import.
 //!
@@ -304,7 +304,7 @@ export function MaterializationEditor({
                       placeholder="updated_at"
                     />
                     <small className="connector-editor__hint">
-                      Source column flux trusts to flag changed rows.
+                      Source column armillary trusts to flag changed rows.
                     </small>
                   </div>
                 )}

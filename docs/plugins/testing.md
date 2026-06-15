@@ -16,20 +16,20 @@ easy to test in two ways:
 You should write at least one test of each kind. The Rust SDK is built so
 both are short.
 
-> A `flux-plugin-test-harness` crate (and PyPI package) with built-in
+> A `armillary-plugin-test-harness` crate (and PyPI package) with built-in
 > fault injection are on the deferred backlog
 > (`planning/22-deferred-backlog.md`). Until those land, the patterns
 > below are everything you need.
 
 ## In-process: `run_io` against `Cursor` / `Vec<u8>`
 
-[`flux_plugin_sdk::run_io`](../../crates/flux-plugin-sdk/src/lib.rs) is the
+[`armillary_plugin_sdk::run_io`](../../crates/armillary-plugin-sdk/src/lib.rs) is the
 I/O-generic version of `run`. It takes any `Read` and `Write`, so a test
 can build the input frame stream as a `Vec<u8>`, hand it to your sink via a
 `Cursor`, and inspect what the SDK wrote back to a second `Vec<u8>`.
 
 The SDK's own unit tests are the canonical example of the pattern — read
-[`crates/flux-plugin-sdk/src/lib.rs`](../../crates/flux-plugin-sdk/src/lib.rs)'s
+[`crates/armillary-plugin-sdk/src/lib.rs`](../../crates/armillary-plugin-sdk/src/lib.rs)'s
 `mod tests` for a fully worked happy path, configure-rejection case, and
 host-abort case. The shape is:
 
@@ -41,11 +41,11 @@ use arrow::array::Int32Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 
-use flux_plugin_protocol::arrow_ipc::{encode_record_batch, encode_schema_b64};
-use flux_plugin_protocol::{
+use armillary_plugin_protocol::arrow_ipc::{encode_record_batch, encode_schema_b64};
+use armillary_plugin_protocol::{
     ConfigureSink, Hello, MessageKind, PROTOCOL_VERSION, write_frame, write_json_frame,
 };
-use flux_plugin_sdk::{PluginInfo, run_io};
+use armillary_plugin_sdk::{PluginInfo, run_io};
 
 #[test]
 fn happy_path() {
@@ -58,7 +58,7 @@ fn happy_path() {
 
     let mut input: Vec<u8> = Vec::new();
     write_json_frame(&mut input, MessageKind::Hello, &Hello {
-        protocol: PROTOCOL_VERSION, flux_version: "test".into(),
+        protocol: PROTOCOL_VERSION, armillary_version: "test".into(),
     }).unwrap();
     write_json_frame(&mut input, MessageKind::ConfigureSink, &ConfigureSink {
         sink_type: "my_sink".into(),
@@ -80,7 +80,7 @@ fn happy_path() {
     ).unwrap();
 
     // 3. Inspect `output` to assert the protocol responses match.
-    //    See crates/flux-plugin-sdk/src/lib.rs `mod tests` for the full
+    //    See crates/armillary-plugin-sdk/src/lib.rs `mod tests` for the full
     //    pattern using `read_json_frame` to decode the responses.
     assert!(!output.is_empty());
 }
@@ -90,12 +90,12 @@ The dev-dependencies you need:
 
 ```toml
 [dev-dependencies]
-flux-plugin-protocol = { git = "https://github.com/horizon-analytic/horizon-flux", branch = "main" }
+armillary-plugin-protocol = { git = "https://github.com/horizon-analytic/armillary", branch = "main" }
 serde_json = "1"
 arrow = "55"
 ```
 
-`flux-plugin-protocol` is the same shared crate the SDK depends on, so its
+`armillary-plugin-protocol` is the same shared crate the SDK depends on, so its
 encoders (`encode_record_batch`, `encode_schema_b64`, `write_json_frame`)
 guarantee the test bytes match what the host actually sends.
 
@@ -120,16 +120,16 @@ This is the pattern used by
 [`examples/plugins/parquet-plugin/tests/lifecycle.rs`](../../examples/plugins/parquet-plugin/tests/lifecycle.rs).
 Read it as the worked example; the steps are:
 
-1. Add `flux-plugin-host` and `tempfile` as **`dev-dependencies`** (they
-   should not be runtime deps — `flux-plugin-host` pulls in flux internals).
+1. Add `armillary-plugin-host` and `tempfile` as **`dev-dependencies`** (they
+   should not be runtime deps — `armillary-plugin-host` pulls in armillary internals).
 2. In the test, `cargo build --bin <your-binary>` from the test, so the
    binary is fresh on every run.
 3. Stage a tempdir containing the built binary, your real `plugin.toml`,
    and your real `config_schema.json`. Patch the manifest's `executable =`
    line so it matches the staged filename (this matters on Windows where
    the suffix is `.exe`).
-4. Use [`PluginProcess::spawn_with_manifest`](../../crates/flux-plugin-host/src/process.rs)
-   plus [`PluginSession`](../../crates/flux-plugin-host/src/session.rs) to
+4. Use [`PluginProcess::spawn_with_manifest`](../../crates/armillary-plugin-host/src/process.rs)
+   plus [`PluginSession`](../../crates/armillary-plugin-host/src/session.rs) to
    drive the lifecycle: `handshake → configure → send_batch → commit → shutdown`.
 5. Read the artifact your plugin produced and assert on its contents.
 
@@ -137,21 +137,21 @@ The minimal `Cargo.toml` additions:
 
 ```toml
 [dev-dependencies]
-flux-plugin-host = { git = "https://github.com/horizon-analytic/horizon-flux", branch = "main" }
+armillary-plugin-host = { git = "https://github.com/horizon-analytic/armillary", branch = "main" }
 tempfile = "3"
 ```
 
 This catches everything the in-process test misses: real OS pipes, real
 buffering, real process exit codes, the real on-disk artifact.
 
-### Note on flux-plugin-host as a dev-dep
+### Note on armillary-plugin-host as a dev-dep
 
-Pulling `flux-plugin-host` in for tests adds a non-trivial dependency tree.
+Pulling `armillary-plugin-host` in for tests adds a non-trivial dependency tree.
 That is the price of asserting on the spawned binary. If you only want a
 smoke test that the binary launches and completes a handshake, you can
-also write a tiny shell script using `horizon-flux plugin check
+also write a tiny shell script using `armillary plugin check
 <plugin-name>` after staging the plugin into a directory listed in
-`HORIZON_FLUX_PLUGIN_PATH`.
+`ARMILLARY_PLUGIN_PATH`.
 
 ## Testing a non-Rust plugin
 
@@ -172,12 +172,12 @@ A subprocess test in any language is a six-step recipe:
 6. Read the plugin's output artifact and assert its contents.
 
 For a real-world TypeScript example see
-`openboard/plugins/flux/test/` in the openboard repo, which exercises the
+`openboard/plugins/armillary/test/` in the openboard repo, which exercises the
 OpenBoard plugin's full lifecycle this way.
 
 ## CI
 
 For Rust plugins, both kinds of tests run under `cargo test`. Wire it up
 the same way the parquet plugin does — its `tests/lifecycle.rs` runs in
-flux's main CI on every PR (success criterion §5 in `planning/26`), so
+armillary's main CI on every PR (success criterion §5 in `planning/26`), so
 protocol regressions are caught at merge time.

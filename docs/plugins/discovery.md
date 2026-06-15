@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Plugin Discovery and Directory Layout
 
-Flux discovers plugins at startup (and on-demand via
+Armillary discovers plugins at startup (and on-demand via
 `POST /api/plugins/reload`) by scanning a fixed, ordered list of directories.
 Each immediate subdirectory of a scan root is treated as one plugin if it
 contains a `plugin.toml` at its root.
@@ -18,30 +18,30 @@ user-global one of the same name.
 
 1. **Platform user-data directory** (cross-platform, via the `directories`
    crate's `ProjectDirs::data_dir()`):
-   - **Linux:** `$XDG_DATA_HOME/horizon-flux/plugins`, defaulting to
-     `~/.local/share/horizon-flux/plugins`.
-   - **macOS:** `~/Library/Application Support/com.horizon-analytic.horizon-flux/plugins`.
-   - **Windows:** `%APPDATA%\horizon-analytic\horizon-flux\data\plugins`.
-2. **Legacy fallback (all platforms):** `~/.horizon-flux/plugins`. Loaded
+   - **Linux:** `$XDG_DATA_HOME/armillary/plugins`, defaulting to
+     `~/.local/share/armillary/plugins`.
+   - **macOS:** `~/Library/Application Support/com.horizon-analytic.armillary/plugins`.
+   - **Windows:** `%APPDATA%\horizon-analytic\armillary\data\plugins`.
+2. **Legacy fallback (all platforms):** `~/.armillary/plugins`. Loaded
    only if it exists. Present for compatibility with the directory layout
    shown in `planning/24-plugin-system.md` and early-adopter installs.
-3. **`HORIZON_FLUX_PLUGIN_PATH` environment variable**, a
+3. **`ARMILLARY_PLUGIN_PATH` environment variable**, a
    platform-separator-delimited list of additional directories (`:` on
    Unix, `;` on Windows). Useful for development and CI.
 4. **Workspace-local:** `./plugins/` resolved against the current working
-   directory of the running flux process. This is the highest-priority
+   directory of the running armillary process. This is the highest-priority
    source so a checked-in plugin can override a globally installed copy.
 
-The CLI command `flux plugin path` prints this resolved list in order so
+The CLI command `armillary plugin path` prints this resolved list in order so
 users can debug discovery.
 
 ## Why this layout
 
 - **Platform-native primary location.** Aligns with what users expect on
   each OS and avoids cluttering `$HOME` on Linux/macOS. The `directories`
-  crate already encapsulates the platform rules; flux uses
-  `ProjectDirs::from("com", "horizon-analytic", "horizon-flux")`.
-- **Legacy fallback** keeps the originally documented `~/.horizon-flux/plugins`
+  crate already encapsulates the platform rules; armillary uses
+  `ProjectDirs::from("com", "horizon-analytic", "armillary")`.
+- **Legacy fallback** keeps the originally documented `~/.armillary/plugins`
   working without requiring a migration step for early adopters.
 - **Env-var override** is the standard escape hatch for CI, package
   managers, and developers who want to test a plugin without installing it.
@@ -55,7 +55,7 @@ users can debug discovery.
 - A `plugin.toml` that fails to parse or fails JSON Schema validation
   produces a plugin entry with `status: "invalid"` and a captured error;
   the plugin is not spawnable but is visible to the user via
-  `flux plugin list` and `GET /api/plugins`.
+  `armillary plugin list` and `GET /api/plugins`.
 - The `name` field in the manifest must equal the directory name. A
   mismatch is a validation error.
 - Duplicate `name` across the same scan root is an error on the second

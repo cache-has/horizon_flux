@@ -5,7 +5,7 @@
 //!
 //! Extracted from `MaterializationEditor.tsx` so the component file only exports
 //! React components (required for Fast Refresh). Mirrors the cross-field rules
-//! enforced by `flux-engine::materialization::validate_policy`.
+//! enforced by `armillary-engine::materialization::validate_policy`.
 
 import type {
   MaterializationPolicy,
@@ -33,7 +33,7 @@ function isIso8601Duration(s: string): boolean {
   return true;
 }
 
-/** Mirror of `validate_policy` in flux-engine::materialization. */
+/** Mirror of `validate_policy` in armillary-engine::materialization. */
 export function validatePolicy(p: MaterializationPolicy): string[] {
   const errors: string[] = [];
   const readMode: ReadMode = p.read_mode ?? 'full';
@@ -77,7 +77,7 @@ export function validatePolicy(p: MaterializationPolicy): string[] {
     }
   }
 
-  // Snapshot sub-block rules — mirror flux-engine::materialization::validate_policy.
+  // Snapshot sub-block rules — mirror armillary-engine::materialization::validate_policy.
   if (strategy === 'snapshot') {
     if (!p.snapshot) {
       errors.push('write_strategy "snapshot" requires a snapshot sub-block.');

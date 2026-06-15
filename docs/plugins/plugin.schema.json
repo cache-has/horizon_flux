@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://horizon-analytic.com/schemas/horizon-flux/plugin.schema.json",
-  "title": "Horizon Flux plugin manifest",
-  "description": "Schema for plugin.toml files loaded by the Horizon Flux plugin host. See docs/plugins/manifest.md.",
+  "$id": "https://horizon-analytic.com/schemas/armillary/plugin.schema.json",
+  "title": "Armillary plugin manifest",
+  "description": "Schema for plugin.toml files loaded by the Armillary plugin host. See docs/plugins/manifest.md.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "name",
     "version",
-    "flux_plugin_protocol",
-    "flux_min_version",
+    "armillary_plugin_protocol",
+    "armillary_min_version",
     "executable",
     "sinks"
   ],
@@ -30,15 +30,15 @@
     "description": { "type": "string" },
     "license": { "type": "string", "description": "SPDX expression." },
     "homepage": { "type": "string", "format": "uri" },
-    "flux_plugin_protocol": {
+    "armillary_plugin_protocol": {
       "type": "integer",
       "minimum": 1,
-      "description": "Major version of the flux plugin wire protocol this plugin targets."
+      "description": "Major version of the armillary plugin wire protocol this plugin targets."
     },
-    "flux_min_version": {
+    "armillary_min_version": {
       "type": "string",
       "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
-      "description": "Minimum flux version required, SemVer 2.0."
+      "description": "Minimum armillary version required, SemVer 2.0."
     },
     "executable": {
       "type": "string",

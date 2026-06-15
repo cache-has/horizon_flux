@@ -16,7 +16,7 @@ export interface ApiPosition {
 }
 
 // ---------------------------------------------------------------------------
-// Sink materialization policy (mirrors `flux-engine::materialization`)
+// Sink materialization policy (mirrors `armillary-engine::materialization`)
 // ---------------------------------------------------------------------------
 
 export type ReadMode = 'full' | 'incremental';
@@ -34,7 +34,7 @@ export type ChangeDetection = 'check' | 'timestamp';
 export type HardDeletes = 'ignore' | 'invalidate' | 'delete';
 
 /**
- * Snapshot-specific sub-block (mirrors `flux-engine::materialization::SnapshotPolicy`).
+ * Snapshot-specific sub-block (mirrors `armillary-engine::materialization::SnapshotPolicy`).
  * Only meaningful when `write_strategy: 'snapshot'`.
  */
 export interface SnapshotPolicy {
@@ -112,7 +112,7 @@ export interface MaterializationReceipt {
 }
 
 // ---------------------------------------------------------------------------
-// Test node assertions (mirrors `flux-engine::node::Assertion`)
+// Test node assertions (mirrors `armillary-engine::node::Assertion`)
 // ---------------------------------------------------------------------------
 
 /** Severity level for a test node. */
@@ -347,10 +347,10 @@ export async function listPipelines(
 // ---------------------------------------------------------------------------
 
 export interface SnapshotHistoryVersion {
-  flux_scd_id: string;
-  flux_valid_from: string;
-  flux_valid_to: string | null;
-  flux_is_current: boolean;
+  armillary_scd_id: string;
+  armillary_valid_from: string;
+  armillary_valid_to: string | null;
+  armillary_is_current: boolean;
   comparison: Record<string, string>;
 }
 
@@ -433,7 +433,7 @@ export interface SnapshotDiffResponse {
 /**
  * Fetch a dry-run snapshot diff: runs the upstream DAG with sink writes
  * disabled, then classifies every staged business key against the target's
- * `flux_is_current` slice. v1 supports postgresql sinks only.
+ * `armillary_is_current` slice. v1 supports postgresql sinks only.
  */
 export async function fetchSnapshotDiff(
   pipelineId: string,
@@ -547,7 +547,7 @@ export async function bulkExportPipelines(): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'horizon-flux-pipelines.json';
+  a.download = 'armillary-pipelines.json';
   document.body.appendChild(a);
   a.click();
   a.remove();

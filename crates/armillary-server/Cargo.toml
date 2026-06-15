@@ -1,0 +1,48 @@
+[package]
+name = "armillary-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+armillary-engine = { workspace = true }
+armillary-datafusion = { workspace = true }
+armillary-connectors = { workspace = true }
+armillary-observability = { workspace = true }
+armillary-plugin-host = { workspace = true }
+armillary-scheduler = { workspace = true }
+armillary-secrets = { workspace = true }
+arrow = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+open = { workspace = true }
+rust-embed = { workspace = true }
+mime_guess = { workspace = true }
+reqwest = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+armillary-connectors = { workspace = true }
+armillary-plugin-host = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+http-body-util = { workspace = true }
+serde_json = { workspace = true }

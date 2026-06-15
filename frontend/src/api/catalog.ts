@@ -4,7 +4,7 @@
 /**
  * API client for resource catalog endpoints (planning doc 34).
  *
- * Types mirror the Rust `flux-engine::catalog` types serialized via serde.
+ * Types mirror the Rust `armillary-engine::catalog` types serialized via serde.
  */
 
 // ---------------------------------------------------------------------------

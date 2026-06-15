@@ -4,7 +4,7 @@
 /**
  * API client for backfill endpoints (planning doc 33).
  *
- * Types mirror the Rust `flux-engine::backfill` types serialized via serde.
+ * Types mirror the Rust `armillary-engine::backfill` types serialized via serde.
  */
 
 // ---------------------------------------------------------------------------

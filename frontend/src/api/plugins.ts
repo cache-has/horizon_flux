@@ -21,8 +21,8 @@ export interface PluginManifest {
   description?: string | null;
   license?: string | null;
   homepage?: string | null;
-  flux_plugin_protocol: number;
-  flux_min_version: string;
+  armillary_plugin_protocol: number;
+  armillary_min_version: string;
   executable: string;
   args?: string[];
   env?: Record<string, string>;

@@ -1,0 +1,44 @@
+[package]
+name = "armillary-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Scheduling and trigger engine for Armillary"
+
+[dependencies]
+armillary-engine = { workspace = true }
+armillary-datafusion = { workspace = true }
+armillary-observability = { workspace = true }
+
+# Cron expression parsing
+croner = "3"
+
+# Time & timezone
+chrono = { workspace = true }
+chrono-tz = "0.10"
+
+# Database
+rusqlite = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# IDs
+uuid = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# File pattern matching
+glob = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

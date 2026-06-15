@@ -1,4 +1,4 @@
-# `flux-plugin-host` Architecture
+# `armillary-plugin-host` Architecture
 
 Internal notes on how the host-side plugin runtime is layered. End-user docs
 live in [`using-plugins.md`](./using-plugins.md); the wire format is in
@@ -7,7 +7,7 @@ live in [`using-plugins.md`](./using-plugins.md); the wire format is in
 ## Goals
 
 1. Run plugin executables as isolated subprocesses so a crash never takes down
-   flux.
+   armillary.
 2. Move Arrow `RecordBatch`es across the boundary without copying or lossy
    re-encoding.
 3. Keep the layers small enough that each one is independently testable
@@ -18,7 +18,7 @@ live in [`using-plugins.md`](./using-plugins.md); the wire format is in
 ## Module map
 
 ```
-crates/flux-plugin-host/src/
+crates/armillary-plugin-host/src/
   manifest.rs    plugin.toml parser → typed Manifest / SinkDeclaration
   discovery.rs   scan roots → Vec<DiscoveredPlugin> + PluginRegistry
   protocol/      [length][kind][payload] framing + control message types
@@ -43,9 +43,9 @@ each `plugin.toml`, and produces a `PluginRegistry` keyed by sink type. Invalid
 manifests are retained as `DiscoveredPlugin { status: PluginStatus::Invalid,
 .. }` so the UI can surface parse errors instead of silently dropping them.
 
-The registry is wrapped in an `RwLock` inside `flux-server` so
+The registry is wrapped in an `RwLock` inside `armillary-server` so
 `POST /api/plugins/reload` can atomically swap a freshly scanned registry in
-place without restarting flux.
+place without restarting armillary.
 
 ## Protocol layer
 
@@ -89,7 +89,7 @@ regression guard.
 
 ## Sink integration
 
-`flux-connectors::plugin_sink::PluginSink` is the adapter that makes plugin
+`armillary-connectors::plugin_sink::PluginSink` is the adapter that makes plugin
 sinks interchangeable with built-in ones. It implements `PipelineSink` by
 delegating each lifecycle method to a `PluginSession`. The
 `default_registry_with_plugins` constructor walks a `PluginRegistry` and
@@ -103,7 +103,7 @@ Errors land in three places:
 1. **Manifest / discovery errors** stay attached to the `DiscoveredPlugin` and
    are exposed via `GET /api/plugins`, where the frontend renders them in red
    in the Plugins panel.
-2. **Spawn / handshake errors** propagate as `flux plugin check` exit codes
+2. **Spawn / handshake errors** propagate as `armillary plugin check` exit codes
    and as pipeline-node errors at runtime.
 3. **Mid-stream errors** (Configure rejected, plugin-reported `Error` frames,
    transport closed, host-side timeouts) all funnel through `SessionError` and

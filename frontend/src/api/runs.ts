@@ -14,7 +14,7 @@
  */
 
 // ---------------------------------------------------------------------------
-// Failure report types (mirrors flux-datafusion::failure_report)
+// Failure report types (mirrors armillary-datafusion::failure_report)
 // ---------------------------------------------------------------------------
 
 export interface ApiSchemaField {
@@ -52,7 +52,7 @@ export interface ApiFailureReport {
 }
 
 // ---------------------------------------------------------------------------
-// Run comparison types (mirrors flux-server::api::runs)
+// Run comparison types (mirrors armillary-server::api::runs)
 // ---------------------------------------------------------------------------
 
 export interface ApiNodeComparison {
@@ -96,7 +96,7 @@ export interface ApiRunComparison {
 }
 
 // ---------------------------------------------------------------------------
-// Single-run response type (mirrors flux-datafusion::run::PipelineRun)
+// Single-run response type (mirrors armillary-datafusion::run::PipelineRun)
 // ---------------------------------------------------------------------------
 
 /** Timestamp as returned by the backend (serde SystemTime). */

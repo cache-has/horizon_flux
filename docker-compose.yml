@@ -2,20 +2,20 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 services:
-  flux:
-    image: horizonanalytic/flux:latest
+  armillary:
+    image: cachehorizon/armillary:latest
     build: .
     ports:
       - "8080:8080"
     volumes:
-      - flux-data:/data
+      - armillary-data:/data
     environment:
       # Uncomment to auto-unlock the secret store on startup:
-      # HORIZON_FLUX_SECRET_PASSWORD: "changeme"
+      # ARMILLARY_SECRET_PASSWORD: "changeme"
       #
       # Uncomment to use PostgreSQL for pipeline metadata:
-      # HORIZON_FLUX_METADATA_URL: "postgresql://user:pass@host:5432/flux"
+      # ARMILLARY_METADATA_URL: "postgresql://user:pass@host:5432/armillary"
       RUST_LOG: "info"
 
 volumes:
-  flux-data:
+  armillary-data:

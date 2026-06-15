@@ -55,17 +55,17 @@ describe('SnapshotHistoryPanel', () => {
         version_count: 2,
         versions: [
           {
-            flux_scd_id: 'cur',
-            flux_valid_from: '2026-04-08 12:00:00',
-            flux_valid_to: null,
-            flux_is_current: true,
+            armillary_scd_id: 'cur',
+            armillary_valid_from: '2026-04-08 12:00:00',
+            armillary_valid_to: null,
+            armillary_is_current: true,
             comparison: { email: 'new@example.com' },
           },
           {
-            flux_scd_id: 'old',
-            flux_valid_from: '2026-04-01 09:00:00',
-            flux_valid_to: '2026-04-08 12:00:00',
-            flux_is_current: false,
+            armillary_scd_id: 'old',
+            armillary_valid_from: '2026-04-01 09:00:00',
+            armillary_valid_to: '2026-04-08 12:00:00',
+            armillary_is_current: false,
             comparison: { email: 'old@example.com' },
           },
         ],
@@ -95,7 +95,7 @@ describe('SnapshotHistoryPanel', () => {
       status: 400,
       statusText: 'Bad Request',
       json: async () => ({
-        error: '`flux snapshot` v1 supports the `postgresql` sink only',
+        error: '`armillary snapshot` v1 supports the `postgresql` sink only',
       }),
     } as unknown as Response);
 

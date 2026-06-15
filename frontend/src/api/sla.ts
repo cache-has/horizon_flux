@@ -4,7 +4,7 @@
 /**
  * API client for SLA compliance endpoints (planning doc 37, sub-feature 3).
  *
- * Types mirror the Rust `flux-engine::sla` types serialized via serde,
+ * Types mirror the Rust `armillary-engine::sla` types serialized via serde,
  * enriched with catalog metadata by the server.
  */
 

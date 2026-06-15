@@ -1,18 +1,18 @@
 [workspace]
 members = [
-    "crates/flux-engine",
-    "crates/flux-datafusion",
-    "crates/flux-connectors",
-    "crates/flux-secrets",
-    "crates/flux-server",
-    "crates/flux-tray",
-    "crates/flux-cli",
-    "crates/flux-postgres",
-    "crates/flux-plugin-host",
-    "crates/flux-plugin-protocol",
-    "crates/flux-plugin-sdk",
-    "crates/flux-scheduler",
-    "crates/flux-observability",
+    "crates/armillary-engine",
+    "crates/armillary-datafusion",
+    "crates/armillary-connectors",
+    "crates/armillary-secrets",
+    "crates/armillary-server",
+    "crates/armillary-tray",
+    "crates/armillary-cli",
+    "crates/armillary-postgres",
+    "crates/armillary-plugin-host",
+    "crates/armillary-plugin-protocol",
+    "crates/armillary-plugin-sdk",
+    "crates/armillary-scheduler",
+    "crates/armillary-observability",
     "examples/plugins/parquet-plugin",
 ]
 resolver = "2"
@@ -21,22 +21,22 @@ resolver = "2"
 version = "1.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/cache-has/horizon_flux"
+repository = "https://github.com/cache-has/armillary"
 
 [workspace.dependencies]
 # Internal crates
-flux-engine = { path = "crates/flux-engine" }
-flux-datafusion = { path = "crates/flux-datafusion" }
-flux-connectors = { path = "crates/flux-connectors" }
-flux-secrets = { path = "crates/flux-secrets" }
-flux-server = { path = "crates/flux-server" }
-flux-tray = { path = "crates/flux-tray" }
-flux-postgres = { path = "crates/flux-postgres" }
-flux-plugin-host = { path = "crates/flux-plugin-host" }
-flux-plugin-protocol = { path = "crates/flux-plugin-protocol" }
-flux-plugin-sdk = { path = "crates/flux-plugin-sdk" }
-flux-scheduler = { path = "crates/flux-scheduler" }
-flux-observability = { path = "crates/flux-observability" }
+armillary-engine = { path = "crates/armillary-engine" }
+armillary-datafusion = { path = "crates/armillary-datafusion" }
+armillary-connectors = { path = "crates/armillary-connectors" }
+armillary-secrets = { path = "crates/armillary-secrets" }
+armillary-server = { path = "crates/armillary-server" }
+armillary-tray = { path = "crates/armillary-tray" }
+armillary-postgres = { path = "crates/armillary-postgres" }
+armillary-plugin-host = { path = "crates/armillary-plugin-host" }
+armillary-plugin-protocol = { path = "crates/armillary-plugin-protocol" }
+armillary-plugin-sdk = { path = "crates/armillary-plugin-sdk" }
+armillary-scheduler = { path = "crates/armillary-scheduler" }
+armillary-observability = { path = "crates/armillary-observability" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

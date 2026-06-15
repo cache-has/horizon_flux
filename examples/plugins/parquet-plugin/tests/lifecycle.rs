@@ -15,16 +15,16 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::json;
 use tempfile::tempdir;
 
-use flux_plugin_host::manifest::Manifest;
-use flux_plugin_host::process::{PluginProcess, SpawnOptions};
-use flux_plugin_host::session::PluginSession;
+use armillary_plugin_host::manifest::Manifest;
+use armillary_plugin_host::process::{PluginProcess, SpawnOptions};
+use armillary_plugin_host::session::PluginSession;
 
 fn build_plugin_binary() -> PathBuf {
     let status = Command::new(env!("CARGO"))
-        .args(["build", "--bin", "flux-parquet-plugin", "--quiet"])
+        .args(["build", "--bin", "armillary-parquet-plugin", "--quiet"])
         .status()
-        .expect("cargo build flux-parquet-plugin");
-    assert!(status.success(), "failed to build flux-parquet-plugin");
+        .expect("cargo build armillary-parquet-plugin");
+    assert!(status.success(), "failed to build armillary-parquet-plugin");
 
     let target_dir = std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -37,9 +37,11 @@ fn build_plugin_binary() -> PathBuf {
                 .join("target")
         });
     let bin = if cfg!(windows) {
-        target_dir.join("debug").join("flux-parquet-plugin.exe")
+        target_dir
+            .join("debug")
+            .join("armillary-parquet-plugin.exe")
     } else {
-        target_dir.join("debug").join("flux-parquet-plugin")
+        target_dir.join("debug").join("armillary-parquet-plugin")
     };
     assert!(bin.is_file(), "expected built binary at {}", bin.display());
     bin
@@ -111,7 +113,7 @@ fn parquet_plugin_round_trips_batches() {
     let manifest_path = plugin_dir.path().join("plugin.toml");
     let manifest_text = std::fs::read_to_string(&manifest_path).unwrap();
     let patched = manifest_text.replace(
-        "executable = \"flux-parquet-plugin\"",
+        "executable = \"armillary-parquet-plugin\"",
         &format!("executable = \"{}\"", exe_name.to_string_lossy()),
     );
     std::fs::write(&manifest_path, patched).unwrap();

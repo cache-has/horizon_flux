@@ -1,4 +1,4 @@
--- Openboard Examples — sample data for Horizon Flux test pipelines
+-- Openboard Examples — sample data for Armillary test pipelines
 -- Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 -- SPDX-License-Identifier: MIT OR Apache-2.0
 

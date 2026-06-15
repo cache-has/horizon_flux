@@ -1,0 +1,33 @@
+[package]
+name = "armillary-datafusion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+armillary-engine = { workspace = true }
+armillary-observability = { workspace = true }
+armillary-secrets = { workspace = true }
+datafusion = { workspace = true }
+arrow = { workspace = true }
+sqlparser = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rusqlite = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+url = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+tempfile = "3"
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+armillary-connectors = { workspace = true }
+tempfile = { workspace = true }
+arrow = { workspace = true }
+parquet = { version = "58", features = ["arrow"] }

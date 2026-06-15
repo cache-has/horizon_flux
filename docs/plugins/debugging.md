@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Debugging a Plugin
 
-A plugin is a separate process talking to flux over a stdio pipe, which
+A plugin is a separate process talking to armillary over a stdio pipe, which
 makes most failures fall into one of three buckets: **discovery**,
 **handshake / configure**, or **mid-stream**. This page walks each one and
 shows how to enable protocol tracing and replay a captured input stream
@@ -17,15 +17,15 @@ Before opening a debugger, run these three commands in order. They take
 seconds and pin down the failure to a phase.
 
 ```bash
-horizon-flux plugin path                  # Where will flux look?
-horizon-flux plugin list                  # Did it find your plugin?
-horizon-flux plugin check <plugin-name>   # Spawn + handshake. Does it run?
+armillary plugin path                  # Where will armillary look?
+armillary plugin list                  # Did it find your plugin?
+armillary plugin check <plugin-name>   # Spawn + handshake. Does it run?
 ```
 
 | Command fails at... | Likely cause |
 |---|---|
 | `plugin list` doesn't show your plugin | Wrong directory, wrong directory name, or invalid `plugin.toml`. Check the **Plugins panel** in the canvas — invalid manifests are listed with a parse error. |
-| `plugin list` shows it as `invalid` | Manifest validation failed. The error is in the panel and in flux's logs. Common causes below. |
+| `plugin list` shows it as `invalid` | Manifest validation failed. The error is in the panel and in armillary's logs. Common causes below. |
 | `plugin check` exits non-zero | Your binary is broken: it didn't spawn, didn't speak v1, or didn't ack the `Hello`. Read its stderr (printed inline by `plugin check`). |
 | `plugin check` is fine but the canvas shows nothing | Frontend's plugin cache is stale — click **Rescan** in the Plugins panel (or `POST /api/plugins/reload`) and refresh. |
 
@@ -51,10 +51,10 @@ connector. Pick a more specific name (e.g. `acme_postgres` instead of
 
 ### "protocol mismatch: host speaks N, plugin speaks M"
 
-Your plugin's `flux_plugin_protocol` doesn't match this build of flux.
+Your plugin's `armillary_plugin_protocol` doesn't match this build of armillary.
 Either rebuild the plugin against a matching SDK / protocol crate, or
-upgrade/downgrade flux. Until 1.0, protocol versions can change between
-flux minor releases.
+upgrade/downgrade armillary. Until 1.0, protocol versions can change between
+armillary minor releases.
 
 ### "Configure rejected: ..."
 
@@ -68,7 +68,7 @@ message. Common cases:
 
 ### "transport closed" mid-stream
 
-Your plugin process died. Check its stderr in flux's logs (see below).
+Your plugin process died. Check its stderr in armillary's logs (see below).
 The 95% case is one of:
 
 1. **A panic** in a `Sink` method. Wrap the offending code and return
@@ -92,13 +92,13 @@ behavior.
 
 ## Reading plugin logs
 
-Plugin diagnostics flow into flux through two channels and both end up in
+Plugin diagnostics flow into armillary through two channels and both end up in
 the same `tracing` stream:
 
-- **`Log` frames (`0x50`)**, sent by the plugin via `flux_plugin_sdk::log::{trace,debug,info,warn,error}`
+- **`Log` frames (`0x50`)**, sent by the plugin via `armillary_plugin_sdk::log::{trace,debug,info,warn,error}`
   in Rust, or by writing a `{ level, message }` JSON frame in another
   language.
-- **`stderr` from the plugin process**, which `flux-plugin-host` captures
+- **`stderr` from the plugin process**, which `armillary-plugin-host` captures
   line-by-line and re-emits via `tracing`. This is where panics, prints,
   and unhandled exceptions go.
 
@@ -106,14 +106,14 @@ Turn on debug logging for plugin host and you will see both, tagged with
 the plugin name:
 
 ```bash
-RUST_LOG=flux_plugin_host=debug,horizon_flux=debug just dev-backend
+RUST_LOG=armillary_plugin_host=debug,armillary=debug just dev-backend
 ```
 
 For full protocol tracing (every frame the host reads and writes), bump
 the host crate to `trace`:
 
 ```bash
-RUST_LOG=flux_plugin_host=trace just dev-backend
+RUST_LOG=armillary_plugin_host=trace just dev-backend
 ```
 
 ## Running a plugin standalone
@@ -129,9 +129,9 @@ to files, then point the manifest at the shim:
 ```bash
 #!/usr/bin/env bash
 # capture-shim.sh
-LOG_DIR="${HOME}/flux-plugin-debug"
+LOG_DIR="${HOME}/armillary-plugin-debug"
 mkdir -p "$LOG_DIR"
-tee "$LOG_DIR/in.bin" | ./flux-my-plugin | tee "$LOG_DIR/out.bin"
+tee "$LOG_DIR/in.bin" | ./armillary-my-plugin | tee "$LOG_DIR/out.bin"
 ```
 
 Run a pipeline once. Now `in.bin` contains the exact byte stream the host
@@ -141,10 +141,10 @@ are framed bytes you can decode with the same `read_frame` helper from
 
 ### Replay offline
 
-With `in.bin` in hand, you can debug your plugin without flux at all:
+With `in.bin` in hand, you can debug your plugin without armillary at all:
 
 ```bash
-./flux-my-plugin < in.bin > /tmp/replay-out.bin
+./armillary-my-plugin < in.bin > /tmp/replay-out.bin
 ```
 
 This is invaluable for reproducing crashes — attach a debugger
@@ -160,11 +160,11 @@ faster than `tee`-ing real runs.
 
 When you file an issue, include:
 
-1. The output of `horizon-flux plugin list` and `horizon-flux plugin check
+1. The output of `armillary plugin list` and `armillary plugin check
    <name>`.
-2. The flux build version (`horizon-flux --version`).
-3. Your plugin's `flux_plugin_protocol` version from `plugin.toml`.
-4. The relevant section of flux's logs with `RUST_LOG=flux_plugin_host=debug`
+2. The armillary build version (`armillary --version`).
+3. Your plugin's `armillary_plugin_protocol` version from `plugin.toml`.
+4. The relevant section of armillary's logs with `RUST_LOG=armillary_plugin_host=debug`
    enabled.
 5. If possible, a captured `in.bin` from the shim above (it is just bytes,
    so it is small and self-contained).

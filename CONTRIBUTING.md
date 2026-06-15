@@ -1,4 +1,4 @@
-# Contributing to Horizon Flux
+# Contributing to Armillary
 
 ## Prerequisites
 
@@ -10,8 +10,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/horizonanalytic/horizon-flux.git
-cd horizon-flux
+git clone https://github.com/cache-has/armillary.git
+cd armillary
 
 # Install frontend dependencies
 cd frontend && npm install && cd ..
@@ -57,15 +57,15 @@ CI runs the same checks on Ubuntu, macOS, and Windows.
 ## Project Structure
 
 ```
-horizon_flux/
+armillary/
   crates/
-    flux-engine/          # Core pipeline engine, DAG execution
-    flux-datafusion/      # DataFusion integration, environment resolver
-    flux-connectors/      # Source and sink implementations
-    flux-secrets/         # Encrypted secret store
-    flux-server/          # Axum web server, API routes, WebSocket
-    flux-tray/            # System tray icon, desktop notifications
-    flux-cli/             # CLI interface
+    armillary-engine/          # Core pipeline engine, DAG execution
+    armillary-datafusion/      # DataFusion integration, environment resolver
+    armillary-connectors/      # Source and sink implementations
+    armillary-secrets/         # Encrypted secret store
+    armillary-server/          # Axum web server, API routes, WebSocket
+    armillary-tray/            # System tray icon, desktop notifications
+    armillary-cli/             # CLI interface
   frontend/               # React + TypeScript application
   tests/                  # Integration tests
   docs/                   # Documentation

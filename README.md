@@ -1,4 +1,4 @@
-# Horizon Flux
+# Armillary
 
 Visual data pipeline builder. Construct DAGs of source, transform, and sink nodes on a canvas, write SQL (DataFusion) or Python (Polars) transforms, and see live data previews. Single Rust binary with embedded browser UI.
 
@@ -21,32 +21,32 @@ Prebuilt images are published on each release to Docker Hub and the GitHub Conta
 
 ```bash
 # Docker Hub
-docker pull cachehorizon/flux:1.0.0        # or :latest
+docker pull cachehorizon/armillary:1.0.0        # or :latest
 
 # GitHub Container Registry
-docker pull ghcr.io/cache-has/flux:1.0.0   # or :latest
+docker pull ghcr.io/cache-has/armillary:1.0.0   # or :latest
 ```
 
 Run the server (headless, listening on port 8080) with a persistent data volume:
 
 ```bash
-docker run -p 8080:8080 -v flux-data:/data cachehorizon/flux:latest
+docker run -p 8080:8080 -v armillary-data:/data cachehorizon/armillary:latest
 ```
 
 Then open http://localhost:8080. Pipelines, secrets, and run history persist in the
-`flux-data` volume, mounted at `/data` inside the container.
+`armillary-data` volume, mounted at `/data` inside the container.
 
 ## Architecture
 
 ```
 crates/
-  flux-engine/        Core data model, DAG, pipeline storage
-  flux-datafusion/    Pipeline execution, DataFusion, Arrow data flow, Python runtime
-  flux-connectors/    Source/sink implementations (CSV, PostgreSQL, REST, stdout)
-  flux-secrets/       Encrypted secret store (AES-256-GCM + Argon2)
-  flux-server/        Axum HTTP/WebSocket server
-  flux-tray/          System tray, desktop notifications
-  flux-cli/           CLI interface
+  armillary-engine/        Core data model, DAG, pipeline storage
+  armillary-datafusion/    Pipeline execution, DataFusion, Arrow data flow, Python runtime
+  armillary-connectors/    Source/sink implementations (CSV, PostgreSQL, REST, stdout)
+  armillary-secrets/       Encrypted secret store (AES-256-GCM + Argon2)
+  armillary-server/        Axum HTTP/WebSocket server
+  armillary-tray/          System tray, desktop notifications
+  armillary-cli/           CLI interface
 frontend/             React + TypeScript (Vite)
 test-pipelines/       Example pipelines with sample data
 ```
@@ -66,7 +66,7 @@ Data flows as Arrow `RecordBatch` vectors throughout the Rust side.
 - **Pipeline variables** with `{{ variable_name }}` syntax and `{{ env:VAR }}` for environment variables
 - **External code files** via `code_dir` and `code_path` for clean project organization
 - **Import/export** pipelines as self-contained JSON (code_path references resolved on export)
-- **CLI** for headless operation: `flux run`, `flux preview`, `flux secret`, `flux env`
+- **CLI** for headless operation: `armillary run`, `armillary preview`, `armillary secret`, `armillary env`
 - **WebSocket** real-time execution status updates in the browser
 
 ## Development
@@ -99,9 +99,9 @@ PAGILA_CONNECTION=postgresql://user:pass@localhost:5432/pagila
 ### Secrets
 
 ```bash
-horizon-flux secret init                          # first-time setup
-horizon-flux secret set db_password "s3cret"      # store a secret
-horizon-flux secret set db_password --env prod "prod_s3cret"  # environment-scoped
+armillary secret init                          # first-time setup
+armillary secret set db_password "s3cret"      # store a secret
+armillary secret set db_password --env prod "prod_s3cret"  # environment-scoped
 ```
 
 Reference in connector configs: `{{ secret:db_password }}`
@@ -119,30 +119,30 @@ Declare in the pipeline JSON and override at runtime:
 ```
 
 ```bash
-horizon-flux run "My Pipeline" -V "min_amount=500"
+armillary run "My Pipeline" -V "min_amount=500"
 ```
 
 ## CLI
 
 ```bash
-horizon-flux start                    # start server (default)
-horizon-flux start --headless         # no browser
-horizon-flux stop                     # stop running server
-horizon-flux status                   # show server status
+armillary start                    # start server (default)
+armillary start --headless         # no browser
+armillary stop                     # stop running server
+armillary status                   # show server status
 
-horizon-flux list                     # list all pipelines
-horizon-flux run <pipeline>           # execute a pipeline
-horizon-flux run <pipeline> --env prod -V "key=value"
-horizon-flux preview <pipeline>       # preview with sample data
-horizon-flux show <pipeline>          # show pipeline details
-horizon-flux history <pipeline>       # show execution history
+armillary list                     # list all pipelines
+armillary run <pipeline>           # execute a pipeline
+armillary run <pipeline> --env prod -V "key=value"
+armillary preview <pipeline>       # preview with sample data
+armillary show <pipeline>          # show pipeline details
+armillary history <pipeline>       # show execution history
 
-horizon-flux export <pipeline> -o out.json    # export pipeline
-horizon-flux export --all -o ./pipelines/     # export all
-horizon-flux import input.json                # import pipeline
+armillary export <pipeline> -o out.json    # export pipeline
+armillary export --all -o ./pipelines/     # export all
+armillary import input.json                # import pipeline
 
-horizon-flux secret init / set / list / delete
-horizon-flux env list / create / delete / show
+armillary secret init / set / list / delete
+armillary env list / create / delete / show
 ```
 
 ## Test Pipelines
